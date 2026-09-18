@@ -208,9 +208,15 @@ SWITCH_TOP_TB := $(TB_DIR)/axi_mem_bfm.sv $(TB_DIR)/tb_switch_top.sv
 GTH_SIM_SRCS := $(SFP_PCS_DIR)/gth_sfp_sim_model.sv
 GTH_SIM_TB   := $(TB_DIR)/tb_gth_sfp_sim_model.sv
 
+RGMII_SIM_SRCS := $(PL_GMII_DIR)/rgmii_gmii_sim_model.sv
+RGMII_SIM_TB   := $(TB_DIR)/tb_rgmii_gmii_sim_model.sv
+
+PL_CLKGEN_SIM_SRCS := $(PL_GMII_DIR)/pl_eth_clk_gen_sim_model.sv
+PL_CLKGEN_SIM_TB   := $(TB_DIR)/tb_pl_eth_clk_gen_sim_model.sv
+
 VIVADO_SETTINGS := /tools/Xilinx/2026.1/Vivado/settings64.sh
 
-.PHONY: sim lint xsim sim-mac lint-mac xsim-mac sim-bufmgr lint-bufmgr xsim-bufmgr sim-ingress lint-ingress xsim-ingress sim-ps-eth lint-ps-eth xsim-ps-eth sim-egress lint-egress xsim-egress sim-integ lint-integ xsim-integ sim-sfp-pcs lint-sfp-pcs xsim-sfp-pcs sim-async-fifo lint-async-fifo xsim-async-fifo sim-pl-gmii lint-pl-gmii sim-sfp-port lint-sfp-port sim-cpu-port lint-cpu-port sim-mac-fwd lint-mac-fwd sim-switch-top lint-switch-top sim-gth-sim lint-gth-sim xsim-gth-sim clean
+.PHONY: sim lint xsim sim-mac lint-mac xsim-mac sim-bufmgr lint-bufmgr xsim-bufmgr sim-ingress lint-ingress xsim-ingress sim-ps-eth lint-ps-eth xsim-ps-eth sim-egress lint-egress xsim-egress sim-integ lint-integ xsim-integ sim-sfp-pcs lint-sfp-pcs xsim-sfp-pcs sim-async-fifo lint-async-fifo xsim-async-fifo sim-pl-gmii lint-pl-gmii sim-sfp-port lint-sfp-port sim-cpu-port lint-cpu-port sim-mac-fwd lint-mac-fwd sim-switch-top lint-switch-top sim-gth-sim lint-gth-sim xsim-gth-sim sim-rgmii-sim xsim-rgmii-sim sim-pl-clkgen-sim lint-pl-clkgen-sim xsim-pl-clkgen-sim clean
 
 # default targets operate on the MAC table, for backwards compatibility
 sim: sim-mac
@@ -456,6 +462,40 @@ xsim-gth-sim:
 	  xelab -debug typical tb_gth_sfp_sim_model -s tb_sim && \
 	  xsim tb_sim -runall
 
+sim-rgmii-sim: tb_rgmii_gmii_sim_model.vvp
+	vvp tb_rgmii_gmii_sim_model.vvp
+
+tb_rgmii_gmii_sim_model.vvp: $(RGMII_SIM_SRCS) $(RGMII_SIM_TB)
+	iverilog -g2012 -o $@ $(RGMII_SIM_SRCS) $(RGMII_SIM_TB)
+
+# no lint-rgmii-sim target: this model is a deliberately non-synthesizable
+# dual-edge behavioral stand-in (see rgmii_gmii_sim_model.sv's own header)
+
+xsim-rgmii-sim:
+	mkdir -p xsim_run_rgmii_sim
+	cd xsim_run_rgmii_sim && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv $(addprefix ../,$(RGMII_SIM_SRCS)) $(addprefix ../,$(RGMII_SIM_TB)) && \
+	  xelab -debug typical tb_rgmii_gmii_sim_model -s tb_sim && \
+	  xsim tb_sim -runall
+
+sim-pl-clkgen-sim: tb_pl_eth_clk_gen_sim_model.vvp
+	vvp tb_pl_eth_clk_gen_sim_model.vvp
+
+tb_pl_eth_clk_gen_sim_model.vvp: $(PL_CLKGEN_SIM_SRCS) $(PL_CLKGEN_SIM_TB)
+	iverilog -g2012 -o $@ $(PL_CLKGEN_SIM_SRCS) $(PL_CLKGEN_SIM_TB)
+
+lint-pl-clkgen-sim:
+	verilator --lint-only --timing --top-module pl_eth_clk_gen_sim_model $(PL_CLKGEN_SIM_SRCS)
+
+xsim-pl-clkgen-sim:
+	mkdir -p xsim_run_pl_clkgen_sim
+	cd xsim_run_pl_clkgen_sim && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv $(addprefix ../,$(PL_CLKGEN_SIM_SRCS)) $(addprefix ../,$(PL_CLKGEN_SIM_TB)) && \
+	  xelab -debug typical tb_pl_eth_clk_gen_sim_model -s tb_sim && \
+	  xsim tb_sim -runall
+
 clean:
-	rm -f tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp
-	rm -rf xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_async_fifo xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim
+	rm -f tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp tb_rgmii_gmii_sim_model.vvp tb_pl_eth_clk_gen_sim_model.vvp
+	rm -rf xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_async_fifo xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim xsim_run_rgmii_sim xsim_run_pl_clkgen_sim

@@ -3,6 +3,7 @@
 
 # Downloaded vendor reference manual; linked from docs instead
 /docs/ug1085-zynq-ultrascale-trm.pdf
+/docs/xtp743/
 
 # Simulation and FPGA tool output
 *.vvp

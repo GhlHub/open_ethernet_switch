@@ -1,0 +1,301 @@
+// rgmii_gmii_adapter.sv
+//
+// Converts between the KR260 carrier's actual RGMII pins (per-port
+// Texas Instruments DP83867CSRGZ PHY -- confirmed against the real
+// carrier schematic, docs/xtp743/038-05101-01_sck-kr_reva02_SKIT_20211015.pdf,
+// sheets 20/21 ("PL GEM2/GEM3 RGMII ETHERNET"); Vivado's own
+// kr260_carrier board file claims "M88E1111_BAB1C000" (Marvell) for this
+// part, which the schematic shows is simply wrong -- board files can be
+// mistaken about component identity even when their pin/net data is
+// right, see below) and the GMII port pl_gmii_mac_top.sv already expects
+// (gmii_txd/tx_en/tx_er in, gmii_rxd/rx_dv/rx_er out, all on one 125MHz
+// "gtx_clk" -- see that file's own header). One instance per PL port.
+//
+// Every pin/net in constraints/kr260_pl_ethernet.xdc was independently
+// re-derived from the schematic (PHY pin -> schematic net name -> SOM240
+// connector grid position, sheets 6/7 -> package pin, per
+// kr260_som/2.0/part0_pins.xml) and matches the board file exactly --
+// only the PHY's identity was wrong, not the connectivity. The PHY's own
+// pin name for the RGMII TXC function on this part is "GTX_CLK" (pin 29
+// -- also a configuration-strap pin sampled at reset on the DP83867;
+// no external strap resistor is populated on this net in the schematic,
+// so it presumably relies on the PHY's internal default, unconfirmed
+// which mode that selects without the DP83867 datasheet in hand).
+//
+// RGMII v2.0 encoding (IEEE 802.3-independent RGMII spec, not something
+// this project needs to re-derive -- these are the well-known, fixed
+// rules): each byte crosses the wire as two nibbles on one clock (TXC/
+// RXC) -- the low nibble ([3:0]) on the rising edge, the high nibble
+// ([7:4]) on the falling edge. TX_CTL/RX_CTL carry TX_EN/RX_DV on the
+// rising edge and TX_EN^TX_ER / RX_DV^RX_ER on the falling edge (so
+// TX_ER/RX_ER only has meaning while EN/DV is asserted, per spec).
+//
+// TX: entirely in the gtx_clk domain (this side's clock, TXC, is
+// generated locally and forwarded to the PHY -- no CDC needed).
+// ODDRE1 packs each byte into its two nibble-edges; a dedicated ODDRE1
+// forwards gtx_clk itself out as TXC, kept free-running (never held in
+// reset) so the PHY always sees a clean clock even while the rest of
+// this adapter resets.
+//
+// RX: RXC is the PHY's own recovered receive clock -- a real, physically
+// distinct clock domain from gtx_clk (this is the actual hardware
+// requirement RGMII imposes, not a simplification -- IDDRE1's capture
+// flops must be clocked directly by RXC, buffered through a BUFG, not
+// by an unrelated local clock). IDDRE1 captures each pin's rising/
+// falling-edge bit (SAME_EDGE_PIPELINED mode, Xilinx's own recommended
+// mode for exactly this kind of DDR source-synchronous capture -- see
+// UG571 -- so both nibbles land together, aligned to one rxc_buf edge).
+// The reconstructed byte+dv+er then crosses into gtx_clk through
+// rtl/common/async_fifo.sv (this project's existing, already-proven CDC
+// building block, reused here exactly as ps_gem_axis_bridge.sv and
+// pl_gmii_mac_top.sv already reuse it for their own ~matched-rate,
+// independently-clocked boundaries) -- continuous push/pop every cycle
+// on both sides, since RGMII RX has no separate "valid" qualifier beyond
+// rx_dv itself and idles just as continuously as it carries frames.
+//
+// RX clock-skew compensation (RX_IDELAY_ENABLE, default on): the
+// DP83867 can be strapped for either "RGMII" (needs board/FPGA-side
+// delay between RXC and RXD/RX_CTL) or "RGMII-ID" (PHY adds the delay
+// internally, no FPGA-side delay wanted) -- the schematic doesn't show
+// strap resistor values for this (a GreenPAK-style I2C-configurable
+// part elsewhere on the board suggests some strapping may be done in
+// software/I2C, not fixed resistors), so which mode is actually active
+// remains unconfirmed. This defaults to FPGA-side delay (applied to the
+// clock via IDELAYE3, not the 5 data lines -- the simpler, more common
+// of the two standard RGMII skew-compensation schemes) and MUST be
+// verified/disabled against real hardware before bring-up if the PHY
+// turns out already strapped for RGMII-ID (both delaying would double
+// the skew, not cancel it).
+//
+// idelay_refclk_i (200-800MHz-class, IDELAYE3/IDELAYCTRL's own
+// reference, per UG571) has no source anywhere yet in this project.
+// Per the schematic (sheet 16, "Clock Gen, Reset"), each PL port's own
+// 25MHz reference at the FPGA (HPA_CLK0P_CLK/HPB_CLK0P_CLK -- confirmed
+// clock-capable ("_GC_") pins, in the same I/O bank as the rest of that
+// port's own RGMII pins) is one of four buffered taps (via a 1:4 clock
+// buffer, NB3V1104CDTR2G) off a single shared 25MHz oscillator -- the
+// OTHER two taps feed the two PHYs' own crystal inputs directly. So this
+// pin is phase-related to the same oscillator the PHY itself uses
+// internally, not an arbitrary nearby clock, which makes it a
+// particularly good MMCM seed for idelay_refclk_i -- but this project
+// hasn't defined any clock-generation architecture yet; generating it
+// remains a board-integration-level decision, out of scope here.
+
+module rgmii_gmii_adapter #(
+  parameter bit RX_IDELAY_ENABLE     = 1'b1,
+  parameter int RX_IDELAY_VALUE_PS   = 700,  // see header -- verify against real hardware;
+                                              // IDELAYE3's own legal range for
+                                              // DELAY_FORMAT="TIME" on this part is
+                                              // 0-1100 (confirmed via Vivado xsim,
+                                              // not just UG571 text)
+  parameter real IDELAY_REFCLK_MHZ   = 300.0
+) (
+  input  logic gtx_clk,     // 125 MHz, matches pl_gmii_mac_top.sv's own gtx_clk
+  input  logic gtx_rst_n,
+
+  input  logic idelay_refclk_i, // see header; unused if RX_IDELAY_ENABLE=0
+  input  logic idelay_rst_n_i,
+
+  // RGMII pins (board-level, -> constraints/kr260_pl_ethernet.xdc)
+  output logic [3:0] rgmii_txd_o,
+  output logic       rgmii_tx_ctl_o,
+  output logic       rgmii_txc_o,
+  input  logic [3:0] rgmii_rxd_i,
+  input  logic        rgmii_rx_ctl_i,
+  input  logic        rgmii_rxc_i,
+
+  // GMII (-> pl_gmii_mac_top.sv's gmii_txd/tx_en/tx_er in, gmii_rxd/
+  // rx_dv/rx_er out -- note the direction flip: this module's *input*
+  // feeds that module's *output* port and vice versa)
+  input  logic [7:0] gmii_txd_i,
+  input  logic       gmii_tx_en_i,
+  input  logic       gmii_tx_er_i,
+  output logic [7:0] gmii_rxd_o,
+  output logic       gmii_rx_dv_o,
+  output logic       gmii_rx_er_o
+);
+
+  genvar gi;
+
+  // ============================= TX =====================================
+
+  logic [7:0] tx_byte_q;
+  logic       tx_en_q, tx_er_q;
+
+  always_ff @(posedge gtx_clk or negedge gtx_rst_n) begin
+    if (!gtx_rst_n) begin
+      tx_byte_q <= '0;
+      tx_en_q   <= 1'b0;
+      tx_er_q   <= 1'b0;
+    end else begin
+      tx_byte_q <= gmii_txd_i;
+      tx_en_q   <= gmii_tx_en_i;
+      tx_er_q   <= gmii_tx_er_i;
+    end
+  end
+
+  wire tx_ctl_rise = tx_en_q;
+  wire tx_ctl_fall = tx_en_q ^ tx_er_q;
+
+  generate
+    for (gi = 0; gi < 4; gi++) begin : g_txd_oddr
+      wire txd_pin;
+      ODDRE1 #(
+        .SIM_DEVICE("ULTRASCALE_PLUS")
+      ) u_oddre1 (
+        .Q  (txd_pin),
+        .C  (gtx_clk),
+        .D1 (tx_byte_q[gi]),     // rising edge: low nibble (RGMII spec)
+        .D2 (tx_byte_q[gi + 4]), // falling edge: high nibble
+        .SR (!gtx_rst_n)
+      );
+      OBUF u_obuf (.I(txd_pin), .O(rgmii_txd_o[gi]));
+    end
+  endgenerate
+
+  wire tx_ctl_pin;
+  ODDRE1 #(.SIM_DEVICE("ULTRASCALE_PLUS")) u_oddre1_ctl (
+    .Q  (tx_ctl_pin),
+    .C  (gtx_clk),
+    .D1 (tx_ctl_rise),
+    .D2 (tx_ctl_fall),
+    .SR (!gtx_rst_n)
+  );
+  OBUF u_obuf_ctl (.I(tx_ctl_pin), .O(rgmii_tx_ctl_o));
+
+  // clock-forward: never held in reset (see header)
+  wire txc_pin;
+  ODDRE1 #(.SIM_DEVICE("ULTRASCALE_PLUS")) u_oddre1_txc (
+    .Q  (txc_pin),
+    .C  (gtx_clk),
+    .D1 (1'b1),
+    .D2 (1'b0),
+    .SR (1'b0)
+  );
+  OBUF u_obuf_txc (.I(txc_pin), .O(rgmii_txc_o));
+
+  // ============================= RX =====================================
+
+  wire rxc_ibuf;
+  IBUF u_ibuf_rxc (.I(rgmii_rxc_i), .O(rxc_ibuf));
+
+  wire rxc_delayed;
+  generate
+    if (RX_IDELAY_ENABLE) begin : g_rx_idelay
+      wire idelayctrl_rdy;
+      IDELAYCTRL #(
+        .SIM_DEVICE("ULTRASCALE_PLUS") // default is "7SERIES" -- confirmed
+                                        // via Vivado synth_design critical
+                                        // warning, not assumed
+      ) u_idelayctrl (
+        .RDY    (idelayctrl_rdy),
+        .REFCLK (idelay_refclk_i),
+        .RST    (!idelay_rst_n_i)
+      );
+      IDELAYE3 #(
+        .DELAY_TYPE      ("FIXED"),
+        .DELAY_FORMAT    ("TIME"),
+        .DELAY_VALUE     (RX_IDELAY_VALUE_PS),
+        .REFCLK_FREQUENCY(IDELAY_REFCLK_MHZ),
+        .SIM_DEVICE      ("ULTRASCALE_PLUS"),
+        .DELAY_SRC       ("IDATAIN")
+      ) u_idelaye3_rxc (
+        .DATAOUT     (rxc_delayed),
+        .IDATAIN     (rxc_ibuf),
+        .CLK         (idelay_refclk_i),
+        .CE          (1'b0),
+        .INC         (1'b0),
+        .LOAD        (1'b0),
+        .CNTVALUEIN  (9'd0),
+        .CNTVALUEOUT (),
+        .RST         (!idelay_rst_n_i),
+        .EN_VTC      (1'b1),
+        .CASC_IN     (1'b0),
+        .CASC_RETURN (1'b0),
+        .CASC_OUT    (),
+        .DATAIN      (1'b0)
+      );
+    end else begin : g_rx_no_idelay
+      assign rxc_delayed = rxc_ibuf;
+    end
+  endgenerate
+
+  wire rxc_buf;
+  BUFG u_bufg_rxc (.I(rxc_delayed), .O(rxc_buf));
+  wire rxc_bufn = ~rxc_buf; // IDDRE1's CB -- local inversion, standard usage
+
+  // small reset synchronizer into the rxc_buf domain, for the CDC FIFO
+  // below only (IDDRE1 itself is left free-running -- see header)
+  logic [1:0] rxc_rst_sync_q;
+  always_ff @(posedge rxc_buf or negedge gtx_rst_n) begin
+    if (!gtx_rst_n) rxc_rst_sync_q <= 2'b00;
+    else            rxc_rst_sync_q <= {rxc_rst_sync_q[0], 1'b1};
+  end
+  wire rxc_rst_n = rxc_rst_sync_q[1];
+
+  wire [3:0] rxd_q1, rxd_q2; // q1=rising(low nibble), q2=falling(high nibble)
+  generate
+    for (gi = 0; gi < 4; gi++) begin : g_rxd_iddr
+      wire rxd_ibuf;
+      IBUF u_ibuf (.I(rgmii_rxd_i[gi]), .O(rxd_ibuf));
+      IDDRE1 #(
+        .DDR_CLK_EDGE ("SAME_EDGE_PIPELINED")
+      ) u_iddre1 (
+        .Q1 (rxd_q1[gi]),
+        .Q2 (rxd_q2[gi]),
+        .C  (rxc_buf),
+        .CB (rxc_bufn),
+        .D  (rxd_ibuf),
+        .R  (1'b0)
+      );
+    end
+  endgenerate
+
+  wire rx_ctl_ibuf;
+  IBUF u_ibuf_rx_ctl (.I(rgmii_rx_ctl_i), .O(rx_ctl_ibuf));
+  wire rx_ctl_q1, rx_ctl_q2;
+  IDDRE1 #(.DDR_CLK_EDGE("SAME_EDGE_PIPELINED")) u_iddre1_ctl (
+    .Q1 (rx_ctl_q1),
+    .Q2 (rx_ctl_q2),
+    .C  (rxc_buf),
+    .CB (rxc_bufn),
+    .D  (rx_ctl_ibuf),
+    .R  (1'b0)
+  );
+
+  wire [7:0] rx_byte = {rxd_q2, rxd_q1};
+  wire       rx_dv   = rx_ctl_q1;
+  wire       rx_er   = rx_ctl_q1 ^ rx_ctl_q2;
+
+  wire       rx_fifo_empty;
+  wire [9:0] rx_fifo_rd_data;
+
+  async_fifo #(.WIDTH(10), .DEPTH(16)) u_rx_cdc (
+    .wr_clk    (rxc_buf),
+    .wr_rst_n  (rxc_rst_n),
+    .wr_en_i   (rxc_rst_n),
+    .wr_data_i ({rx_dv, rx_er, rx_byte}),
+    .full_o    (),
+
+    .rd_clk    (gtx_clk),
+    .rd_rst_n  (gtx_rst_n),
+    .rd_en_i   (!rx_fifo_empty),
+    .rd_data_o (rx_fifo_rd_data),
+    .empty_o   (rx_fifo_empty)
+  );
+
+  always_ff @(posedge gtx_clk or negedge gtx_rst_n) begin
+    if (!gtx_rst_n) begin
+      gmii_rxd_o   <= '0;
+      gmii_rx_dv_o <= 1'b0;
+      gmii_rx_er_o <= 1'b0;
+    end else if (!rx_fifo_empty) begin
+      {gmii_rx_dv_o, gmii_rx_er_o, gmii_rxd_o} <= rx_fifo_rd_data;
+    end else begin
+      // fail-safe idle if the CDC FIFO ever runs dry (see header --
+      // shouldn't happen in steady state, both clocks nominally 125MHz)
+      gmii_rx_dv_o <= 1'b0;
+    end
+  end
+
+endmodule

@@ -23,3 +23,14 @@ The SFP transceiver wrapper depends on AMD Transceiver Wizard IP. Its
 generated vendor implementation and simulation output products are not.
 Regenerating them requires the appropriate Vivado installation and vendor
 terms. The portable GTH loopback model is separate from that vendor IP.
+
+The PL Ethernet clock wrapper similarly depends on AMD Clocking Wizard IP,
+configured by [`pl_eth_clk_gen_ip.xci`](../rtl/pl_gmii/ip/pl_eth_clk_gen_ip.xci).
+The RGMII hardware adapter uses AMD UltraScale+ I/O, delay and clock primitives.
+The standalone portable models do not replace those hardware dependencies.
+
+The local XTP743 carrier schematic package is retained as reference material
+and excluded from Git, including its PDF, ZIP and vendor readme. The readme
+identifies the material as proprietary and does not itself grant redistribution
+rights. [Board integration notes](board-integration.md) record the exact
+schematic revision/hash, source download, and the facts used by this design.

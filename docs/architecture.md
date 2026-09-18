@@ -23,7 +23,7 @@ flowchart TB
     subgraph assembled[switch_top.sv - assembled digital switch]
     subgraph ports[Physical port subsystems]
         PS["Ports 0-1: PS GEM adapters<br/>ps_gem_axis_bridge x2<br/>RTL present; flush / underrun gaps"]
-        PL["Ports 2-3: PL 1G MACs<br/>pl_gmii_mac_top x2<br/>RTL present; RGMII wiring pending"]
+        PL["Ports 2-3: PL 1G MACs<br/>pl_gmii_mac_top x2<br/>RTL present; rgmii_gmii_adapter.sv + XDC exist, not yet joined in"]
         SFP["Port 4: SFP 1G MAC + PCS<br/>sfp_port_top<br/>RTL present; GTH connection / negotiation pending"]
         STREAM["Five physical RX / TX stream pairs<br/>16-bit AXI-S; intended 62.5 MHz"]
         PS <--> STREAM
@@ -82,8 +82,9 @@ flowchart TB
     class STREAM,DDR hardware
 ```
 
-Also pending across the whole diagram: board top level, clock generation,
-reset sequencing, pin/timing/CDC constraints, and management-register access.
+Also pending across the whole diagram: board top level, integration of the
+existing PL clock generators, remaining clock/reset sources, timing/CDC
+constraints, and management-register access. PL pin constraints now exist.
 A GEM0-to-CPU smoke test exists; coverage of all ports, learned forwarding,
 shared DDR arbitration, and sustained load remains pending.
 
@@ -97,9 +98,11 @@ flowchart LR
     PSHW["KR260 PS PHYs + hard GEM0 / GEM1"] <-->|External FIFO| GEM["RTL: ps_gem_axis_bridge<br/>gem_rx_w_to_axis<br/>axis_to_gem_tx_r"]
     GEM <--> AXIS["Common 16-bit AXI-S<br/>switch RX / TX interfaces"]
 
-    PLPHY["KR260 PL copper PHYs"] <--> RGMII["PENDING: RGMII I/O<br/>Clocking, delay constraints, MDIO"]
-    RGMII <-->|GMII| PLMAC["RTL: pl_gmii_mac_top<br/>open_eth_mac_1g_switch<br/>32-bit / 16-bit CDC adapters"]
+    PLPHY["KR260 PL copper PHYs<br/>TI DP83867CSRGZ in local schematic"] <--> RGMII["RTL: rgmii_gmii_adapter<br/>ODDRE1/IDDRE1/IDELAYE3 + async_fifo CDC<br/>Board assembly / timing / MDIO pending"]
+    RGMII <-.->|GMII connection pending| PLMAC["RTL: pl_gmii_mac_top<br/>open_eth_mac_1g_switch<br/>32-bit / 16-bit CDC adapters"]
     PLMAC <--> AXIS
+    CLK["RTL: pl_eth_clk_gen + XCI<br/>25 MHz to 125 / 300 / 62.5 MHz"] -. clock wiring pending .-> RGMII
+    CLK -.-> PLMAC
 
     OPT["SFP module / serial link"] <--> GT["RTL: gth_sfp_wrapper<br/>gtwizard_ultrascale IP + XCI<br/>Board parameters / clock integration pending"]
     GT <-.->|Connection pending: 16-bit data + K at 62.5 MHz| PCS["RTL: sfp_port_top<br/>1000BASE-X PCS + 1G MAC<br/>32-bit / 16-bit CDC adapters"]
@@ -111,10 +114,29 @@ flowchart LR
     classDef hardware fill:#eeeeee,stroke:#666666,color:#222222
     classDef partial fill:#fff0cb,stroke:#a96a00,color:#473000
     class GEM,PLMAC,PCS present
-    class GT partial
-    class RGMII,AN pending
+    class GT,RGMII,CLK partial
+    class AN pending
     class PSHW,PLPHY,OPT,AXIS hardware
 ```
+
+The RGMII adapter implements DDR I/O, optional receive-clock delay, and a
+receive FIFO crossing into the MAC clock domain. Its separate behavioral
+model tests nibble/control encoding but omits that FIFO and physical timing.
+PL package-pin and input-clock constraints exist; complete external timing,
+MDIO control, PHY initialization, and board-level assembly remain pending.
+
+`pl_eth_clk_gen` and its Clocking Wizard configuration generate nominal
+125 MHz MAC, 300 MHz delay-reference, and 62.5 MHz fabric clocks from 25 MHz.
+The proposed assembly uses two instances, with PL0's 62.5 MHz output supplying
+the shared switch clock and PL1's corresponding output unused. Neither clock
+generator nor RGMII adapter is instantiated by `switch_top` yet.
+
+The local carrier schematic identifies TI DP83867 PHYs, one buffered 25 MHz
+source shared by both PL reference inputs and PHY XI pins, and PHY reset
+requests routed through U19. See [board integration](board-integration.md) for
+the clock diagram, sheet references, revision scope, and remaining checks.
+Prior isolated Vivado synthesis is reported in source comments; no reproducible
+scripts/reports are committed, and those checks were not rerun for this inventory.
 
 The SFP PCS now exposes decoded 16-bit data plus two K/error flags at
 62.5 MHz. Its internal GMII/symbol logic remains at 125 MHz; the two-phase
@@ -124,7 +146,8 @@ clock domains. The board design must generate and constrain that relationship.
 `gth_sfp_wrapper.sv` instantiates the vendor `gth_sfp_ip` from the checked-in
 Transceiver Wizard configuration. Neither `sfp_port_top` nor `switch_top`
 instantiates the GTH wrapper. Its channel X0Y4 and 125 MHz reference clock are
-placeholders requiring board confirmation. Generated IP output products and
+placeholders. The local schematic shows a 156.25 MHz SFP reference, requiring
+IP reconfiguration and channel/pin confirmation. Generated IP output products and
 a reproducible board build are not included. Source comments report prior
 Vivado/UNISIM elaboration; this inventory did not rerun or independently
 establish that result.
@@ -140,7 +163,7 @@ validate a serial link. Neither implementation provides 10G Ethernet.
 | Index | Port | Boundary exposed by `switch_top` |
 | --- | --- | --- |
 | 0–1 | PS GEM0 / GEM1 | GEM external FIFO signals and one clock/reset pair per GEM |
-| 2–3 | PL GMII0 / GMII1 | GMII signals; carrier RGMII conversion still required |
+| 2–3 | PL GMII0 / GMII1 | GMII signals; `rgmii_gmii_adapter.sv` + `constraints/kr260_pl_ethernet.xdc` exist for the carrier RGMII conversion but aren't joined into `switch_top` yet |
 | 4 | SFP 1G | Decoded 16-bit GTH parallel signals; transceiver wrapper remains external |
 | 5 | Virtual CPU | 16-bit AXI-S pair for future CPU-facing AXI DMA |
 
