@@ -1,6 +1,6 @@
 # Overall architecture
 
-Inventory baseline: 2026-09-17. This describes the RTL present in this repository
+Inventory baseline: 2026-09-18. This describes the RTL present in this repository
 and the integration still needed to make it a working KR260 switch.
 
 **The implemented architecture is a store-and-forward switch using a shared PS
@@ -13,16 +13,18 @@ then store packets in DDR. These are different DMA paths.
 Blue boxes have RTL in the repository. Amber boxes also have RTL but have
 known functional or hardware-integration gaps. Red boxes marked **PENDING**
 have no complete implementation here. Gray boxes are interfaces or existing
-hardware resources. Arrows show the intended system connections; there is
-**no system-level RTL wrapper or Vivado block design wiring this complete
-diagram together yet**. Dotted arrows carry forwarding/control information.
+hardware resources. **`switch_top.sv` now joins the port subsystems, forwarding
+logic and shared-buffer datapath.** Its external DDR masters, CPU streams,
+GMII pins and SFP parallel pins still need board/platform integration. Arrows
+to pending blocks show intended connections. Dotted arrows carry control data.
 
 ```mermaid
 flowchart TB
+    subgraph assembled[switch_top.sv - assembled digital switch]
     subgraph ports[Physical port subsystems]
         PS["Ports 0-1: PS GEM adapters<br/>ps_gem_axis_bridge x2<br/>RTL present; flush / underrun gaps"]
         PL["Ports 2-3: PL 1G MACs<br/>pl_gmii_mac_top x2<br/>RTL present; RGMII wiring pending"]
-        SFP["Port 4: SFP 1G MAC + PCS<br/>sfp_port_top<br/>RTL present; GTH / negotiation pending"]
+        SFP["Port 4: SFP 1G MAC + PCS<br/>sfp_port_top<br/>RTL present; GTH connection / negotiation pending"]
         STREAM["Five physical RX / TX stream pairs<br/>16-bit AXI-S; intended 62.5 MHz"]
         PS <--> STREAM
         PL <--> STREAM
@@ -36,11 +38,13 @@ flowchart TB
         end
         EGRESS["egress_top<br/>egress_dma_rd + five egress_port_rd<br/>Local frame RAMs"]
         CPU["Port 5: cpu_port_top<br/>Ingress / egress front ends<br/>Dedicated cpu_dma_wr / cpu_dma_rd"]
-        PARSER["PENDING: per-port header parsing<br/>Learning / lookup requests<br/>Forwarding, flood and CPU-punt policy"]
-        TABLE["mac_addr_table_top<br/>Learning + lookup + aging<br/>RTL present; not connected to packet path"]
+        PARSER["mac_forwarding_top<br/>Six mac_addr_resolver instances<br/>Header capture; hit mask / miss flood"]
+        TABLE["mac_addr_table_top<br/>Learning + lookup + aging<br/>Connected to all six ingress streams"]
         INGRESS <--> BUF
         EGRESS <--> BUF
         CPU <--> BUF
+        AGE["Aging tick divider<br/>4 Hz at default fabric clock"]
+        AGE -.-> TABLE
         PARSER -.-> TABLE
         TABLE -. lookup result .-> PARSER
         PARSER -. destination masks .-> INGRESS
@@ -51,6 +55,7 @@ flowchart TB
     EGRESS --> STREAM
     STREAM -. received headers .-> PARSER
     CPU -. CPU transmit headers .-> PARSER
+    end
 
     subgraph platform[PS memory and software integration]
         AXI["PENDING: AXI interconnect + PS HP/HPC wiring<br/>Address map and arbitration"]
@@ -71,15 +76,16 @@ flowchart TB
     classDef partial fill:#fff0cb,stroke:#a96a00,color:#473000
     classDef pending fill:#ffe4e4,stroke:#b52a2a,color:#601515,stroke-dasharray:5 3
     classDef hardware fill:#eeeeee,stroke:#666666,color:#222222
-    class INGRESS,BUF,EGRESS,CPU,TABLE present
-    class PS,PL,SFP partial
-    class PARSER,AXI,CPUDMA,RTOS pending
+    class INGRESS,BUF,EGRESS,CPU,TABLE,AGE present
+    class PS,PL,SFP,PARSER partial
+    class AXI,CPUDMA,RTOS pending
     class STREAM,DDR hardware
 ```
 
 Also pending across the whole diagram: board top level, clock generation,
-reset sequencing, pin/timing/CDC constraints, management-register access, and
-an end-to-end switch testbench.
+reset sequencing, pin/timing/CDC constraints, and management-register access.
+A GEM0-to-CPU smoke test exists; coverage of all ports, learned forwarding,
+shared DDR arbitration, and sustained load remains pending.
 
 ## Physical-port boundaries
 
@@ -95,22 +101,53 @@ flowchart LR
     RGMII <-->|GMII| PLMAC["RTL: pl_gmii_mac_top<br/>open_eth_mac_1g_switch<br/>32-bit / 16-bit CDC adapters"]
     PLMAC <--> AXIS
 
-    OPT["SFP module / serial link"] <--> GT["PENDING: target GTH wrapper<br/>Reset, alignment, 8b/10b, RX clock handling"]
-    GT <-->|Decoded data + K flags| PCS["RTL: sfp_port_top<br/>1000BASE-X PCS + 1G MAC<br/>32-bit / 16-bit CDC adapters"]
+    OPT["SFP module / serial link"] <--> GT["RTL: gth_sfp_wrapper<br/>gtwizard_ultrascale IP + XCI<br/>Board parameters / clock integration pending"]
+    GT <-.->|Connection pending: 16-bit data + K at 62.5 MHz| PCS["RTL: sfp_port_top<br/>1000BASE-X PCS + 1G MAC<br/>32-bit / 16-bit CDC adapters"]
     PCS <--> AXIS
     AN["PENDING: Clause 37 negotiation<br/>or validated fixed-link policy"] -.-> PCS
 
     classDef present fill:#e1efff,stroke:#245a9b,color:#10243a
     classDef pending fill:#ffe4e4,stroke:#b52a2a,color:#601515,stroke-dasharray:5 3
     classDef hardware fill:#eeeeee,stroke:#666666,color:#222222
+    classDef partial fill:#fff0cb,stroke:#a96a00,color:#473000
     class GEM,PLMAC,PCS present
-    class RGMII,GT,AN pending
+    class GT partial
+    class RGMII,AN pending
     class PSHW,PLPHY,OPT,AXIS hardware
 ```
 
-The SFP PCS operates at a decoded 8-bit, 125 MHz boundary. It does not contain
-the serial transceiver or implement a 10G Ethernet path. Its `sync_ok_o` means
-code-group synchronization, not a negotiated or hardware-validated link.
+The SFP PCS now exposes decoded 16-bit data plus two K/error flags at
+62.5 MHz. Its internal GMII/symbol logic remains at 125 MHz; the two-phase
+gearbox assumes exactly 2:1, phase-related clocks. These are not independent
+clock domains. The board design must generate and constrain that relationship.
+
+`gth_sfp_wrapper.sv` instantiates the vendor `gth_sfp_ip` from the checked-in
+Transceiver Wizard configuration. Neither `sfp_port_top` nor `switch_top`
+instantiates the GTH wrapper. Its channel X0Y4 and 125 MHz reference clock are
+placeholders requiring board confirmation. Generated IP output products and
+a reproducible board build are not included. Source comments report prior
+Vivado/UNISIM elaboration; this inventory did not rerun or independently
+establish that result.
+
+The standalone `gth_sfp_sim_model` test checks delayed parallel loopback,
+reset/status and error injection. The PCS and full SFP-port tests instead
+connect their parallel pins directly; they do not use the GTH model or
+validate a serial link. Neither implementation provides 10G Ethernet.
+`sync_ok_o` indicates code-group synchronization, not a negotiated link.
+
+## Port map and external integration
+
+| Index | Port | Boundary exposed by `switch_top` |
+| --- | --- | --- |
+| 0–1 | PS GEM0 / GEM1 | GEM external FIFO signals and one clock/reset pair per GEM |
+| 2–3 | PL GMII0 / GMII1 | GMII signals; carrier RGMII conversion still required |
+| 4 | SFP 1G | Decoded 16-bit GTH parallel signals; transceiver wrapper remains external |
+| 5 | Virtual CPU | 16-bit AXI-S pair for future CPU-facing AXI DMA |
+
+Four separate AXI master channel groups leave the top: physical ingress writes,
+physical egress reads, CPU pool writes, and CPU pool reads. The three MAC
+AXI-Lite interfaces and `default_age_i` also remain external. There is no
+CPU-accessible management register map or PS block design yet.
 
 ## Packet lifetime
 
@@ -119,9 +156,13 @@ code-group synchronization, not a negotiated or hardware-validated link.
    it before allocation. Only one frame is in flight per front end.
 2. The front end allocates a buffer ID from `buf_mgr_core`. The appropriate
    write DMA copies the frame into `DDR_BASE_ADDR + bufid * BUFFER_BYTES`.
-3. A forwarding decision must provide `dest_mask_i` and
-   `dest_mask_valid_i`. This producer is still missing; the testbenches supply
-   masks directly. The ingress front end waits for the decision before enqueue.
+3. In parallel with frame reception, each `mac_addr_resolver` snoops accepted
+   words to capture destination/source MACs and request lookup/learning. A hit
+   returns the learned mask; a miss floods all other ports (including CPU for
+   physical ingress).
+   `mac_forwarding_top` supplies `dest_mask_i` / `dest_mask_valid_i`; ingress
+   waits for a valid decision before enqueue. Learning currently precedes
+   final frame validation; see the [resolver gaps](inventory.md#known-gaps-in-existing-rtl).
 4. `queue_mgr` records the length and links the buffer ID into each selected
    destination queue. `free_list_mgr` tracks the number of destinations. A
    zero mask frees the allocation without forwarding.
@@ -148,7 +189,7 @@ switch pool; it is not a direct zero-copy software interface to pool buffers.
 | Frame content | Ethernet header and payload; FCS excluded from switch streams. PS GEM receive configuration must match this convention. |
 | Physical DDR access | One shared 128-bit write engine and one shared 128-bit read engine, each arbitrating five ports and allowing one outstanding frame burst |
 | CPU switch-pool access | Dedicated 128-bit write/read engines; same pool geometry as physical ports |
-| Port mask | Six bits in the buffer manager; eight bits in MAC-table results. Integration must define the mapping and disable unused table ports. |
+| Port mask | Six bits in the buffer manager; eight bits in MAC-table results. `mac_forwarding_top` uses bits 0–5 and disables request ports 6–7. |
 
 Clock values in source comments are intended operating points, not timing-closure
 results. In particular, the current GEM adapters transfer individual bytes on

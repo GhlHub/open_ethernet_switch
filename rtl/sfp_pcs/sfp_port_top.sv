@@ -13,45 +13,53 @@
 // shape (gmii_txd/tx_en/tx_er, gmii_rxd/rx_dv/rx_er), so no adaptation
 // is needed there.
 //
-// Deliberately NOT included here (separate, later stages -- see
+// Deliberately NOT included here (separate, later stage -- see
 // sfp_1000base_x_pcs.sv's header for the same boundary on the PCS side):
 //   - the actual GTHE4_CHANNEL transceiver primitive. This module's
 //     txdata_o/txcharisk_o and rxdata_i/rxcharisk_i/rxdisperr_i/
 //     rxnotintable_i are the GTH-parallel-interface boundary signals,
-//     meant to connect to a GTH wrapper stage, not simulated here.
+//     meant to connect to rtl/sfp_pcs/gth_sfp_wrapper.sv (or its sim
+//     stand-in, gth_sfp_sim_model.sv), not instantiated here.
 //   - Clause 37 autonegotiation (link-up/duplex/speed resolution over
 //     the /C1//C2/ ordered sets) -- sync_ok_o here only reflects PCS
 //     code-group synchronization (Clause 36.2.5.2), not a negotiated link.
 //
-// Four clock domains: clk/rst_n (fabric, 62.5MHz) for the switch-side
+// Five clock domains: clk/rst_n (fabric, 62.5MHz) for the switch-side
 // AXI4-Stream; axis_clk/axis_rst_n (150MHz) for the MAC's AXI4-Stream +
-// AXI4-Lite side; gtx_clk/gtx_rst_n (125MHz-class) for the shared
-// GMII<->PCS<->GTH-parallel-interface side -- per sfp_1000base_x_pcs.sv's
-// own header, its TX and RX parallel interfaces are assumed already in
-// this one clock domain (a real GTH's RX side needs its own CDC via the
-// hardware RX elastic buffer, deferred to the GTH wrapper stage).
-// gtx_rst_n has no counterpart on the physical-pin PL GMII port (GMII
-// itself has no reset pin), but the PCS's internal state machines need
-// one; it must already be synchronized to gtx_clk by the caller.
+// AXI4-Lite side; gtx_clk/gtx_rst_n (125MHz-class) for GMII and the PCS's
+// internal codecs/sync FSM; gth_clk/gth_rst_n (62.5MHz-class, NEW) for
+// the actual GTH-parallel-interface boundary -- see
+// sfp_1000base_x_pcs.sv's header for why these are two separate domains
+// (real GTHE4_CHANNEL hardware on this part hands off 2 code groups/
+// cycle at 62.5MHz, not 1/cycle at 125MHz like GMII) and for the
+// gth_clk-must-be-clk/2-and-phase-related requirement, which this module
+// just passes through unchanged. Both gtx_rst_n and gth_rst_n have no
+// counterpart on the physical-pin PL GMII port or a bare GTH channel
+// respectively, but the PCS's internal state machines need resets in
+// both domains; both must already be synchronized to their own clock by
+// the caller.
 
 module sfp_port_top (
   input  logic clk,          // fabric clock (62.5 MHz)
   input  logic rst_n,
   input  logic axis_clk,     // MAC's AXI4-Stream + AXI4-Lite clock (150 MHz)
   input  logic axis_rst_n,
-  input  logic gtx_clk,      // GMII/PCS/GTH-parallel-interface clock (125 MHz)
+  input  logic gtx_clk,      // GMII/PCS-codec clock (125 MHz)
   input  logic gtx_rst_n,
+  input  logic gth_clk,      // GTH-parallel-interface clock (62.5 MHz, = gtx_clk/2)
+  input  logic gth_rst_n,
   input  logic clk_en,
 
-  // GTH TX 8b/10b-assisted parallel interface (-> GTH wrapper, later stage)
-  output logic [7:0] txdata_o,
-  output logic        txcharisk_o,
+  // GTH TX 8b/10b-assisted parallel interface (-> gth_sfp_wrapper.sv),
+  // native width: 2 code groups/cycle -- see header
+  output logic [15:0] txdata_o,
+  output logic [1:0]  txcharisk_o,
 
-  // GTH RX 8b/10b-assisted parallel interface (<- GTH wrapper, later stage)
-  input  logic [7:0] rxdata_i,
-  input  logic        rxcharisk_i,
-  input  logic        rxdisperr_i,
-  input  logic        rxnotintable_i,
+  // GTH RX 8b/10b-assisted parallel interface (<- gth_sfp_wrapper.sv), ditto
+  input  logic [15:0] rxdata_i,
+  input  logic [1:0]  rxcharisk_i,
+  input  logic [1:0]  rxdisperr_i,
+  input  logic [1:0]  rxnotintable_i,
 
   // PCS code-group sync status (not a negotiated link -- see header note)
   output logic sync_ok_o,
@@ -107,6 +115,8 @@ module sfp_port_top (
   sfp_1000base_x_pcs u_pcs (
     .clk             (gtx_clk),
     .rst_n           (gtx_rst_n),
+    .gth_clk         (gth_clk),
+    .gth_rst_n       (gth_rst_n),
     .gmii_txd_i      (gmii_txd),
     .gmii_tx_en_i    (gmii_tx_en),
     .gmii_tx_er_i    (gmii_tx_er),

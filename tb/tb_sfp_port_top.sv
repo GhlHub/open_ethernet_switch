@@ -34,10 +34,22 @@ module tb_sfp_port_top;
   logic gtx_rst_n = 0;
   always #4 gtx_clk = ~gtx_clk; // 125 MHz-equivalent (GMII/PCS side)
 
-  logic [7:0] txdata;
-  logic       txcharisk;
-  logic [7:0] rxdata;
-  logic       rxcharisk;
+  // gth_clk must be gtx_clk/2, phase-related -- see
+  // sfp_1000base_x_pcs.sv's header (this is the exact same requirement/
+  // phase derivation as tb_sfp_1000base_x_pcs.sv's own gth_clk, reused
+  // verbatim here: gtx_clk's first posedge is at t=4, period 8, so
+  // gth_clk's rising edge is placed at t=16 then every 16ns).
+  logic gth_clk = 0;
+  logic gth_rst_n = 0;
+  initial begin
+    #16 gth_clk = 1;
+    forever #8 gth_clk = ~gth_clk;
+  end
+
+  logic [15:0] txdata;
+  logic [1:0]  txcharisk;
+  logic [15:0] rxdata;
+  logic [1:0]  rxcharisk;
   logic       sync_ok;
 
   // GTH-parallel-interface loopback (no real GTH/SFP/fiber in the loop)
@@ -76,14 +88,16 @@ module tb_sfp_port_top;
     .axis_rst_n       (axis_rst_n),
     .gtx_clk          (gtx_clk),
     .gtx_rst_n        (gtx_rst_n),
+    .gth_clk          (gth_clk),
+    .gth_rst_n        (gth_rst_n),
     .clk_en           (1'b1),
 
     .txdata_o         (txdata),
     .txcharisk_o      (txcharisk),
     .rxdata_i         (rxdata),
     .rxcharisk_i      (rxcharisk),
-    .rxdisperr_i      (1'b0),
-    .rxnotintable_i   (1'b0),
+    .rxdisperr_i      (2'b00),
+    .rxnotintable_i   (2'b00),
     .sync_ok_o        (sync_ok),
 
     .m_axis_tdata     (m_tdata),
@@ -248,6 +262,8 @@ module tb_sfp_port_top;
     axis_rst_n = 1'b1;
     repeat (5) @(posedge gtx_clk);
     gtx_rst_n = 1'b1;
+    repeat (5) @(posedge gth_clk);
+    gth_rst_n = 1'b1;
 
     repeat (10) @(posedge axis_clk);
     axi_write(18'h00408, 32'h1000_0000); // reg_tc[28]   = 1: TX enable

@@ -25,6 +25,22 @@ module tb_sfp_1000base_x_pcs;
   logic rst_n = 0;
   always #4 clk = ~clk; // 125 MHz-equivalent for simulation purposes
 
+  // gth_clk must be clk/2, phase-related (see sfp_1000base_x_pcs.sv's
+  // header) -- not an independent oscillator. clk's first posedge here
+  // is at t=4 (period 8), so each completed 2-byte pair's one-clk-cycle-
+  // wide valid window is (4+8k, 12+8k) for the relevant even k; gth_clk's
+  // rising edge is placed at that window's midpoint (t=16, then every
+  // 16ns), which is the phase this DUT's gearbox/degearbox actually
+  // needs -- landing exactly on a clk edge instead (as a naive clk/2
+  // divider starting at t=0 would) samples mid-update and was the first
+  // thing tried here; it corrupted every pair.
+  logic gth_clk = 0;
+  logic gth_rst_n = 0;
+  initial begin
+    #16 gth_clk = 1;
+    forever #8 gth_clk = ~gth_clk;
+  end
+
   logic [7:0] gmii_txd;
   logic       gmii_tx_en;
   logic       gmii_tx_er;
@@ -32,26 +48,30 @@ module tb_sfp_1000base_x_pcs;
   logic       gmii_rx_dv;
   logic       gmii_rx_er;
 
-  logic [7:0] txdata;
-  logic       txcharisk;
+  logic [15:0] txdata;
+  logic [1:0]  txcharisk;
 
-  logic [7:0] rxdata;
-  logic       rxcharisk;
-  logic       rxdisperr;
-  logic       rxnotintable;
+  logic [15:0] rxdata;
+  logic [1:0]  rxcharisk;
+  logic [1:0]  rxdisperr;
+  logic [1:0]  rxnotintable;
 
   logic       sync_ok;
 
   // loopback, with error-injection override on the RX side for test E
+  // (both byte lanes, so it reliably corrupts every cycle rather than
+  // just every other one)
   logic inject_err = 1'b0;
   assign rxdata         = txdata;
   assign rxcharisk      = txcharisk;
-  assign rxdisperr      = 1'b0;
-  assign rxnotintable   = inject_err;
+  assign rxdisperr      = 2'b00;
+  assign rxnotintable   = {2{inject_err}};
 
   sfp_1000base_x_pcs dut (
     .clk             (clk),
     .rst_n           (rst_n),
+    .gth_clk         (gth_clk),
+    .gth_rst_n       (gth_rst_n),
     .gmii_txd_i      (gmii_txd),
     .gmii_tx_en_i    (gmii_tx_en),
     .gmii_tx_er_i    (gmii_tx_er),
@@ -117,7 +137,8 @@ module tb_sfp_1000base_x_pcs;
     gmii_tx_er = 1'b0;
 
     repeat (5) @(posedge clk);
-    rst_n = 1'b1;
+    rst_n     = 1'b1;
+    gth_rst_n = 1'b1;
 
     // ---- test A: sync acquisition from idle ----
     begin

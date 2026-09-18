@@ -17,3 +17,9 @@ The GEM adapters refer to the AMD
 The local downloaded PDF is reference material and is not included in the
 source commit. Board documentation is available in the
 [KR260 user guide (UG1092)](https://docs.amd.com/r/en-US/ug1092-kr260-starter-kit).
+
+The SFP transceiver wrapper depends on AMD Transceiver Wizard IP. Its
+[`gth_sfp_ip.xci`](../rtl/sfp_pcs/ip/gth_sfp_ip.xci) configuration is included;
+generated vendor implementation and simulation output products are not.
+Regenerating them requires the appropriate Vivado installation and vendor
+terms. The portable GTH loopback model is separate from that vendor IP.
