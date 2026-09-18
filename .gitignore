@@ -1,0 +1,22 @@
+# Local assistant state
+/.claude/
+
+# Downloaded vendor reference manual; linked from docs instead
+/docs/ug1085-zynq-ultrascale-trm.pdf
+
+# Simulation and FPGA tool output
+*.vvp
+*.vcd
+*.fst
+*.wdb
+/sim/xsim_run*/
+/sim/xsim.dir/
+/sim/obj_dir/
+/sim/*.log
+/sim/*.jou
+/sim/*.pb
+/.Xil/
+
+# Python caches
+__pycache__/
+.pytest_cache/

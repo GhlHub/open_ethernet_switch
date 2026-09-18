@@ -1,0 +1,19 @@
+# Source provenance and reference material
+
+[`rtl/pl_gmii/open_eth_mac_1g_switch.sv`](../rtl/pl_gmii/open_eth_mac_1g_switch.sv)
+identifies its origin as `open_eth_mac_1g` from
+[GhlHub/open-ethernet-cores](https://github.com/GhlHub/open-ethernet-cores).
+Its existing `GPL-3.0-or-later` SPDX identifier and modification notice are
+preserved. The notice describes the module rename and permanently enabled
+destination acceptance for switch operation. The original import does not
+record an upstream commit ID.
+
+A copy of the GPL version 3 text is included at
+[`LICENSES/GPL-3.0-or-later.txt`](../LICENSES/GPL-3.0-or-later.txt).
+This inventory does not assign a new license to the other source files.
+
+The GEM adapters refer to the AMD
+[Zynq UltraScale+ technical reference manual (UG1085)](https://docs.amd.com/r/en-US/ug1085-zynq-ultrascale-trm).
+The local downloaded PDF is reference material and is not included in the
+source commit. Board documentation is available in the
+[KR260 user guide (UG1092)](https://docs.amd.com/r/en-US/ug1092-kr260-starter-kit).
