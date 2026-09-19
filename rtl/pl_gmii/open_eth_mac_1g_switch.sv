@@ -14,6 +14,22 @@
 // left in place rather than torn out to keep this diff minimal/low-risk
 // against a large, previously-unfamiliar core), broadcast/multicast
 // statistics counters, framing/CRC/descriptor logic, is untouched.
+//
+// Second change (clock-domain-crossing cleanup, no functional change to
+// the frame path): the reset inputs are no longer used directly. Each is
+// treated as asynchronous and reclocked into every clock domain that uses
+// it (s_axi_lite_clk, axis_clk, gtx_clk) -- see the "reset reclocking"
+// block below. The original resynchronized two resets into gtx_clk from
+// the same source flop, one of them through a combinational AND, which
+// Vivado's CDC report flagged (CDC-11), and used the raw resets directly
+// in the 150 MHz domains on the assumption that they were already
+// synchronous to those clocks.
+//
+// Third change (also CDC): the transmit and receive data read pointers,
+// which jump by a whole frame's words at once, are now published to the other
+// clock domain one word per clock so the synchronized Gray code changes one
+// bit at a time -- see the "data read pointers published one word per clock"
+// block at the end of the module.
 `timescale 1ns/1ps
 // 1 Gb/s full-duplex, GMII-only replacement for the packet-MAC portion of
 // Xilinx AXI Ethernet.  The AXI stream/control contract and the software-visible
@@ -180,14 +196,53 @@ reg snapshot_request, snapshot_ack;
 (* ASYNC_REG = "TRUE" *) reg [1:0] snapshot_request_sync, snapshot_ack_sync;
 reg snapshot_read_pending;
 reg [3:0] snapshot_select;
+// ---- reset reclocking (see the header note) ----
+// Every reset input is treated as asynchronous and passed through its own
+// asynchronous-assert / synchronous-release two-flop synchronizer in each
+// clock domain that uses it, with no logic between a source and a
+// synchronizer's first flop. The signals below (lite_resetn, axis_*_resetn,
+// gtx_*_resetn) are the ones used by the logic. Reset assertion is
+// immediate in the 150 MHz domains and released two clocks after the input
+// releases; the GMII domain is reached through registered "launch" flops in
+// axis_clk (one per synchronizer), so each source flop feeds exactly one
+// synchronizer flop across the crossing.
+(* ASYNC_REG = "TRUE" *) reg [1:0] lite_rs   = 2'b00;
+(* ASYNC_REG = "TRUE" *) reg [1:0] axis_txd_rs = 2'b00;
+(* ASYNC_REG = "TRUE" *) reg [1:0] axis_txc_rs = 2'b00;
+(* ASYNC_REG = "TRUE" *) reg [1:0] axis_rxd_rs = 2'b00;
+(* ASYNC_REG = "TRUE" *) reg [1:0] axis_rxs_rs = 2'b00;
+always @(posedge s_axi_lite_clk or negedge s_axi_lite_resetn)
+    if (!s_axi_lite_resetn) lite_rs <= 2'b00; else lite_rs <= {lite_rs[0], 1'b1};
+always @(posedge axis_clk or negedge axi_txd_arstn)
+    if (!axi_txd_arstn) axis_txd_rs <= 2'b00; else axis_txd_rs <= {axis_txd_rs[0], 1'b1};
+always @(posedge axis_clk or negedge axi_txc_arstn)
+    if (!axi_txc_arstn) axis_txc_rs <= 2'b00; else axis_txc_rs <= {axis_txc_rs[0], 1'b1};
+always @(posedge axis_clk or negedge axi_rxd_arstn)
+    if (!axi_rxd_arstn) axis_rxd_rs <= 2'b00; else axis_rxd_rs <= {axis_rxd_rs[0], 1'b1};
+always @(posedge axis_clk or negedge axi_rxs_arstn)
+    if (!axi_rxs_arstn) axis_rxs_rs <= 2'b00; else axis_rxs_rs <= {axis_rxs_rs[0], 1'b1};
+wire lite_resetn     = lite_rs[1];
+wire axis_txd_resetn = axis_txd_rs[1];
+wire axis_txc_resetn = axis_txc_rs[1];
+wire axis_rxd_resetn = axis_rxd_rs[1];
+wire axis_rxs_resetn = axis_rxs_rs[1];
+
+// launch flops for the GMII-domain synchronizers (axis_clk -> gtx_clk)
+reg gtx_tx_launch = 1'b0;
+reg gtx_rx_launch = 1'b0;
+always @(posedge axis_clk) begin
+    gtx_tx_launch <= axis_txd_resetn;
+    gtx_rx_launch <= axis_rxd_resetn && axis_rxs_resetn;
+end
+
 wire write_fire = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
 wire [31:0] write_mask = {{8{wstrb_hold[3]}}, {8{wstrb_hold[2]}},
                           {8{wstrb_hold[1]}}, {8{wstrb_hold[0]}}};
 wire [31:0] write_merged_raf = (reg_raf & ~write_mask) | (w_hold & write_mask);
-assign s_axi_awready = s_axi_lite_resetn && !aw_hold_valid && !s_axi_bvalid;
-assign s_axi_wready = s_axi_lite_resetn && !w_hold_valid && !s_axi_bvalid;
+assign s_axi_awready = lite_resetn && !aw_hold_valid && !s_axi_bvalid;
+assign s_axi_wready = lite_resetn && !w_hold_valid && !s_axi_bvalid;
 assign s_axi_bresp = 2'b00;
-assign s_axi_arready = s_axi_lite_resetn && !s_axi_rvalid &&
+assign s_axi_arready = lite_resetn && !s_axi_rvalid &&
                        !snapshot_read_pending && !snapshot_ack_sync[1];
 assign s_axi_rresp = 2'b00;
 assign interrupt = 1'b0;
@@ -252,7 +307,7 @@ task automatic write_reg(input [17:0] addr, input [31:0] value, input [31:0] mas
 endtask
 
 always @(posedge s_axi_lite_clk) begin
-    if (!s_axi_lite_resetn) begin
+    if (!lite_resetn) begin
         reg_raf <= 0; reg_ie <= 0; reg_rcw0 <= 0; reg_rcw1 <= 32'h02000000;
         reg_tc <= 0; reg_fcc <= 0; reg_emmc <= 32'h80000000;
         reg_rxfc <= 32'd16384; reg_txfc <= 32'd4096;
@@ -347,8 +402,8 @@ wire tx_data_has_space = tx_data_used_words < TX_WORDS;
 wire [TX_DESC_BITS:0] tx_desc_rd_bin_axis =
     tx_desc_gray_to_binary(tx_desc_rd_gray_sync2);
 wire tx_desc_full = (tx_desc_wr_bin - tx_desc_rd_bin_axis) == TX_DESC_DEPTH;
-assign s_axis_txc_tready = axi_txc_arstn && !tx_control_ready && !tx_desc_full;
-assign s_axis_txd_tready = axi_txd_arstn && tx_control_ready &&
+assign s_axis_txc_tready = axis_txc_resetn && !tx_control_ready && !tx_desc_full;
+assign s_axis_txd_tready = axis_txd_resetn && tx_control_ready &&
     (tx_drop || tx_data_has_space || tx_frame_words >= TX_WORDS);
 wire tx_data_handshake = s_axis_txd_tvalid && s_axis_txd_tready;
 wire tx_store_beat = tx_data_handshake && !tx_drop && tx_data_has_space &&
@@ -360,7 +415,7 @@ always @(posedge axis_clk) begin
     tx_data_rd_gray_sync2 <= tx_data_rd_gray_sync1;
     tx_desc_rd_gray_sync1 <= tx_desc_rd_gray;
     tx_desc_rd_gray_sync2 <= tx_desc_rd_gray_sync1;
-    if (!axi_txd_arstn || !axi_txc_arstn) begin
+    if (!axis_txd_resetn || !axis_txc_resetn) begin
         tx_control_ready <= 0; tx_drop <= 0;
         txc_words <= 0; tx_wr_count <= 0; tx_frame_words <= 0;
         tx_data_wr_bin <= 0; tx_data_work_bin <= 0;
@@ -438,12 +493,13 @@ reg [31:0] tx_crc, tx_fcs;
 wire gtx_tx_resetn = gtx_tx_reset_sync[1];
 wire gtx_rx_resetn = gtx_rx_reset_sync[1];
 
-// The AXI resets are generated in the 150 MHz domain. Resynchronize them
-// before using them as synchronous resets in the independent 125 MHz GMII
-// domain; otherwise every GMII register becomes an invalid timed CDC path.
+// The AXI resets are reclocked above (reset reclocking block); this last
+// stage brings each one into the independent 125 MHz GMII domain from its
+// own launch flop. Without it every GMII register becomes an invalid timed
+// CDC path.
 always @(posedge gtx_clk) begin
-    gtx_tx_reset_sync <= {gtx_tx_reset_sync[0], axi_txd_arstn};
-    gtx_rx_reset_sync <= {gtx_rx_reset_sync[0], axi_rxd_arstn && axi_rxs_arstn};
+    gtx_tx_reset_sync <= {gtx_tx_reset_sync[0], gtx_tx_launch};
+    gtx_rx_reset_sync <= {gtx_rx_reset_sync[0], gtx_rx_launch};
 end
 
 always @(posedge gtx_clk) begin
@@ -481,7 +537,7 @@ always @(posedge gtx_clk) begin
         tx_crc <= 32'hffffffff;
         tx_desc_wr_gray_sync1 <= 0; tx_desc_wr_gray_sync2 <= 0;
         tx_desc_rd_bin <= 0; tx_desc_rd_gray <= 0;
-        tx_data_rd_bin <= 0; tx_data_rd_gray <= 0; tx_enable_sync <= 0;
+        tx_data_rd_bin <= 0; tx_enable_sync <= 0;
         tx_byte_count <= 0; tx_frame_count <= 0;
     end else if (clk_en) begin
         gmii_tx_er <= 0;
@@ -507,9 +563,6 @@ always @(posedge gtx_clk) begin
           end
           TX_DISCARD: begin
               tx_data_rd_bin <= tx_data_rd_bin + tx_words_gmii;
-              tx_data_rd_gray <= ((tx_data_rd_bin +
-                  tx_words_gmii) >> 1) ^
-                  (tx_data_rd_bin + tx_words_gmii);
               tx_desc_rd_bin <= tx_desc_rd_bin + 1'b1;
               tx_desc_rd_gray <= ((tx_desc_rd_bin + 1'b1) >> 1) ^
                                  (tx_desc_rd_bin + 1'b1);
@@ -551,9 +604,6 @@ always @(posedge gtx_clk) begin
               gmii_txd <= tx_fcs[31:24]; tx_state <= TX_IFG; tx_phase <= 0;
               tx_frame_count <= tx_frame_count + 1'b1;
               tx_data_rd_bin <= tx_data_rd_bin + tx_words_gmii;
-              tx_data_rd_gray <= ((tx_data_rd_bin +
-                  tx_words_gmii) >> 1) ^
-                  (tx_data_rd_bin + tx_words_gmii);
               tx_desc_rd_bin <= tx_desc_rd_bin + 1'b1;
               tx_desc_rd_gray <= ((tx_desc_rd_bin + 1'b1) >> 1) ^
                                  (tx_desc_rd_bin + 1'b1);
@@ -794,10 +844,10 @@ assign m_axis_rxs_tkeep = 4'hf;
 always @(posedge axis_clk) begin
     rx_desc_wr_gray_sync1 <= rx_desc_wr_gray;
     rx_desc_wr_gray_sync2 <= rx_desc_wr_gray_sync1;
-    if (!axi_rxd_arstn || !axi_rxs_arstn) begin
+    if (!axis_rxd_resetn || !axis_rxs_resetn) begin
         rx_desc_wr_gray_sync1 <= 0; rx_desc_wr_gray_sync2 <= 0;
         rx_desc_rd_bin <= 0; rx_desc_rd_gray <= 0;
-        rx_data_rd_bin <= 0; rx_data_rd_gray <= 0;
+        rx_data_rd_bin <= 0;
         rx_axis_active <= 0; rx_status_active <= 0;
         rx_data_complete <= 0; rx_status_complete <= 0;
         rx_word_index <= 0; rx_status_index <= 0; m_axis_rxd_tvalid <= 0;
@@ -863,13 +913,42 @@ always @(posedge axis_clk) begin
         end
         if (rx_data_complete && rx_status_complete) begin
             rx_data_rd_bin <= rx_data_rd_bin + rx_words_axis;
-            rx_data_rd_gray <= ((rx_data_rd_bin + rx_words_axis) >> 1) ^
-                                (rx_data_rd_bin + rx_words_axis);
             rx_desc_rd_bin <= rx_desc_rd_bin + 1'b1;
             rx_desc_rd_gray <= ((rx_desc_rd_bin + 1'b1) >> 1) ^
                                (rx_desc_rd_bin + 1'b1);
             rx_data_complete <= 0; rx_status_complete <= 0;
         end
+    end
+end
+
+// ---- data read pointers published one word per clock ----
+// tx_data_rd_bin / rx_data_rd_bin jump by a whole frame's worth of words at
+// once, and the other clock domain decodes the synchronized Gray value to
+// work out how much buffer is free. A Gray code is only safe to synchronize
+// when it changes by exactly one bit per update; a multi-word jump can change
+// many bits at once, and a sample taken mid-transition decodes to an arbitrary
+// pointer, which could report free space that is not free yet (overwriting
+// unread transmit or receive data). So the pointer that is actually
+// synchronized (*_rd_gray, from *_rd_pub) follows the binary pointer one word
+// per clock. The only cost is that freed space is reported up to a frame's
+// worth of clocks late -- conservative, never optimistic.
+reg [TX_ADDR_BITS:0] tx_data_rd_pub;
+always @(posedge gtx_clk) begin
+    if (!gtx_tx_resetn) begin
+        tx_data_rd_pub <= 0; tx_data_rd_gray <= 0;
+    end else if (tx_data_rd_pub != tx_data_rd_bin) begin
+        tx_data_rd_pub  <= tx_data_rd_pub + 1'b1;
+        tx_data_rd_gray <= ((tx_data_rd_pub + 1'b1) >> 1) ^ (tx_data_rd_pub + 1'b1);
+    end
+end
+
+reg [RX_ADDR_BITS:0] rx_data_rd_pub;
+always @(posedge axis_clk) begin
+    if (!axis_rxd_resetn || !axis_rxs_resetn) begin
+        rx_data_rd_pub <= 0; rx_data_rd_gray <= 0;
+    end else if (rx_data_rd_pub != rx_data_rd_bin) begin
+        rx_data_rd_pub  <= rx_data_rd_pub + 1'b1;
+        rx_data_rd_gray <= ((rx_data_rd_pub + 1'b1) >> 1) ^ (rx_data_rd_pub + 1'b1);
     end
 end
 

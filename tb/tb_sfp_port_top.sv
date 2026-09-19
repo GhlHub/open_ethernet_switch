@@ -81,6 +81,54 @@ module tb_sfp_port_top;
   logic        axi_bvalid;
   logic        axi_bready;
 
+  // ---- CDC safety monitor for the MAC's hand-built Gray pointers ----
+  // A Gray-coded pointer is only safe to synchronize if it changes by exactly
+  // one bit per update in its own clock domain. Count any update that flips
+  // more than one bit (each pointer sampled in the domain that writes it),
+  // per pointer, once both resets have been released for a while.
+  int gray_bad [6];
+  int gray_multibit;
+  bit mon_en = 1'b0;
+  logic [15:0] g_q [6];
+  logic [15:0] g_now [6];
+  always_comb begin
+    g_now[0] = 16'(dut.u_mac.tx_data_rd_gray);
+    g_now[1] = 16'(dut.u_mac.tx_desc_rd_gray);
+    g_now[2] = 16'(dut.u_mac.rx_desc_wr_gray);
+    g_now[3] = 16'(dut.u_mac.rx_data_rd_gray);
+    g_now[4] = 16'(dut.u_mac.rx_desc_rd_gray);
+    g_now[5] = 16'(dut.u_mac.tx_desc_wr_gray);
+  end
+  initial begin
+    for (int i = 0; i < 6; i++) begin gray_bad[i] = 0; g_q[i] = '0; end
+    gray_multibit = 0;
+    wait (gtx_rst_n && axis_rst_n);
+    repeat (50) @(posedge gtx_clk);
+    mon_en = 1'b1;
+  end
+  always @(posedge gtx_clk) begin
+    for (int i = 0; i < 3; i++) begin
+      if (mon_en && pop16(g_now[i] ^ g_q[i]) > 1) begin gray_bad[i]++; end
+      g_q[i] <= g_now[i];
+    end
+  end
+  always @(posedge axis_clk) begin
+    for (int i = 3; i < 6; i++) begin
+      if (mon_en && pop16(g_now[i] ^ g_q[i]) > 1) begin gray_bad[i]++; end
+      g_q[i] <= g_now[i];
+    end
+  end
+  function automatic int pop16(input logic [15:0] v);
+    int c = 0;
+    for (int b = 0; b < 16; b++) if (v[b] === 1'b1) c++;
+    return c;
+  endfunction
+  function automatic int gray_total();
+    int t = 0;
+    for (int i = 0; i < 6; i++) t += gray_bad[i];
+    return t;
+  endfunction
+
   sfp_port_top dut (
     .clk              (clk),
     .rst_n            (rst_n),
@@ -206,9 +254,11 @@ module tb_sfp_port_top;
   // ---- capture the switch ingress sink ----
   byte cap_bytes[$];
   int  cap_tlast_idx;
+  int  cap_ends[$]; // cap_bytes.size() after each frame's last byte
 
   task automatic cap_reset();
     cap_bytes.delete();
+    cap_ends.delete();
     cap_tlast_idx = -1;
   endtask
 
@@ -216,7 +266,10 @@ module tb_sfp_port_top;
     if (m_tvalid && m_tready) begin
       cap_bytes.push_back(byte'(m_tdata[7:0]));
       if (m_tkeep[1]) cap_bytes.push_back(byte'(m_tdata[15:8]));
-      if (m_tlast) cap_tlast_idx = cap_bytes.size() - 1;
+      if (m_tlast) begin
+        cap_tlast_idx = cap_bytes.size() - 1;
+        cap_ends.push_back(cap_bytes.size());
+      end
       if (m_tuser !== 1'b0) begin
         $display("FAIL: m_axis_tuser unexpectedly set");
         errors++;
@@ -307,6 +360,44 @@ module tb_sfp_port_top;
     end
     bp_mode = 0;
 
+    // ---- test C: stress -- 20 back-to-back 600-byte frames (~12 KB, three
+    // times the MAC's 4 KB transmit buffer), so the transmit buffer must be
+    // recycled several times through the (deliberately one-word-per-clock)
+    // publication of the data read pointer, and receive buffer space likewise
+    bp_mode = 2;
+    cap_reset();
+    begin
+      int nf = 20;
+      int len = 600;
+      byte data[];
+      for (int f = 0; f < nf; f++) begin
+        data = new[len];
+        for (int i = 0; i < len; i++) data[i] = byte'(f * 13 + i * 3 + 1);
+        drive_egress_frame(data);
+      end
+      wait_cycles(40000);
+      begin
+        bit ok;
+        ok = (cap_ends.size() == nf) && (cap_bytes.size() == nf * len);
+        for (int f = 0; f < nf && ok; f++)
+          for (int i = 0; i < len; i++)
+            if (cap_bytes[f * len + i] !== byte'(f * 13 + i * 3 + 1)) ok = 1'b0;
+        for (int f = 0; f < cap_ends.size() && ok; f++)
+          if (cap_ends[f] != (f + 1) * len) ok = 1'b0;
+        if (ok) $display("PASS: testC %0d back-to-back %0d-byte frames all reproduced in order through the recycled buffers", nf, len);
+        else begin
+          $display("FAIL: testC stress (frames received=%0d bytes=%0d, expected %0d frames / %0d bytes)", cap_ends.size(), cap_bytes.size(), nf, nf * len);
+          errors++;
+        end
+      end
+    end
+
+    gray_multibit = gray_total();
+    if (gray_multibit != 0) begin
+      $display("FAIL: MAC Gray pointers changed more than one bit at once (tx_data_rd=%0d tx_desc_rd=%0d rx_desc_wr=%0d rx_data_rd=%0d rx_desc_rd=%0d tx_desc_wr=%0d): unsafe to synchronize",
+               gray_bad[0], gray_bad[1], gray_bad[2], gray_bad[3], gray_bad[4], gray_bad[5]);
+      errors++;
+    end else $display("PASS: every MAC Gray pointer changed exactly one bit per update (safe to synchronize)");
     if (errors == 0) $display("=== ALL TESTS PASSED ===");
     else              $display("=== %0d TEST(S) FAILED ===", errors);
     $finish;

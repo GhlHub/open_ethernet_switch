@@ -16,14 +16,18 @@
 // an AXI4-Stream MASTER whose output plugs into ingress_port_wr.sv's
 // s_axis_* port (rtl/dma/ingress_port_wr.sv).
 //
-// Two clock domains: the GEM FIFO interface (gem_clk) needs to sustain
-// roughly one byte per 8ns (~125MHz-class throughput at 8-bit width) to
-// keep up with full gigabit -- fixed hardware timing, can't be reclocked.
-// The fabric side (clk) runs at the switch's own 62.5MHz/16-bit
-// convention. rtl/common/async_fifo.sv (Gray-code CDC FIFO) crosses that
-// boundary; a small packer state machine on the clk side then combines
-// pairs of bytes into 16-bit words (tkeep=2'b01 for a trailing single
-// byte, i.e. an odd-length frame) before presenting them as AXI4-Stream.
+// Two clock domains: the GEM FIFO interface (gem_clk = the GEM's rx_clk)
+// pushes one byte per ~8 ns (1 Gb/s at 8-bit width) -- fixed hardware
+// timing, can't be reclocked. The fabric side (clk) runs at the switch's
+// 62.5 MHz / 16-bit convention, which is also exactly 1 Gb/s. The width
+// conversion therefore happens on the GEM side, BEFORE the crossing: bytes
+// are packed into 16-bit words in the gem_clk domain and one whole word
+// (plus keep/eop/err) is written into rtl/common/async_fifo.sv per write,
+// so the crossing carries 1 word per 16 ns and the fabric side reads one
+// word per cycle straight onto AXI4-Stream, with no further packing. (An
+// earlier version crossed byte-wide and packed on the fabric side, which
+// could only drain 1 byte per fabric cycle -- half the rate the GEM pushes
+// at, so a line-rate frame overflowed the FIFO after ~128 bytes.)
 //
 // Protocol (UG1085 Ch.34, Table 34-3 + surrounding text): the GEM pushes
 // unconditionally -- rx_w_wr_i pulses with rx_w_data_i/rx_w_sop_i/
@@ -61,7 +65,7 @@
 // actually using this signal.
 
 module gem_rx_w_to_axis #(
-  parameter int FIFO_DEPTH = 64
+  parameter int FIFO_DEPTH = 128 // in 16-bit words (256 bytes); power of 2
 ) (
   input  logic gem_clk,
   input  logic gem_rst_n,
@@ -91,60 +95,87 @@ module gem_rx_w_to_axis #(
   output logic [44:0] rx_w_status_o
 );
 
-  localparam int ENTRY_W = 8 + 1 + 1; // data + eop + err
+  // FIFO entry: {err, eop, keep_hi, data[15:0]}. keep_lo is always set (a
+  // word carries at least its low byte); keep_hi is clear only for the
+  // trailing single byte of an odd-length frame.
+  localparam int ENTRY_W = 16 + 3;
 
-  // ---- GEM-side (gem_clk): push into the async FIFO ----
+  // ---- GEM-side (gem_clk): pack bytes into words, push into the FIFO ----
   //
   // Everything in this block is gem_clk-domain only: fifo_full is the async
   // FIFO's write-side flag. (The FIFO's empty flag belongs to the fabric
   // clock and must NOT be used here -- an earlier version cleared the
   // overflow flag from it, an unsynchronized clock-domain crossing.)
   //
-  // When bytes of a frame have to be thrown away (FIFO full, or flush) after
-  // part of that frame is already in the FIFO, the FIFO would be left with a
-  // frame that has no end marker, and the fabric-side packer would glue the
-  // next frame onto it. So an aborted frame is closed with one synthetic
-  // {err=1, eop=1} entry (data 0x00) as soon as the FIFO has room, and the
-  // rest of that frame is discarded up to the next SOP. The synthetic entry
-  // reaches ingress_port_wr.sv as a frame with tuser (bad frame) set, which
-  // it already drops.
-  logic discard_q;   // throwing bytes away until the next SOP
-  logic in_frame_q;  // a non-final byte of the current frame is in the FIFO
-  logic abort_q;     // owe the FIFO a synthetic err+eop entry
+  // When data has to be thrown away (FIFO full, or flush) after part of a
+  // frame is already in the FIFO, the FIFO would be left with a frame that
+  // has no end marker, and the next frame would be glued onto it. So an
+  // aborted frame is closed with one synthetic {err=1, eop=1} entry (a
+  // single 0x00 byte) as soon as the FIFO has room, and the rest of that
+  // frame is discarded up to the next SOP. The synthetic entry reaches
+  // ingress_port_wr.sv as a frame with tuser (bad frame) set, which it
+  // already drops. A byte waiting to be paired (lo_q) belongs to the frame
+  // being discarded, so it is thrown away too.
+  logic       discard_q;   // throwing bytes away until the next SOP
+  logic       in_frame_q;  // a non-final word of the current frame is in the FIFO
+  logic       abort_q;     // owe the FIFO a synthetic err+eop entry
+  logic       have_lo_q;   // first byte of a pair is waiting in lo_q
+  logic [7:0] lo_q;
 
   // an SOP byte always ends a discard, and is itself kept
   wire sop_now     = rx_w_wr_i && rx_w_sop_i;
   wire discard_eff = discard_q && !sop_now;
 
-  logic [ENTRY_W-1:0] fifo_wr_data;
-  logic                fifo_wr_en, fifo_full;
+  logic fifo_full;
 
+  wire byte_in   = rx_w_wr_i && !discard_eff;
+  // a byte completes a word when it is the second of a pair, or is the
+  // final byte of the frame
+  wire emit      = byte_in && (have_lo_q || rx_w_eop_i);
   wire term_push = abort_q && !fifo_full;
-  wire byte_push = rx_w_wr_i && !discard_eff && !fifo_full && !term_push;
-  wire byte_drop = rx_w_wr_i && !discard_eff && (fifo_full || term_push);
+  wire word_push = emit && !fifo_full && !term_push;
+  wire word_drop = emit && (fifo_full || term_push);
 
-  assign fifo_wr_en   = term_push || byte_push;
-  assign fifo_wr_data = term_push ? {1'b1, 1'b1, 8'h00}
-                                  : {rx_w_err_i, rx_w_eop_i, rx_w_data_i};
+  wire [ENTRY_W-1:0] word_entry = {rx_w_err_i, rx_w_eop_i, have_lo_q,
+                                   have_lo_q ? rx_w_data_i : 8'h00,
+                                   have_lo_q ? lo_q        : rx_w_data_i};
+  wire [ENTRY_W-1:0] term_entry = {1'b1, 1'b1, 1'b0, 8'h00, 8'h00};
+
+  logic [ENTRY_W-1:0] fifo_wr_data;
+  logic                fifo_wr_en;
+  assign fifo_wr_en   = term_push || word_push;
+  assign fifo_wr_data = term_push ? term_entry : word_entry;
 
   always_ff @(posedge gem_clk or negedge gem_rst_n) begin
     if (!gem_rst_n) begin
       discard_q  <= 1'b0;
       in_frame_q <= 1'b0;
       abort_q    <= 1'b0;
+      have_lo_q  <= 1'b0;
+      lo_q       <= '0;
     end else begin
-      if (byte_push) in_frame_q <= !rx_w_eop_i;
+      // pairing
+      if (byte_in && !emit) begin
+        lo_q      <= rx_w_data_i;
+        have_lo_q <= 1'b1;
+      end else if (emit) begin
+        have_lo_q <= 1'b0;
+      end
+      // frame bookkeeping
+      if (word_push) in_frame_q <= !rx_w_eop_i;
       if (term_push) begin
         in_frame_q <= 1'b0;
         abort_q    <= 1'b0;
       end
       if (rx_w_flush_i) begin
         discard_q <= 1'b1;
+        have_lo_q <= 1'b0;
         if (in_frame_q && !term_push) abort_q <= 1'b1;
       end else begin
         if (sop_now) discard_q <= 1'b0;
-        if (byte_drop) begin
+        if (word_drop) begin
           discard_q <= 1'b1;
+          have_lo_q <= 1'b0;
           if (in_frame_q && !term_push) abort_q <= 1'b1;
         end
       end
@@ -177,9 +208,11 @@ module gem_rx_w_to_axis #(
   assign rx_w_status_o = rx_w_status_q;
 
   // overflow (UG1085 Table 34-3 text): tells the GEM the PL FIFO dropped
-  // data. Set the cycle after a byte is dropped; cleared one cycle after
+  // data. Set the cycle after a word is dropped; cleared one cycle after
   // the GEM's own rx_w_eop for that frame, which satisfies "asserted no later
-  // than one cycle after rx_w_eop". Entirely gem_clk-domain.
+  // than one cycle after rx_w_eop". A word is only ever dropped on the cycle
+  // its last byte arrives, so a drop on the frame's final word is seen at
+  // eop+1. Entirely gem_clk-domain.
   logic overflow_q, frame_end_q;
   always_ff @(posedge gem_clk or negedge gem_rst_n) begin
     if (!gem_rst_n || rx_w_flush_i) begin
@@ -187,90 +220,23 @@ module gem_rx_w_to_axis #(
       frame_end_q <= 1'b0;
     end else begin
       frame_end_q <= rx_w_wr_i && rx_w_eop_i;
-      if (byte_drop)         overflow_q <= 1'b1;
+      if (word_drop)         overflow_q <= 1'b1;
       else if (frame_end_q)  overflow_q <= 1'b0;
     end
   end
   assign rx_w_overflow_o = overflow_q;
 
-  // ---- fabric-side (clk): pack pairs of bytes popped from the FIFO
-  // into 16-bit AXI4-Stream words. async_fifo's read side is a
-  // combinational peek-before-pop (rd_data_o reflects the next entry to
-  // dequeue whenever !empty; asserting rd_en_i that same cycle commits
-  // the pop) -- no extra registered-read wait state is needed here,
-  // unlike the frame_ram pattern used elsewhere in this project. ----
-  typedef enum logic {S_FIRST, S_SECOND} pk_state_t;
-  pk_state_t pk_state_q;
+  // ---- fabric side (clk): the FIFO already holds whole AXI4-Stream words ----
+  wire [15:0] rd_word = fifo_rd_data[15:0];
+  wire        rd_keep_hi = fifo_rd_data[16];
+  wire        rd_eop  = fifo_rd_data[17];
+  wire        rd_err  = fifo_rd_data[18];
 
-  logic [7:0] first_byte_q;
-  logic       first_err_q;
-
-  wire       first_eop = fifo_rd_data[8];
-  wire       this_err  = fifo_rd_data[9];
-  wire [7:0] this_byte = fifo_rd_data[7:0];
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      pk_state_q <= S_FIRST;
-    end else begin
-      unique case (pk_state_q)
-        S_FIRST: begin
-          if (!fifo_empty && !first_eop) begin
-            first_byte_q <= this_byte;
-            first_err_q  <= this_err;
-            pk_state_q   <= S_SECOND;
-          end
-          // a lone final byte (first_eop=1) is presented and popped
-          // combinationally below without changing state -- see fifo_rd_en
-        end
-        S_SECOND: begin
-          if (!fifo_empty && m_axis_tready) pk_state_q <= S_FIRST;
-        end
-        default: pk_state_q <= S_FIRST;
-      endcase
-    end
-  end
-
-  always_comb begin
-    fifo_rd_en    = 1'b0;
-    m_axis_tdata  = {this_byte, first_byte_q};
-    m_axis_tkeep  = 2'b11;
-    m_axis_tvalid = 1'b0;
-    m_axis_tlast  = 1'b0;
-    m_axis_tuser  = 1'b0;
-
-    unique case (pk_state_q)
-      S_FIRST: begin
-        if (!fifo_empty) begin
-          if (first_eop) begin
-            // lone trailing byte of an odd-length frame
-            m_axis_tdata  = {8'h00, this_byte};
-            m_axis_tkeep  = 2'b01;
-            m_axis_tvalid = 1'b1;
-            m_axis_tlast  = 1'b1;
-            m_axis_tuser  = this_err;
-            fifo_rd_en    = m_axis_tready;
-          end else begin
-            // capture the first byte of a pair (mirrors the always_ff's
-            // own transition condition exactly) and pop it -- nothing is
-            // presented on m_axis_* yet, so there's no backpressure to
-            // honor for this pop specifically.
-            fifo_rd_en = 1'b1;
-          end
-        end
-      end
-      S_SECOND: begin
-        if (!fifo_empty) begin
-          m_axis_tdata  = {this_byte, first_byte_q};
-          m_axis_tkeep  = 2'b11;
-          m_axis_tlast  = first_eop; // reusing the wire: this is the *second* byte's eop here
-          m_axis_tvalid = 1'b1;
-          m_axis_tuser  = this_err;
-          fifo_rd_en    = m_axis_tready;
-        end
-      end
-      default: ;
-    endcase
-  end
+  assign m_axis_tvalid = !fifo_empty;
+  assign m_axis_tdata  = rd_word;
+  assign m_axis_tkeep  = {rd_keep_hi, 1'b1};
+  assign m_axis_tlast  = rd_eop;
+  assign m_axis_tuser  = rd_err && rd_eop;
+  assign fifo_rd_en    = m_axis_tvalid && m_axis_tready;
 
 endmodule

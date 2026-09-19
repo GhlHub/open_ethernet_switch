@@ -4,8 +4,10 @@
 identifies its origin as `open_eth_mac_1g` from
 [GhlHub/open-ethernet-cores](https://github.com/GhlHub/open-ethernet-cores).
 Its existing `GPL-3.0-or-later` SPDX identifier and modification notice are
-preserved. The notice describes the module rename and permanently enabled
-destination acceptance for switch operation. The original import does not
+preserved. The notice describes the module rename, permanently enabled
+destination acceptance for switch operation, and two clock-domain-crossing changes
+(the reset inputs are reclocked into each clock domain, and the data read
+pointers are published one word per clock), with no change to the frame path. The original import does not
 record an upstream commit ID.
 
 [`rtl/mdio/open_eth_mdio_master.sv`](../rtl/mdio/open_eth_mdio_master.sv) is

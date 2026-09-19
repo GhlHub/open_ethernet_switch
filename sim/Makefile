@@ -122,6 +122,9 @@ PL_GMII_ADAPT_SRCS := \
 
 PL_GMII_TB := $(TB_DIR)/tb_pl_gmii_adapters.sv
 
+MAC_RESET_SRCS := $(PL_GMII_DIR)/open_eth_mac_1g_switch.sv
+MAC_RESET_TB   := $(TB_DIR)/tb_mac_reset_reclock.sv
+
 SFP_PORT_SRCS := \
 	$(COMMON_DIR)/async_fifo.sv \
 	$(SFP_PCS_DIR)/sfp_pcs_pkg.sv \
@@ -220,12 +223,12 @@ PL_CLKGEN_SIM_SRCS := $(PL_GMII_DIR)/pl_eth_clk_gen_sim_model.sv
 PL_CLKGEN_SIM_TB   := $(TB_DIR)/tb_pl_eth_clk_gen_sim_model.sv
 
 MDIO_DIR := ../rtl/mdio
-MDIO_SIM_SRCS := $(MDIO_DIR)/open_eth_mdio_master.sv $(MDIO_DIR)/mdio_controller_sim_model.sv
+MDIO_SIM_SRCS := $(MDIO_DIR)/open_eth_mdio_master.sv $(MDIO_DIR)/phy_init_seq.sv $(MDIO_DIR)/mdio_controller_sim_model.sv
 MDIO_SIM_TB   := $(TB_DIR)/tb_mdio_controller.sv
 
 VIVADO_SETTINGS := /tools/Xilinx/2026.1/Vivado/settings64.sh
 
-.PHONY: sim lint xsim sim-mac lint-mac xsim-mac sim-bufmgr lint-bufmgr xsim-bufmgr sim-ingress lint-ingress xsim-ingress sim-ps-eth lint-ps-eth xsim-ps-eth sim-egress lint-egress xsim-egress sim-integ lint-integ xsim-integ sim-sfp-pcs lint-sfp-pcs xsim-sfp-pcs sim-autoneg lint-autoneg xsim-autoneg sim-async-fifo lint-async-fifo xsim-async-fifo sim-pl-gmii lint-pl-gmii sim-sfp-port lint-sfp-port sim-cpu-port lint-cpu-port sim-mac-fwd lint-mac-fwd sim-switch-top lint-switch-top sim-gth-sim lint-gth-sim xsim-gth-sim sim-rgmii-sim xsim-rgmii-sim sim-pl-clkgen-sim lint-pl-clkgen-sim xsim-pl-clkgen-sim sim-mdio lint-mdio xsim-mdio clean
+.PHONY: sim-mac-reset xsim-mac-reset xsim-async-fifo-xpm xsim-ps-eth-xpm xsim-pl-gmii-xpm xsim-integ-xpm sim lint xsim sim-mac lint-mac xsim-mac sim-bufmgr lint-bufmgr xsim-bufmgr sim-ingress lint-ingress xsim-ingress sim-ps-eth lint-ps-eth xsim-ps-eth sim-egress lint-egress xsim-egress sim-integ lint-integ xsim-integ sim-sfp-pcs lint-sfp-pcs xsim-sfp-pcs sim-autoneg lint-autoneg xsim-autoneg sim-async-fifo lint-async-fifo xsim-async-fifo sim-pl-gmii lint-pl-gmii sim-sfp-port lint-sfp-port sim-cpu-port lint-cpu-port sim-mac-fwd lint-mac-fwd sim-switch-top lint-switch-top sim-gth-sim lint-gth-sim xsim-gth-sim sim-rgmii-sim xsim-rgmii-sim sim-pl-clkgen-sim lint-pl-clkgen-sim xsim-pl-clkgen-sim sim-mdio lint-mdio xsim-mdio clean
 
 # default targets operate on the MAC table, for backwards compatibility
 sim: sim-mac
@@ -368,6 +371,20 @@ xsim-autoneg:
 	  xelab -debug typical tb_autoneg_1000base_x -s tb_sim && \
 	  xsim tb_sim -runall
 
+sim-mac-reset: tb_mac_reset_reclock.vvp
+	vvp tb_mac_reset_reclock.vvp
+
+tb_mac_reset_reclock.vvp: $(MAC_RESET_SRCS) $(MAC_RESET_TB)
+	iverilog -g2012 -o $@ $(MAC_RESET_SRCS) $(MAC_RESET_TB)
+
+xsim-mac-reset:
+	mkdir -p xsim_run_mac_reset
+	cd xsim_run_mac_reset && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv $(addprefix ../,$(MAC_RESET_SRCS)) $(addprefix ../,$(MAC_RESET_TB)) && \
+	  xelab -debug typical tb_mac_reset_reclock -s tb_sim && \
+	  xsim tb_sim -runall
+
 sim-async-fifo: tb_async_fifo.vvp
 	vvp tb_async_fifo.vvp
 
@@ -383,6 +400,46 @@ xsim-async-fifo:
 	  source $(VIVADO_SETTINGS) && \
 	  xvlog -sv $(addprefix ../,$(ASYNC_FIFO_SRCS)) $(addprefix ../,$(ASYNC_FIFO_TB)) && \
 	  xelab -debug typical tb_async_fifo -s tb_sim && \
+	  xsim tb_sim -runall
+
+# The same testbench against the XPM (xpm_fifo_async) path: Vivado xsim with
+# SYNTHESIS defined, XPM library and glbl linked. This is the only simulator
+# that can run the synthesis-side async_fifo.
+xsim-async-fifo-xpm:
+	mkdir -p xsim_run_async_fifo_xpm
+	cd xsim_run_async_fifo_xpm && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv -d SYNTHESIS $(addprefix ../,$(ASYNC_FIFO_SRCS)) $(addprefix ../,$(ASYNC_FIFO_TB)) && \
+	  xvlog $$XILINX_VIVADO/data/verilog/src/glbl.v && \
+	  xelab -debug typical -L xpm tb_async_fifo glbl -s tb_sim && \
+	  xsim tb_sim -runall
+
+# Bridge and adapter benches against the XPM async FIFO (see xsim-async-fifo-xpm).
+xsim-ps-eth-xpm:
+	mkdir -p xsim_run_ps_eth_xpm
+	cd xsim_run_ps_eth_xpm && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv -d SYNTHESIS $(addprefix ../,$(PS_ETH_SRCS)) $(addprefix ../,$(PS_ETH_TB)) && \
+	  xvlog $$XILINX_VIVADO/data/verilog/src/glbl.v && \
+	  xelab -debug typical -L xpm tb_ps_gem_axis_bridge glbl -s tb_sim && \
+	  xsim tb_sim -runall
+
+xsim-integ-xpm:
+	mkdir -p xsim_run_integ_xpm
+	cd xsim_run_integ_xpm && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv -d SYNTHESIS $(addprefix ../,$(INTEG_SRCS)) $(addprefix ../,$(INTEG_TB)) && \
+	  xvlog $$XILINX_VIVADO/data/verilog/src/glbl.v && \
+	  xelab -debug typical -L xpm tb_egress_gem_tx_integration glbl -s tb_sim && \
+	  xsim tb_sim -runall
+
+xsim-pl-gmii-xpm:
+	mkdir -p xsim_run_pl_gmii_xpm
+	cd xsim_run_pl_gmii_xpm && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv -d SYNTHESIS $(addprefix ../,$(PL_GMII_ADAPT_SRCS)) $(addprefix ../,$(PL_GMII_TB)) && \
+	  xvlog $$XILINX_VIVADO/data/verilog/src/glbl.v && \
+	  xelab -debug typical -L xpm tb_pl_gmii_adapters glbl -s tb_sim && \
 	  xsim tb_sim -runall
 
 sim-pl-gmii: tb_pl_gmii_adapters.vvp
@@ -488,6 +545,31 @@ xsim-gth-sim:
 	  xelab -debug typical tb_gth_sfp_sim_model -s tb_sim && \
 	  xsim tb_sim -runall
 
+RX_ELASTIC_SRCS := $(COMMON_DIR)/fifo36_async_2kx18.sv $(PL_GMII_DIR)/rgmii_rx_elastic.sv
+RX_ELASTIC_TB   := $(TB_DIR)/tb_rgmii_rx_elastic.sv
+
+.PHONY: sim-rx-diag
+sim-rx-diag: ../rtl/common/sticky_xdomain.sv ../rtl/board/rx_diag_regs.sv $(TB_DIR)/tb_rx_diag.sv ../rtl/sfp_pcs/sfp_sideband.sv $(TB_DIR)/tb_sfp_sideband.sv
+	iverilog -g2012 -s tb_rx_diag -o tb_rx_diag.vvp ../rtl/common/sticky_xdomain.sv ../rtl/board/rx_diag_regs.sv $(TB_DIR)/tb_rx_diag.sv && vvp tb_rx_diag.vvp | grep "PASS\|FAIL"
+	iverilog -g2012 -s tb_sfp_sideband -o tb_sfp_sideband.vvp ../rtl/sfp_pcs/sfp_sideband.sv $(TB_DIR)/tb_sfp_sideband.sv && vvp tb_sfp_sideband.vvp | grep "PASS\|FAIL"
+
+.PHONY: sim-rx-elastic xsim-rx-elastic-hw
+sim-rx-elastic: $(RX_ELASTIC_SRCS) $(RX_ELASTIC_TB)
+	for p in 500 -500 0 3000 -3000; do \
+	  iverilog -g2012 -Ptb_rgmii_rx_elastic.PPM=$$p -o tb_rgmii_rx_elastic.vvp $(RX_ELASTIC_SRCS) $(RX_ELASTIC_TB) && \
+	  vvp tb_rgmii_rx_elastic.vvp | grep "PPM\|PASS\|FAIL" || exit 1; \
+	done
+
+# same bench against the real FIFO36E2 (unisim model) in Vivado xsim
+xsim-rx-elastic-hw:
+	mkdir -p xsim_run_rx_elastic
+	cd xsim_run_rx_elastic && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv -d SYNTHESIS $(addprefix ../,$(RX_ELASTIC_SRCS)) $(addprefix ../,$(RX_ELASTIC_TB)) && \
+	  xvlog $$XILINX_VIVADO/data/verilog/src/glbl.v && \
+	  xelab -debug typical -L unisims_ver -generic_top PPM=500 tb_rgmii_rx_elastic glbl -s tb_sim && \
+	  xsim tb_sim -runall
+
 sim-rgmii-sim: tb_rgmii_gmii_sim_model.vvp
 	vvp tb_rgmii_gmii_sim_model.vvp
 
@@ -522,8 +604,12 @@ xsim-pl-clkgen-sim:
 	  xelab -debug typical tb_pl_eth_clk_gen_sim_model -s tb_sim && \
 	  xsim tb_sim -runall
 
-sim-mdio: tb_mdio_controller.vvp
+sim-mdio: tb_mdio_controller.vvp tb_phy_init_seq.vvp tb_mac_reset_reclock.vvp
 	vvp tb_mdio_controller.vvp
+	vvp tb_phy_init_seq.vvp
+
+tb_phy_init_seq.vvp: $(MDIO_SIM_SRCS) $(TB_DIR)/tb_phy_init_seq.sv
+	iverilog -g2012 -o $@ $(MDIO_SIM_SRCS) $(TB_DIR)/tb_phy_init_seq.sv
 
 tb_mdio_controller.vvp: $(MDIO_SIM_SRCS) $(MDIO_SIM_TB)
 	iverilog -g2012 -o $@ $(MDIO_SIM_SRCS) $(MDIO_SIM_TB)
@@ -532,7 +618,7 @@ lint-mdio:
 	verilator --lint-only --timing --top-module mdio_controller_sim_model $(MDIO_SIM_SRCS)
 
 xsim-mdio:
-	mkdir -p xsim_run_mdio
+	mkdir -p xsim_run_mdio xsim_run_mac_reset
 	cd xsim_run_mdio && \
 	  source $(VIVADO_SETTINGS) && \
 	  xvlog -sv $(addprefix ../,$(MDIO_SIM_SRCS)) $(addprefix ../,$(MDIO_SIM_TB)) && \
@@ -540,5 +626,5 @@ xsim-mdio:
 	  xsim tb_sim -runall
 
 clean:
-	rm -f tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_autoneg_1000base_x.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp tb_rgmii_gmii_sim_model.vvp tb_pl_eth_clk_gen_sim_model.vvp tb_mdio_controller.vvp
-	rm -rf xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_autoneg xsim_run_async_fifo xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim xsim_run_rgmii_sim xsim_run_pl_clkgen_sim xsim_run_mdio
+	rm -f tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_autoneg_1000base_x.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp tb_rgmii_gmii_sim_model.vvp tb_pl_eth_clk_gen_sim_model.vvp tb_mdio_controller.vvp tb_phy_init_seq.vvp tb_mac_reset_reclock.vvp
+	rm -rf xsim_run_rx_elastic tb_rgmii_rx_elastic.vvp xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_autoneg xsim_run_async_fifo xsim_run_async_fifo_xpm xsim_run_ps_eth_xpm xsim_run_integ_xpm xsim_run_pl_gmii_xpm xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim xsim_run_rgmii_sim xsim_run_pl_clkgen_sim xsim_run_mdio

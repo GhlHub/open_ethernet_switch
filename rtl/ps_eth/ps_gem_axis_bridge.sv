@@ -9,9 +9,11 @@
 // Clock domains: gem_rx_clk/gem_tx_clk (with resets) for the GEM-facing side (its own
 // required rate, ~125MHz-class, to sustain full gigabit at 8-bit width --
 // fixed hardware timing, can't be reclocked) and clk/rst_n for the
-// fabric-facing side (the switch's 62.5MHz/16-bit convention). Each half
-// below carries its own async_fifo-based CDC; see those two modules for
-// the actual crossing logic.
+// fabric-facing side (the switch's 62.5MHz/16-bit convention, also 1 Gb/s).
+// Each half below carries its own async_fifo-based CDC, and the crossing
+// carries whole 16-bit words: the 8-bit/16-bit width conversion happens on
+// the GEM side of each crossing (see those two modules for the details,
+// including the TX start policy and the UG1085 underflow/flush handling).
 
 module ps_gem_axis_bridge (
   input  logic clk,      // fabric clock (62.5 MHz)

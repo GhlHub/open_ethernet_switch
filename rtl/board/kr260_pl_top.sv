@@ -111,8 +111,27 @@ module kr260_pl_top
   output logic        mdio1_s_axi_rvalid,
   input  logic        mdio1_s_axi_rready,
 
+  // ---- AXI4-Lite: RGMII RX diagnostics (axis_clk domain) ----
+  input  logic [7:0]  diag_s_axi_awaddr,
+  input  logic        diag_s_axi_awvalid,
+  output logic        diag_s_axi_awready,
+  input  logic [31:0] diag_s_axi_wdata,
+  input  logic [3:0]  diag_s_axi_wstrb,
+  input  logic        diag_s_axi_wvalid,
+  output logic        diag_s_axi_wready,
+  output logic [1:0]  diag_s_axi_bresp,
+  output logic        diag_s_axi_bvalid,
+  input  logic        diag_s_axi_bready,
+  input  logic [7:0]  diag_s_axi_araddr,
+  input  logic        diag_s_axi_arvalid,
+  output logic        diag_s_axi_arready,
+  output logic [31:0] diag_s_axi_rdata,
+  output logic [1:0]  diag_s_axi_rresp,
+  output logic        diag_s_axi_rvalid,
+  input  logic        diag_s_axi_rready,
+
   // ---- everything else: switch_top's own ports, same names ----
-  (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axis_clk CLK", X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF pl0_s_axi:pl1_s_axi:sfp_s_axi:mdio0_s_axi:mdio1_s_axi, ASSOCIATED_RESET axis_rst_n, FREQ_HZ 150000000" *)
+  (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axis_clk CLK", X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF pl0_s_axi:pl1_s_axi:sfp_s_axi:mdio0_s_axi:mdio1_s_axi:diag_s_axi, ASSOCIATED_RESET axis_rst_n, FREQ_HZ 150000000" *)
   input logic axis_clk,
   (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axis_rst_n RST", X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
   input logic axis_rst_n,
@@ -326,13 +345,32 @@ module kr260_pl_top
   logic pl0_gmii_rx_dv, pl0_gmii_rx_er, pl0_gmii_tx_en, pl0_gmii_tx_er;
   logic pl1_gmii_rx_dv, pl1_gmii_rx_er, pl1_gmii_tx_en, pl1_gmii_tx_er;
 
+  logic [3:0] diag_flags, diag_clr;
+  logic [15:0] sfp_sb_status;
+  logic        sfp_sb_force, sfp_sb_clr_fault, sfp_sb_clr_removed, sfp_sb_clr_lockout;
+  rx_diag_regs u_rx_diag (
+    .clk (axis_clk), .rst_n (axis_rst_n),
+    .s_axi_awaddr (diag_s_axi_awaddr), .s_axi_awvalid (diag_s_axi_awvalid), .s_axi_awready (diag_s_axi_awready),
+    .s_axi_wdata (diag_s_axi_wdata), .s_axi_wstrb (diag_s_axi_wstrb), .s_axi_wvalid (diag_s_axi_wvalid), .s_axi_wready (diag_s_axi_wready),
+    .s_axi_bresp (diag_s_axi_bresp), .s_axi_bvalid (diag_s_axi_bvalid), .s_axi_bready (diag_s_axi_bready),
+    .s_axi_araddr (diag_s_axi_araddr), .s_axi_arvalid (diag_s_axi_arvalid), .s_axi_arready (diag_s_axi_arready),
+    .s_axi_rdata (diag_s_axi_rdata), .s_axi_rresp (diag_s_axi_rresp), .s_axi_rvalid (diag_s_axi_rvalid), .s_axi_rready (diag_s_axi_rready),
+    .flags_i (diag_flags), .clear_o (diag_clr),
+    .sfp_status_i (sfp_sb_status), .sfp_force_disable_o (sfp_sb_force),
+    .sfp_clr_fault_seen_o (sfp_sb_clr_fault), .sfp_clr_removed_seen_o (sfp_sb_clr_removed),
+    .sfp_clr_lockout_o (sfp_sb_clr_lockout)
+  );
+
   rgmii_gmii_adapter u_rgmii0 (
     .gtx_clk (gtx_clk_pl0), .gtx_rst_n (gtx_rst_n_pl0),
     .idelay_refclk_i (idly_clk_pl0), .idelay_rst_n_i (idly_rst_n_pl0),
     .rgmii_txd_o (pl0_rgmii_txd), .rgmii_tx_ctl_o (pl0_rgmii_tx_ctl), .rgmii_txc_o (pl0_rgmii_txc),
     .rgmii_rxd_i (pl0_rgmii_rxd), .rgmii_rx_ctl_i (pl0_rgmii_rx_ctl), .rgmii_rxc_i (pl0_rgmii_rxc),
     .gmii_txd_i (pl0_gmii_txd), .gmii_tx_en_i (pl0_gmii_tx_en), .gmii_tx_er_i (pl0_gmii_tx_er),
-    .gmii_rxd_o (pl0_gmii_rxd), .gmii_rx_dv_o (pl0_gmii_rx_dv), .gmii_rx_er_o (pl0_gmii_rx_er)
+    .gmii_rxd_o (pl0_gmii_rxd), .gmii_rx_dv_o (pl0_gmii_rx_dv), .gmii_rx_er_o (pl0_gmii_rx_er),
+    .diag_clk_i (axis_clk), .diag_rst_n_i (axis_rst_n),
+    .diag_clr_overflow_i (diag_clr[0]), .diag_clr_underrun_i (diag_clr[1]),
+    .rx_elastic_overflow_o (diag_flags[0]), .rx_elastic_underrun_o (diag_flags[1])
   );
 
   rgmii_gmii_adapter u_rgmii1 (
@@ -341,29 +379,42 @@ module kr260_pl_top
     .rgmii_txd_o (pl1_rgmii_txd), .rgmii_tx_ctl_o (pl1_rgmii_tx_ctl), .rgmii_txc_o (pl1_rgmii_txc),
     .rgmii_rxd_i (pl1_rgmii_rxd), .rgmii_rx_ctl_i (pl1_rgmii_rx_ctl), .rgmii_rxc_i (pl1_rgmii_rxc),
     .gmii_txd_i (pl1_gmii_txd), .gmii_tx_en_i (pl1_gmii_tx_en), .gmii_tx_er_i (pl1_gmii_tx_er),
-    .gmii_rxd_o (pl1_gmii_rxd), .gmii_rx_dv_o (pl1_gmii_rx_dv), .gmii_rx_er_o (pl1_gmii_rx_er)
+    .gmii_rxd_o (pl1_gmii_rxd), .gmii_rx_dv_o (pl1_gmii_rx_dv), .gmii_rx_er_o (pl1_gmii_rx_er),
+    .diag_clk_i (axis_clk), .diag_rst_n_i (axis_rst_n),
+    .diag_clr_overflow_i (diag_clr[2]), .diag_clr_underrun_i (diag_clr[3]),
+    .rx_elastic_overflow_o (diag_flags[2]), .rx_elastic_underrun_o (diag_flags[3])
   );
 
   // ---------------------------------------------------------------------
   // MDIO controllers (one per independent PL PHY bus), axis_clk domain
   // ---------------------------------------------------------------------
-  mdio_controller u_mdio0 (
+  // PHY start-up runs when the PHY reset request is released; the request
+  // comes from the PL clock-generator lock, so bring it into axis_clk.
+  (* ASYNC_REG = "TRUE" *) logic [1:0] init_go0_sync, init_go1_sync;
+  always_ff @(posedge axis_clk) begin
+    init_go0_sync <= {init_go0_sync[0], pl0_phy_reset_n};
+    init_go1_sync <= {init_go1_sync[0], pl1_phy_reset_n};
+  end
+
+  mdio_controller #(.INIT_PHY_ADDR(5'd2)) u_mdio0 (
     .s_axi_lite_clk (axis_clk), .s_axi_lite_resetn (axis_rst_n),
     .s_axi_awaddr (mdio0_s_axi_awaddr), .s_axi_awvalid (mdio0_s_axi_awvalid), .s_axi_awready (mdio0_s_axi_awready),
     .s_axi_wdata (mdio0_s_axi_wdata), .s_axi_wstrb (mdio0_s_axi_wstrb), .s_axi_wvalid (mdio0_s_axi_wvalid), .s_axi_wready (mdio0_s_axi_wready),
     .s_axi_bresp (mdio0_s_axi_bresp), .s_axi_bvalid (mdio0_s_axi_bvalid), .s_axi_bready (mdio0_s_axi_bready),
     .s_axi_araddr (mdio0_s_axi_araddr), .s_axi_arvalid (mdio0_s_axi_arvalid), .s_axi_arready (mdio0_s_axi_arready),
     .s_axi_rdata (mdio0_s_axi_rdata), .s_axi_rresp (mdio0_s_axi_rresp), .s_axi_rvalid (mdio0_s_axi_rvalid), .s_axi_rready (mdio0_s_axi_rready),
+    .init_go_i (init_go0_sync[1]), .init_done_o (), .init_fail_o (),
     .mdio_io (pl0_mdio), .mdc_o (pl0_mdc)
   );
 
-  mdio_controller u_mdio1 (
+  mdio_controller #(.INIT_PHY_ADDR(5'd3)) u_mdio1 (
     .s_axi_lite_clk (axis_clk), .s_axi_lite_resetn (axis_rst_n),
     .s_axi_awaddr (mdio1_s_axi_awaddr), .s_axi_awvalid (mdio1_s_axi_awvalid), .s_axi_awready (mdio1_s_axi_awready),
     .s_axi_wdata (mdio1_s_axi_wdata), .s_axi_wstrb (mdio1_s_axi_wstrb), .s_axi_wvalid (mdio1_s_axi_wvalid), .s_axi_wready (mdio1_s_axi_wready),
     .s_axi_bresp (mdio1_s_axi_bresp), .s_axi_bvalid (mdio1_s_axi_bvalid), .s_axi_bready (mdio1_s_axi_bready),
     .s_axi_araddr (mdio1_s_axi_araddr), .s_axi_arvalid (mdio1_s_axi_arvalid), .s_axi_arready (mdio1_s_axi_arready),
     .s_axi_rdata (mdio1_s_axi_rdata), .s_axi_rresp (mdio1_s_axi_rresp), .s_axi_rvalid (mdio1_s_axi_rvalid), .s_axi_rready (mdio1_s_axi_rready),
+    .init_go_i (init_go1_sync[1]), .init_done_o (), .init_fail_o (),
     .mdio_io (pl1_mdio), .mdc_o (pl1_mdc)
   );
 
@@ -394,8 +445,17 @@ module kr260_pl_top
     .locked_o (sfp_mmcm_locked)
   );
 
-  // TX_DISABLE is pulled up on the carrier (module off unless driven low)
-  assign sfp_tx_disable = 1'b0;
+  // TX_DISABLE is pulled up on the carrier (module off unless driven low);
+  // sfp_sideband.sv drives it low only for a present, settled, fault-free module.
+  sfp_sideband u_sfp_sideband (
+    .clk (axis_clk), .rst_n (axis_rst_n),
+    .mod_abs_i (sfp_mod_abs), .tx_fault_i (sfp_tx_fault), .los_i (sfp_los),
+    .tx_disable_o (sfp_tx_disable),
+    .force_disable_i (sfp_sb_force),
+    .clr_fault_seen_i (sfp_sb_clr_fault), .clr_removed_seen_i (sfp_sb_clr_removed),
+    .clr_lockout_i (sfp_sb_clr_lockout),
+    .status_o (sfp_sb_status)
+  );
 
   logic sfp_sync_ok, sfp_an_link_up, sfp_an_duplex_full, sfp_an_remote_fault;
   logic [1:0] sfp_an_pause;

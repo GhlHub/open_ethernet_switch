@@ -39,6 +39,7 @@ update_compile_order -fileset sources_1
 add_files -fileset constrs_1 -norecurse [glob $root/constraints/*.xdc]
 # the crossing constraints reference IP-generated clocks: implementation only
 set_property USED_IN {implementation} [get_files $root/constraints/kr260_clocks.xdc]
+set_property USED_IN {implementation} [get_files $root/constraints/kr260_rgmii_io.xdc]
 
 # ---- block design ----
 create_bd_design system
@@ -52,7 +53,7 @@ apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_boar
 set_property -dict [list \
   CONFIG.PSU__USE__M_AXI_GP2 {1}  CONFIG.PSU__USE__M_AXI_GP0 {0} CONFIG.PSU__USE__M_AXI_GP1 {0} \
   CONFIG.PSU__USE__S_AXI_GP2 {1}  CONFIG.PSU__USE__S_AXI_GP3 {1} \
-  CONFIG.PSU__USE__IRQ0 {1} \
+  CONFIG.PSU__USE__IRQ0 {1} CONFIG.PSU__USE__IRQ1 {1} \
   CONFIG.PSU__FPGA_PL0_ENABLE {1} CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ {150} \
   CONFIG.PSU__FPGA_PL1_ENABLE {1} CONFIG.PSU__CRL_APB__PL1_REF_CTRL__FREQMHZ {50} \
   CONFIG.PSU__ENET0__PERIPHERAL__ENABLE {1} CONFIG.PSU__ENET0__PERIPHERAL__IO {GT Lane0} CONFIG.PSU__ENET0__FIFO__ENABLE {1} \
@@ -74,9 +75,14 @@ set_property -dict [list \
 # reset for the 150 MHz control domain
 set rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst150]
 
-# AXI-Lite control fabric: PS HPM0_LPD -> {3 MAC, 2 MDIO, DMA}
+# SFP module management I2C (SDA/SCL are PL pins HDB17/HDB16_CC, carrier sheet 13):
+# Xilinx AXI IIC on the 150 MHz control domain (standard Vitis xiic driver).
+set sfp_iic [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_iic sfp_iic]
+set_property -dict [list CONFIG.IIC_FREQ_KHZ {100}] $sfp_iic
+
+# AXI-Lite control fabric: PS HPM0_LPD -> {3 MAC, 2 MDIO, DMA, SFP I2C}
 set sc_ctl [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect sc_ctl]
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {6} CONFIG.NUM_CLKS {2}] $sc_ctl
+set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {8} CONFIG.NUM_CLKS {2}] $sc_ctl
 # DDR fabric: switch masters -> HP0, DMA masters -> HP1
 set sc_ddr [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect sc_ddr]
 set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] $sc_ddr
@@ -117,7 +123,7 @@ foreach p {sc_ddr/aresetn sc_dma/aresetn dma/axi_resetn} {
 
 set_property -dict [list \
   CONFIG.FREQ_HZ [get_property CONFIG.FREQ_HZ [get_bd_pins ps/pl_clk0]] \
-  CONFIG.ASSOCIATED_BUSIF {pl0_s_axi:pl1_s_axi:sfp_s_axi:mdio0_s_axi:mdio1_s_axi} \
+  CONFIG.ASSOCIATED_BUSIF {pl0_s_axi:pl1_s_axi:sfp_s_axi:mdio0_s_axi:mdio1_s_axi:diag_s_axi} \
   CONFIG.ASSOCIATED_RESET {axis_rst_n}] [get_bd_ports axis_clk]
 set_property -dict [list \
   CONFIG.ASSOCIATED_BUSIF {m_axi_ing:m_axi_egr:m_axi_cpu:cpu_s_axis:cpu_m_axis} \
@@ -132,6 +138,15 @@ foreach n {pl0_s_axi pl1_s_axi sfp_s_axi mdio0_s_axi mdio1_s_axi} {
   incr i
 }
 connect_bd_intf_net [get_bd_intf_pins sc_ctl/M05_AXI] [get_bd_intf_pins dma/S_AXI_LITE]
+connect_bd_intf_net [get_bd_intf_pins sc_ctl/M06_AXI] [get_bd_intf_pins sfp_iic/S_AXI]
+make_bd_intf_pins_external -name diag_s_axi [get_bd_intf_pins sc_ctl/M07_AXI]
+connect_bd_net [get_bd_pins ps/pl_clk0] [get_bd_pins sfp_iic/s_axi_aclk]
+connect_bd_net [get_bd_pins rst150/peripheral_aresetn] [get_bd_pins sfp_iic/s_axi_aresetn]
+make_bd_intf_pins_external -name sfp_iic [get_bd_intf_pins sfp_iic/IIC]
+set irq1 [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat irq1]
+set_property CONFIG.NUM_PORTS {1} $irq1
+connect_bd_net [get_bd_pins sfp_iic/iic2intc_irpt] [get_bd_pins irq1/In0]
+connect_bd_net [get_bd_pins irq1/dout] [get_bd_pins ps/pl_ps_irq1]
 
 # DDR: switch masters -> HP0, DMA masters -> HP1
 foreach {n si} {m_axi_ing S00_AXI m_axi_egr S01_AXI m_axi_cpu S02_AXI} {
@@ -179,7 +194,7 @@ foreach g {0 1} {
 }
 
 # match the RTL's actual interface subsets so the BD wrapper carries no dangling signals
-foreach n {pl0_s_axi pl1_s_axi sfp_s_axi mdio0_s_axi mdio1_s_axi} {
+foreach n {pl0_s_axi pl1_s_axi sfp_s_axi mdio0_s_axi mdio1_s_axi diag_s_axi} {
   set_property CONFIG.PROTOCOL AXI4LITE [get_bd_intf_ports $n]
 }
 foreach n {m_axi_ing m_axi_egr m_axi_cpu} {
@@ -188,11 +203,13 @@ foreach n {m_axi_ing m_axi_egr m_axi_cpu} {
 # Fixed register map (PS HPM0_LPD window). MAC blocks are 256 KiB (18-bit AXI-Lite).
 foreach {seg off rng} {
   dma/S_AXI_LITE/Reg   0x80000000 64K
+  sfp_iic/S_AXI/Reg    0x80030000 64K
   mdio0_s_axi/Reg      0x80010000 64K
   mdio1_s_axi/Reg      0x80020000 64K
   pl0_s_axi/Reg        0x80040000 256K
   pl1_s_axi/Reg        0x80080000 256K
   sfp_s_axi/Reg        0x800C0000 256K
+  diag_s_axi/Reg       0x80100000 64K
 } {
   assign_bd_address -offset $off -range $rng -target_address_space [get_bd_addr_spaces ps/Data] [get_bd_addr_segs $seg]
 }

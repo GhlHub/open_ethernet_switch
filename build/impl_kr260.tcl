@@ -8,6 +8,7 @@ foreach x [glob $here/../constraints/*.xdc] {
   if {[llength [get_files -quiet $x]] == 0} { add_files -fileset constrs_1 -norecurse $x }
 }
 set_property USED_IN {implementation} [get_files $here/../constraints/kr260_clocks.xdc]
+set_property USED_IN {implementation} [get_files $here/../constraints/kr260_rgmii_io.xdc]
 reset_run impl_1
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1

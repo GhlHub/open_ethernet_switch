@@ -59,6 +59,9 @@ module tb_mdio_controller;
     .s_axi_rresp       (rresp),
     .s_axi_rvalid      (rvalid),
     .s_axi_rready      (rready),
+    .init_go_i         (1'b0),
+    .init_done_o       (),
+    .init_fail_o       (),
     .mdio_io           (mdio_io),
     .mdc_o             (mdc)
   );

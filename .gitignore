@@ -24,3 +24,6 @@ __pycache__/
 build/vivado_kr260/
 build/reports/
 build/reports_*.txt
+
+# Local TI PHY reference; provenance and download link are in board integration
+/docs/dp83867cs.pdf

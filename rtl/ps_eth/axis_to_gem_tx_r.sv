@@ -15,15 +15,14 @@
 // ingress_port_wr.sv's s_axis_*).
 //
 // Two clock domains, same rationale as gem_rx_w_to_axis.sv: the GEM side
-// (gem_clk) needs its own ~125MHz-class throughput, fixed hardware
-// timing; the fabric side (clk) is the switch's 62.5MHz/16-bit
-// convention. A small unpacker on the clk side splits each accepted
-// 16-bit word into 1 or 2 bytes (tkeep=2'b01 means only the lower byte
-// is real, i.e. the trailing byte of an odd-length frame) and pushes
-// them one at a time into rtl/common/async_fifo.sv; the GEM-side pull
-// logic below is otherwise structurally the same request/response
-// design as the original single-clock version, just reading from the
-// FIFO's gem_clk read port instead of directly off s_axis_*.
+// (gem_clk = the GEM's tx_clk) pulls one byte per ~8 ns (1 Gb/s at 8-bit
+// width); the fabric side (clk) is the switch's 62.5 MHz / 16-bit
+// convention, which is also 1 Gb/s. The crossing carries whole 16-bit words
+// -- each accepted AXI4-Stream word is written into rtl/common/async_fifo.sv
+// as one entry {eop, keep_hi, data[15:0]}, one write per fabric cycle -- and
+// the 16-to-8 unpack happens on the GEM side, after the crossing. (An
+// earlier version unpacked on the fabric side and pushed one byte per
+// fabric cycle, half the rate the GEM pulls at.)
 //
 // Protocol (UG1085 Ch.34 Table 34-1 + surrounding text): this is a
 // request/response PULL, not AXI-Stream valid/ready -- the GEM pulses
@@ -32,18 +31,18 @@
 // returned during the same cycle as the tx_r_rd request" or an arbitrary
 // number of cycles later. tx_r_data_rdy_o gates the whole exchange.
 //
-// tx_r_data_rdy_o here means "the FIFO has at least one byte ready",
-// not (as the single-clock version could guarantee) "the whole frame is
-// already fully buffered" -- store-and-forward on the fabric side still
-// means the rest of a frame follows shortly after its first byte crosses
-// into the FIFO, and FIFO_DEPTH provides slack over egress_port_rd.sv's
-// brief every-16-bytes RAM-refill bubble, but this is a slightly weaker
-// guarantee than before. If the GEM catches the FIFO empty mid-frame it
-// gets tx_r_underflow_o and the flush handshake described in the GEM-side
-// block below. NOTE: at 62.5 MHz this module fills the FIFO at one byte per
-// fabric cycle (500 Mb/s) while the GEM drains at up to 1 Gb/s, so underflow
-// mid-frame is expected for any frame longer than the FIFO on real hardware
-// until the fill rate/width is reworked (see docs/inventory.md).
+// tx_r_data_rdy_o start policy: the GEM pulls at full rate once started, but
+// egress_port_rd.sv delivers a frame with a one-cycle gap every 16 bytes, so
+// filling is slightly slower than draining and a GEM that started on the
+// first byte would run the FIFO dry mid-frame. So a frame is released to
+// the GEM only when START_WORDS of it are buffered, or its last word has
+// been written (a short frame), whichever comes first -- START_WORDS covers
+// the accumulated gap deficit of a maximum-size frame (about 1 word per 8).
+// The fabric side counts words per frame and issues ONE "permit" per frame,
+// as a Gray-coded event counter synchronized into gem_clk like the FIFO
+// pointers; the GEM side counts frames it has finished; data_rdy is high
+// while permits exceed finished frames and the FIFO is non-empty.
+// FIFO_DEPTH must comfortably exceed START_WORDS.
 //
 // Frame content is assumed to already exclude the trailing Ethernet FCS
 // -- the GEM's MAC appends its own CRC on transmit, same as it would for
@@ -62,7 +61,8 @@
 // (tx_r_status_i itself is not otherwise consumed here).
 
 module axis_to_gem_tx_r #(
-  parameter int FIFO_DEPTH = 64
+  parameter int FIFO_DEPTH  = 256, // in 16-bit words; power of 2
+  parameter int START_WORDS = 128  // words of a frame buffered before the GEM may start it
 ) (
   input  logic clk,      // fabric clock (62.5 MHz)
   input  logic rst_n,
@@ -97,61 +97,49 @@ module axis_to_gem_tx_r #(
   assign tx_r_err_o       = 1'b0;
   assign tx_r_control_o   = 1'b0;
 
-  localparam int ENTRY_W = 8 + 1; // data + eop
+  // FIFO entry: {eop, keep_hi, data[15:0]}
+  localparam int ENTRY_W = 16 + 2;
+  localparam int PW = $clog2(FIFO_DEPTH) + 1; // permit counter width
 
-  // ---- fabric side (clk): unpack each accepted 16-bit word into 1 or 2
-  // FIFO pushes. async_fifo only accepts one write per cycle, so a full
-  // (tkeep=2'b11) word takes 2 fabric cycles to drain in: the lower byte
-  // pushes immediately, the upper byte is latched and pushed the
-  // following cycle (s_axis_tready held low meanwhile). ----
-  typedef enum logic {U_IDLE, U_SECOND} un_state_t;
-  un_state_t un_state_q;
-  logic [7:0] pending_byte_q;
-  logic       pending_eop_q;
-
+  // ---- fabric side (clk): one write per accepted word ----
   logic [ENTRY_W-1:0] fifo_wr_data;
   logic                fifo_wr_en, fifo_full;
 
-  always_comb begin
-    fifo_wr_en    = 1'b0;
-    fifo_wr_data  = '0;
-    s_axis_tready = 1'b0;
+  assign s_axis_tready = !fifo_full;
+  assign fifo_wr_en    = s_axis_tvalid && !fifo_full;
+  assign fifo_wr_data  = {s_axis_tlast, s_axis_tkeep[1], s_axis_tdata};
 
-    unique case (un_state_q)
-      U_IDLE: begin
-        s_axis_tready = !fifo_full;
-        if (s_axis_tvalid && !fifo_full) begin
-          fifo_wr_en   = 1'b1;
-          fifo_wr_data = {s_axis_tkeep[1] ? 1'b0 : s_axis_tlast, s_axis_tdata[7:0]};
-        end
-      end
-      U_SECOND: begin
-        if (!fifo_full) begin
-          fifo_wr_en   = 1'b1;
-          fifo_wr_data = {pending_eop_q, pending_byte_q};
-        end
-      end
-      default: ;
-    endcase
-  end
+  // one permit per frame: when START_WORDS of it are written, or at its last
+  // word if it is shorter than that
+  localparam int WCW = $clog2(START_WORDS + 1) + 1;
+  localparam logic [WCW-1:0] START_W = WCW'(START_WORDS);
+  logic [WCW-1:0] words_q;
+  logic           permitted_q;
+  logic [PW-1:0]                  permit_bin_q, permit_gray_q;
+
+  wire permit_now = fifo_wr_en && !permitted_q &&
+                    (s_axis_tlast || (words_q + 1'b1 >= START_W));
+  wire [PW-1:0] permit_bin_next  = permit_bin_q + (PW)'(permit_now);
+  wire [PW-1:0] permit_gray_next = permit_bin_next ^ (permit_bin_next >> 1);
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      un_state_q <= U_IDLE;
+      words_q       <= '0;
+      permitted_q   <= 1'b0;
+      permit_bin_q  <= '0;
+      permit_gray_q <= '0;
     end else begin
-      unique case (un_state_q)
-        U_IDLE: begin
-          if (s_axis_tvalid && !fifo_full && s_axis_tkeep[1]) begin
-            pending_byte_q <= s_axis_tdata[15:8];
-            pending_eop_q  <= s_axis_tlast;
-            un_state_q     <= U_SECOND;
-          end
+      permit_bin_q  <= permit_bin_next;
+      permit_gray_q <= permit_gray_next;
+      if (fifo_wr_en) begin
+        if (s_axis_tlast) begin
+          words_q     <= '0;
+          permitted_q <= 1'b0;
+        end else begin
+          if (words_q < START_W) words_q <= words_q + 1'b1;
+          if (permit_now) permitted_q <= 1'b1;
         end
-        U_SECOND: begin
-          if (!fifo_full) un_state_q <= U_IDLE;
-        end
-        default: un_state_q <= U_IDLE;
-      endcase
+      end
     end
   end
 
@@ -171,14 +159,32 @@ module axis_to_gem_tx_r #(
     .empty_o   (fifo_empty)
   );
 
-  // ---- GEM side (gem_clk): same-cycle pull/response, sourced from the
-  // FIFO's read port. async_fifo's read side is a combinational
-  // peek-before-pop, so this needs no extra registered-read wait state
-  // (see the same note in gem_rx_w_to_axis.sv).
+  // ---- GEM side (gem_clk): unpack words to bytes, pull/response ----
   //
+  // permit counter, synchronized to gem_clk (Gray code: one bit changes per
+  // increment, the same reasoning as the FIFO's own pointers), converted
+  // back to binary for the subtraction below.
+  (* ASYNC_REG = "TRUE" *) logic [PW-1:0] permit_gray_sync1, permit_gray_sync2;
+  always_ff @(posedge gem_clk or negedge gem_rst_n) begin
+    if (!gem_rst_n) begin
+      permit_gray_sync1 <= '0;
+      permit_gray_sync2 <= '0;
+    end else begin
+      permit_gray_sync1 <= permit_gray_q;
+      permit_gray_sync2 <= permit_gray_sync1;
+    end
+  end
+  logic [PW-1:0] permit_bin_sync;
+  always_comb begin
+    permit_bin_sync[PW-1] = permit_gray_sync2[PW-1];
+    for (int i = PW-2; i >= 0; i--) permit_bin_sync[i] = permit_bin_sync[i+1] ^ permit_gray_sync2[i];
+  end
+  logic [PW-1:0] done_q; // frames whose last word the GEM side has consumed
+  wire frame_released = (permit_bin_sync != done_q);
+
   // Underflow / flush (UG1085 Ch.34 Table 34-1 and text): once the GEM starts
   // a read (tx_r_rd) it must be answered with tx_r_valid OR tx_r_underflow.
-  // If the FIFO is empty when the GEM reads (a frame's later bytes have not
+  // If the FIFO is empty when the GEM reads (a frame's later words have not
   // arrived yet), tx_r_underflow_o answers it in the same cycle. The GEM then
   // waits for tx_r_flushed, so this module:
   //   T_DRAIN     data_rdy low; discard the rest of the frame as it arrives
@@ -189,32 +195,46 @@ module axis_to_gem_tx_r #(
   //   T_RUN       normal; data_rdy is raised again only after the flush
   // The manual's other flush cases (tx_r_err, half-duplex collisions) are not
   // produced by anything here.
-  wire byte_eop = fifo_rd_data[8];
-  wire [7:0] byte_val = fifo_rd_data[7:0];
+  wire [15:0] word_data = fifo_rd_data[15:0];
+  wire        word_keep_hi = fifo_rd_data[16];
+  wire        word_eop  = fifo_rd_data[17];
 
   typedef enum logic [1:0] {T_RUN, T_DRAIN, T_FLUSH} tx_state_t;
   tx_state_t tx_state_q;
 
   logic sop_q;
+  logic hi_pending_q; // low byte of the head entry sent; high byte is next
 
-  assign tx_r_data_rdy_o  = (tx_state_q == T_RUN) && !fifo_empty;
+  wire [7:0] byte_val = hi_pending_q ? word_data[15:8] : word_data[7:0];
+  wire       byte_eop = word_eop && (hi_pending_q || !word_keep_hi);
+  // the head entry is fully consumed after its last byte
+  wire       entry_last_byte = hi_pending_q || !word_keep_hi;
+
+  assign tx_r_data_rdy_o  = (tx_state_q == T_RUN) && !fifo_empty && frame_released;
   assign tx_r_underflow_o = (tx_state_q == T_RUN) && tx_r_rd_i && fifo_empty;
   assign tx_r_flushed_o   = (tx_state_q == T_FLUSH);
 
   wire drain_pop = (tx_state_q == T_DRAIN) && !fifo_empty;
+  wire run_read  = (tx_state_q == T_RUN) && tx_r_rd_i && !fifo_empty;
 
-  assign fifo_rd_en   = drain_pop || ((tx_state_q == T_RUN) && tx_r_rd_i && !fifo_empty);
-  assign tx_r_valid_o = (tx_state_q == T_RUN) && tx_r_rd_i && !fifo_empty;
+  assign fifo_rd_en   = drain_pop || (run_read && entry_last_byte);
+  assign tx_r_valid_o = run_read;
   assign tx_r_data_o  = byte_val;
   assign tx_r_sop_o   = tx_r_valid_o && sop_q;
   assign tx_r_eop_o   = tx_r_valid_o && byte_eop;
 
   always_ff @(posedge gem_clk or negedge gem_rst_n) begin
     if (!gem_rst_n) begin
-      sop_q      <= 1'b1;
-      tx_state_q <= T_RUN;
+      sop_q        <= 1'b1;
+      hi_pending_q <= 1'b0;
+      tx_state_q   <= T_RUN;
+      done_q       <= '0;
     end else begin
-      if (tx_r_valid_o) sop_q <= byte_eop;
+      if (tx_r_valid_o) begin
+        sop_q        <= byte_eop;
+        hi_pending_q <= word_keep_hi && !hi_pending_q;
+        if (byte_eop) done_q <= done_q + 1'b1;
+      end
       unique case (tx_state_q)
         T_RUN: begin
           if (tx_r_underflow_o) begin
@@ -223,8 +243,9 @@ module axis_to_gem_tx_r #(
           end
         end
         T_DRAIN: begin
-          if (drain_pop && byte_eop) begin
+          if (drain_pop && word_eop) begin
             sop_q      <= 1'b1;
+            done_q     <= done_q + 1'b1;
             tx_state_q <= T_FLUSH;
           end
         end

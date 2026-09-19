@@ -48,7 +48,9 @@ module kr260_top (
   input  wire sfp_mod_abs,
   input  wire sfp_tx_fault,
   output wire sfp_tx_disable,
-  output wire [1:0] sfp_led
+  output wire [1:0] sfp_led,
+  inout  wire sfp_iic_scl_io,
+  inout  wire sfp_iic_sda_io
 );
 
   wire ps_rst_n;
@@ -89,6 +91,23 @@ module kr260_top (
   wire [1:0] mdio1_s_axi_rresp;
   wire mdio1_s_axi_rvalid;
   wire mdio1_s_axi_rready;
+  wire [31:0] diag_s_axi_awaddr;
+  wire diag_s_axi_awvalid;
+  wire diag_s_axi_awready;
+  wire [31:0] diag_s_axi_wdata;
+  wire [3:0] diag_s_axi_wstrb;
+  wire diag_s_axi_wvalid;
+  wire diag_s_axi_wready;
+  wire [1:0] diag_s_axi_bresp;
+  wire diag_s_axi_bvalid;
+  wire diag_s_axi_bready;
+  wire [31:0] diag_s_axi_araddr;
+  wire diag_s_axi_arvalid;
+  wire diag_s_axi_arready;
+  wire [31:0] diag_s_axi_rdata;
+  wire [1:0] diag_s_axi_rresp;
+  wire diag_s_axi_rvalid;
+  wire diag_s_axi_rready;
   wire axis_clk;
   wire [0:0] axis_rst_n;
   wire gem0_rx_clk;
@@ -256,6 +275,8 @@ module kr260_top (
   wire m_axi_cpu_rready;
 
   system_wrapper u_bd (
+    .sfp_iic_scl_io (sfp_iic_scl_io),
+    .sfp_iic_sda_io (sfp_iic_sda_io),
     .axis_clk (axis_clk),
     .axis_rst_n (axis_rst_n),
     .cpu_m_axis_tdata (cpu_m_axis_tdata),
@@ -441,6 +462,23 @@ module kr260_top (
     .mdio1_s_axi_wready (mdio1_s_axi_wready),
     .mdio1_s_axi_wstrb (mdio1_s_axi_wstrb),
     .mdio1_s_axi_wvalid (mdio1_s_axi_wvalid),
+    .diag_s_axi_araddr (diag_s_axi_araddr),
+    .diag_s_axi_arready (diag_s_axi_arready),
+    .diag_s_axi_arvalid (diag_s_axi_arvalid),
+    .diag_s_axi_awaddr (diag_s_axi_awaddr),
+    .diag_s_axi_awready (diag_s_axi_awready),
+    .diag_s_axi_awvalid (diag_s_axi_awvalid),
+    .diag_s_axi_bready (diag_s_axi_bready),
+    .diag_s_axi_bresp (diag_s_axi_bresp),
+    .diag_s_axi_bvalid (diag_s_axi_bvalid),
+    .diag_s_axi_rdata (diag_s_axi_rdata),
+    .diag_s_axi_rready (diag_s_axi_rready),
+    .diag_s_axi_rresp (diag_s_axi_rresp),
+    .diag_s_axi_rvalid (diag_s_axi_rvalid),
+    .diag_s_axi_wdata (diag_s_axi_wdata),
+    .diag_s_axi_wready (diag_s_axi_wready),
+    .diag_s_axi_wstrb (diag_s_axi_wstrb),
+    .diag_s_axi_wvalid (diag_s_axi_wvalid),
     .pl0_interrupt (pl0_interrupt),
     .pl0_mac_irq (pl0_mac_irq),
     .pl0_s_axi_araddr (pl0_s_axi_araddr),
@@ -571,6 +609,23 @@ module kr260_top (
     .mdio1_s_axi_rresp (mdio1_s_axi_rresp),
     .mdio1_s_axi_rvalid (mdio1_s_axi_rvalid),
     .mdio1_s_axi_rready (mdio1_s_axi_rready),
+    .diag_s_axi_awaddr (diag_s_axi_awaddr[7:0]),
+    .diag_s_axi_awvalid (diag_s_axi_awvalid),
+    .diag_s_axi_awready (diag_s_axi_awready),
+    .diag_s_axi_wdata (diag_s_axi_wdata),
+    .diag_s_axi_wstrb (diag_s_axi_wstrb),
+    .diag_s_axi_wvalid (diag_s_axi_wvalid),
+    .diag_s_axi_wready (diag_s_axi_wready),
+    .diag_s_axi_bresp (diag_s_axi_bresp),
+    .diag_s_axi_bvalid (diag_s_axi_bvalid),
+    .diag_s_axi_bready (diag_s_axi_bready),
+    .diag_s_axi_araddr (diag_s_axi_araddr[7:0]),
+    .diag_s_axi_arvalid (diag_s_axi_arvalid),
+    .diag_s_axi_arready (diag_s_axi_arready),
+    .diag_s_axi_rdata (diag_s_axi_rdata),
+    .diag_s_axi_rresp (diag_s_axi_rresp),
+    .diag_s_axi_rvalid (diag_s_axi_rvalid),
+    .diag_s_axi_rready (diag_s_axi_rready),
     .axis_clk (axis_clk),
     .axis_rst_n (axis_rst_n),
     .gem0_rx_clk (gem0_rx_clk),

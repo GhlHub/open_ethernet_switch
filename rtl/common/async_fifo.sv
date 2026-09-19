@@ -1,5 +1,27 @@
 // async_fifo.sv
 //
+// Dual-clock CDC FIFO. In synthesis (`SYNTHESIS defined) this is a thin
+// wrapper around AMD's xpm_fifo_async, which carries its own vendor-supplied
+// CDC constraints and is recognized as a safe crossing by report_cdc. Every
+// other tool (Icarus, Verilator, and xsim without -d SYNTHESIS) gets the
+// behavioral Gray-pointer model below, because XPM cannot be simulated
+// outside Vivado -- the same real/portable split rtl/pl_gmii/
+// open_eth_mac_1g_switch.sv uses for xpm_memory_sdpram. The XPM path is
+// exercised by `make xsim-async-fifo-xpm` (Vivado xsim, tb_async_fifo).
+//
+// Contract both paths honor: first-word-fall-through read (rd_data_o is the
+// head entry whenever !empty_o; rd_en_i pops it); wr_en_i while full_o and
+// rd_en_i while empty_o are ignored; full_o/empty_o are registered flags.
+// Known differences: (1) XPM's capacity and flag latency differ by a word or
+// two and a few cycles from the model; (2) XPM has ONE reset, synchronous to
+// wr_clk (wr_rst_n must already be synchronized to wr_clk, as everywhere in
+// this project), so rd_rst_n is only used by the model -- the read side
+// resets when the write-side reset does; (3) after reset the XPM FIFO is busy
+// for a few cycles, during which full_o/empty_o report full/empty. DEPTH is
+// raised to the XPM minimum of 16 if smaller.
+//
+// Original behavioral-model notes:
+//
 // Standard dual-clock (Gray-code pointer) CDC FIFO, first use in this
 // project -- needed for the PS GEM bridge, whose GEM-facing side must
 // stay at the GEM FIFO interface's own required clock (~125MHz-class, to
@@ -32,6 +54,78 @@
 // logical minimum in some corner cases; that's the standard, safe-
 // direction (never incorrectly permissive) behavior for this design.
 
+`ifdef SYNTHESIS
+module async_fifo #(
+  parameter int WIDTH = 8,
+  parameter int DEPTH = 64 // must be a power of 2
+) (
+  input  logic             wr_clk,
+  input  logic             wr_rst_n,
+  input  logic             wr_en_i,
+  input  logic [WIDTH-1:0] wr_data_i,
+  output logic             full_o,
+
+  input  logic             rd_clk,
+  input  logic             rd_rst_n,
+  input  logic             rd_en_i,
+  output logic [WIDTH-1:0] rd_data_o,
+  output logic             empty_o
+);
+
+  localparam int XDEPTH = (DEPTH < 16) ? 16 : DEPTH;
+
+  wire xfull, xempty, wr_rst_busy, rd_rst_busy;
+  wire unused_ok = &{1'b0, rd_rst_n};
+
+  xpm_fifo_async #(
+    .FIFO_MEMORY_TYPE   ((XDEPTH <= 512) ? "distributed" : "block"),
+    .ECC_MODE           ("no_ecc"),
+    .RELATED_CLOCKS     (0),
+    .SIM_ASSERT_CHK     (0),
+    .FIFO_WRITE_DEPTH   (XDEPTH),
+    .WRITE_DATA_WIDTH   (WIDTH),
+    .READ_DATA_WIDTH    (WIDTH),
+    .USE_ADV_FEATURES   ("0000"),
+    .READ_MODE          ("fwft"),
+    .FIFO_READ_LATENCY  (0),
+    .CDC_SYNC_STAGES    (2),
+    .DOUT_RESET_VALUE   ("0"),
+    .FULL_RESET_VALUE   (0),
+    .WAKEUP_TIME        (0)
+  ) u_xpm_fifo (
+    .sleep         (1'b0),
+    .rst           (!wr_rst_n),
+    .wr_clk        (wr_clk),
+    .wr_en         (wr_en_i && !xfull && !wr_rst_busy),
+    .din           (wr_data_i),
+    .full          (xfull),
+    .prog_full     (),
+    .wr_data_count (),
+    .overflow      (),
+    .wr_rst_busy   (wr_rst_busy),
+    .almost_full   (),
+    .wr_ack        (),
+    .rd_clk        (rd_clk),
+    .rd_en         (rd_en_i && !xempty && !rd_rst_busy),
+    .dout          (rd_data_o),
+    .empty         (xempty),
+    .prog_empty    (),
+    .rd_data_count (),
+    .underflow     (),
+    .rd_rst_busy   (rd_rst_busy),
+    .almost_empty  (),
+    .data_valid    (),
+    .injectsbiterr (1'b0),
+    .injectdbiterr (1'b0),
+    .sbiterr       (),
+    .dbiterr       ()
+  );
+
+  assign full_o  = xfull  | wr_rst_busy;
+  assign empty_o = xempty | rd_rst_busy;
+
+endmodule
+`else
 module async_fifo #(
   parameter int WIDTH = 8,
   parameter int DEPTH = 64 // must be a power of 2
@@ -78,13 +172,25 @@ module async_fifo #(
       rd_ptr_gray_sync2 <= '0;
       full_o            <= 1'b0;
     end else begin
-      if (do_write) mem[wr_ptr_bin_q[AW-1:0]] <= wr_data_i;
       wr_ptr_bin_q      <= wr_ptr_bin_next;
       wr_ptr_gray_q     <= wr_ptr_gray_next;
       rd_ptr_gray_sync1 <= rd_ptr_gray_q;
       rd_ptr_gray_sync2 <= rd_ptr_gray_sync1;
       full_o            <= full_next;
     end
+  end
+
+  // Memory write: its own block WITHOUT the async reset above. A memory
+  // array written from inside an async-reset block cannot be inferred as
+  // RAM (Vivado builds it from flip-flops and a large read mux); written
+  // here it maps to distributed (LUT) RAM. The array is zero-initialized so
+  // simulation never reads X -- entries are only meaningful when !empty_o
+  // regardless of that value.
+  initial begin
+    for (int i = 0; i < DEPTH; i++) mem[i] = '0;
+  end
+  always_ff @(posedge wr_clk) begin
+    if (do_write) mem[wr_ptr_bin_q[AW-1:0]] <= wr_data_i;
   end
 
   // ---- read side ----
@@ -114,3 +220,4 @@ module async_fifo #(
   assign rd_data_o = mem[rd_ptr_bin_q[AW-1:0]];
 
 endmodule
+`endif

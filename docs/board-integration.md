@@ -1,11 +1,10 @@
 # KR260 board integration status
 
-Inventory: 2026-09-19. The static board top, PL assembly and scripted PS block
-design connect all six logical ports, DDR access and CPU DMA. Earlier local
-Vivado reports show successful routing; bitstream generation was recorded
-before a concurrent rebuild recreated the project directory. Complete I/O timing, CDC sign-off,
-firmware and hardware bring-up remain pending. Portable switch simulations
-stop at GMII, GEM FIFO, CPU AXI-S and decoded SFP interfaces.
+Inventory: 2026-09-19. The board assembly includes automatic PL PHY setup,
+RGMII elastic receive buffers and I/O delays, SFP IIC/sideband control, and
+CPU-readable diagnostics. Existing local routed reports show WNS +0.019 ns,
+WHS +0.011 ns and zero critical CDC clock-pair rows, with warnings remaining.
+No board traffic or FreeRTOS operation has been demonstrated.
 
 ## Reference material and revision scope
 
@@ -64,8 +63,8 @@ flowchart TB
     BUF -->|PHY XI references| PHY["Two DP83867 PHYs"]
     C0 -->|125 MHz| P0["PL0 MAC + RGMII TX"]
     C1 -->|125 MHz| P1["PL1 MAC + RGMII TX"]
-    C0 -->|300 MHz| D0["PL0 optional delay reference, unused by default"]
-    C1 -->|300 MHz| D1["PL1 optional delay reference, unused by default"]
+    C0 -->|300 MHz| D0["PL0 RX data-delay calibration"]
+    C1 -->|300 MHz| D1["PL1 RX data-delay calibration"]
     C0 -->|62.5 MHz| FAB["Shared switch fabric"]
     C1 -->|62.5 MHz| UNUSED["Unused"]
     PHY -->|Separate RXC + data per port| RX["DDR RX capture + async FIFO"]
@@ -75,13 +74,14 @@ flowchart TB
 Each output has reset release synchronized to its own clock after MMCM lock.
 PL0's 62.5 MHz clock/reset drives the switch fabric, switch DDR masters,
 CPU AXI DMA, both DDR SmartConnects and PS HP interface clocks. PL1's
-62.5 MHz output is unused. The 300 MHz outputs are unused by the default
-RGMII adapters because RX clock delay in the FPGA is disabled.
+62.5 MHz output is unused. The 300 MHz outputs calibrate the active RX data/control IDELAYE3 stages.
+FPGA RX clock delay remains disabled.
 
 | Clock | Source | Consumers |
 | --- | --- | --- |
 | 125 MHz per PL port | Each PL MMCM, from its 25 MHz input | MAC and RGMII TX; local RX FIFO read side |
 | PHY RXC per PL port | Each external PHY | RGMII DDR receive and FIFO write side |
+| 300 MHz per PL port | Each PL MMCM | RX data/control IDELAYE3 calibration |
 | 62.5 MHz fabric | PL0 MMCM | Switch, DDR masters/interconnects, CPU DMA and HP0/HP1 clocks |
 | About 142.857 MHz | PS PL0 output, requested as 150 MHz | MAC/MDIO AXI-Lite, HPM0_LPD and control interconnect |
 | 50 MHz | PS PL1 output | GTH reset/calibration free-running clock |
@@ -117,7 +117,7 @@ through `sc_ctl`; a FreeRTOS driver remains pending.
 | `0x04` | WRITE_DATA | Staged 16-bit data, byte-strobe writable |
 | `0x08` | READ_DATA | Live master read shift register; use after completion |
 | `0x0C` | CONTROL | Bit 0 starts a transaction; requests while busy are ignored |
-| `0x10` | STATUS | Bit 0 BUSY, bit 1 sticky DONE, bit 2 sticky ERROR; bits 1–2 are write-one-to-clear |
+| `0x10` | STATUS | Bit 0 BUSY (including initialization), bit 1 sticky DONE, bit 2 sticky ERROR, bit 3 INIT_DONE, bit 4 INIT_FAIL; bits 1–2 are write-one-to-clear |
 | `0x14` | CLK_DIVIDER | 16-bit divider, reset value 100; MDC toggles every divider + 1 input clocks while busy |
 
 At the observed 142.857 MHz register clock, divider 100 gives approximately
@@ -126,8 +126,8 @@ Clear old status, configure the transaction, issue START, wait for completion,
 and inspect ERROR before consuming data. The master clears READ_DATA on every
 START, including writes; it is not a separately retained last-successful-read
 register. Keep the divider stable while a transaction is running. There is no
-interrupt output or native Clause 45 transaction engine. PHY setup and extended
-register access through Clause 22 procedures remain software work.
+interrupt output or native Clause 45 transaction engine. The automatic PL PHY setup uses Clause 22 indirect extended-register access;
+software management and PS PHY setup remain pending.
 
 ## SFP negotiation and transceiver integration
 
@@ -139,13 +139,10 @@ ordered sets override MAC data. Hardware timers, compatibility/fault rules,
 idle detection, and link-down admission policy must be completed before use
 with a real peer. See [known RTL gaps](inventory.md#known-gaps-in-existing-rtl).
 
-The GTH wrapper is connected to the SFP pins and PCS clock generator in
-`kr260_pl_top`. [`kr260_sfp.xdc`](../constraints/kr260_sfp.xdc) adds serial,
-reference, sideband and LED pins. TX_DISABLE is tied low; `sfp_led[1:0]`
-is `{sync_ok, an_link_up}`. LOS, MOD_ABS and TX_FAULT inputs are exposed but
-unused by the control logic. Duplex/pause/fault status is not CPU-readable,
-and module I2C is not connected. The existence of these pins and a bitstream
-does not establish a usable optical link.
+The GTH wrapper is connected to the SFP pins and PCS clock generator.
+SFP IIC and sideband control are now wired; the sections below describe their
+registers and behavior. `sfp_led[1:0]` remains `{sync_ok, an_link_up}`. PCS
+negotiation duplex/pause/fault outputs are still not mapped to CPU registers.
 
 ## Board build and implementation results
 
@@ -187,7 +184,7 @@ and **three SmartConnects**:
 
 | Interconnect | Connection |
 | --- | --- |
-| `sc_ctl` | PS HPM0_LPD to three MACs, two MDIO controllers and DMA control; two clock domains |
+| `sc_ctl` | PS HPM0_LPD to three MACs, two MDIO controllers, DMA, SFP IIC and diagnostics; two clock domains |
 | `sc_ddr` | Physical ingress write, physical egress read and combined CPU pool read/write AXI interfaces to HP0 |
 | `sc_dma` | CPU AXI DMA SG, MM2S and S2MM masters to HP1 |
 
@@ -196,14 +193,16 @@ DRE on both channels and 16-beat bursts. It copies between software buffers
 and the CPU switch port; the switch's dedicated CPU DMA engines separately
 copy between that stream and the shared switch pool.
 
-Local reports dated 2026-09-19 show setup WNS **+0.726 ns**, hold WHS
-**+0.010 ns**, 25,527 LUTs (21.80%), 39,696 registers (16.95%), 49.5 BRAM tiles
-and 3 of 4 MMCMs. An earlier bitstream was recorded before a concurrent build recreated the
-project directory. These earlier reports
-were inspected, not regenerated during this inventory; source-to-artifact
-identity was not established by a clean rebuild. Missing external I/O delays
-and unresolved CDC prevent calling this complete timing closure. Exact report
-findings and fingerprints are in [verification](verification.md#local-vivado-implementation-evidence).
+The local routed reports dated 2026-09-19 13:42 show WNS **+0.019 ns**,
+WHS **+0.011 ns**, 24,264 LUTs (20.72%), 31,852 registers (13.60%), 51.5 BRAM
+tiles and 3/4 MMCMs. A bitstream is present. CDC summary: zero critical,
+13 warning and 18 informational clock-pair rows. DRC retains two RAM collision
+warnings; methodology retains six missing-delay findings. Thus “constraints
+met” is not a claim of warning-free implementation or hardware validation.
+These artifacts were inspected, not regenerated by this inventory; source-to-
+artifact identity has not been independently established by a clean rebuild.
+See [verification](verification.md#local-vivado-implementation-evidence) for
+report fingerprints and [CDC review](cdc-review.md) for the recorded analysis.
 
 PS configuration set by the script: GEM0 = SGMII on PS-GTR lane 0 (125 MHz
 reference from U87 -- marked `VALUE/DNP TBD` on the schematic, so confirm it is
@@ -215,6 +214,8 @@ the PS produces about 142.857 MHz; the AXI-Lite/MAC domain runs there.
 | --- | --- | --- |
 | CPU AXI DMA | `0x80000000` | 64 KiB |
 | MDIO0 (PL0 PHY) / MDIO1 (PL1 PHY) | `0x80010000` / `0x80020000` | 64 KiB each |
+| SFP IIC | `0x80030000` | 64 KiB |
+| RX/SFP diagnostics | `0x80100000` | 64 KiB |
 | PL0 MAC / PL1 MAC / SFP MAC | `0x80040000` / `0x80080000` / `0x800C0000` | 256 KiB each |
 
 The local address report maps each CPU DMA master to DDR `0x00000000`–
@@ -225,54 +226,133 @@ review generated address segments and software cache/ownership rules before use.
 
 PS `pl_ps_irq0[7:0]` receives, in bit order: PL0 `interrupt`, PL0 `mac_irq`,
 PL1 `interrupt`, PL1 `mac_irq`, SFP `interrupt`, SFP `mac_irq`, DMA MM2S,
-and DMA S2MM. Firmware still needs interrupt routing and service routines.
+and DMA S2MM. SFP IIC uses `pl_ps_irq1[0]`. Firmware still needs interrupt
+routing and service routines.
 
-Findings from the implementation flow (none visible in simulation or in
-isolated synthesis):
+The implementation changes include separate GEM RX/TX FIFO clocks, XPM
+crossings, MAC reset/pointer fixes, PHY delay initialization, and RGMII data
+pin delays. Whole-domain `set_max_delay -datapath_only` bounds remain in
+`kr260_clocks.xdc`; they depend on the generated clock names and do not prove
+protocol correctness. RGMII input/output delays now have their own
+implementation-only XDC. Hardware phase/reset behavior remains unverified.
 
-- **RGMII RX clock delay was illegal.** `IDELAYE3` cannot drive a BUFG, so the
-  IBUF-IDELAYE3-BUFG scheme could not be placed, and it also left two
-  unconstrained `IDELAYCTRL`s. `RX_IDELAY_ENABLE` now defaults off; the DP83867
-  must add the RX/TX delay (RGMII-ID) through strap or MDIO.
-- **GEM clocks.** The PS gives separate RX and TX FIFO clocks; a single-clock
-  bridge put PS RX signals in the wrong domain (CDC report: 1296 endpoints from
-  the GEM RX clock to the GEM TX clock). `ps_gem_axis_bridge` and `switch_top`
-  now take both clocks.
-- **Clock crossings.** [`kr260_clocks.xdc`](../constraints/kr260_clocks.xdc)
-  applies 7/8/16 ns `set_max_delay -datapath_only` bounds between selected
-  whole clock domains. Same-MMCM synchronous pairs retain their normal
-  timing checks. These bounds limit path delay; they do not add synchronizers
-  or independently establish bus-skew safety. Their scope and hard-coded
-  generated-clock names need review whenever the clock topology changes.
-- **CDC is not signed off.** The summary has 10 critical clock-pair groups;
-  the detailed report contains 2,939 critical findings. Some involve FIFO
-  storage and need structural review; others include the former unsynchronized
-  FIFO-empty-to-GEM-overflow-clear crossing. The latest RX changes remove that
-  dependency; a fresh routed report is still needed for the updated source. `ASYNC_REG` attributes on pointer,
-  tick and reset synchronizers do not resolve all CDC paths. Do not dismiss
-  the report as merely an unrecognized FIFO implementation.
+## PHY start-up and RGMII I/O timing
 
-Still unverified or absent: RGMII input/output delay constraints; PHY
-initialization; SFP module I2C (`HDB16/HDB17`, pins AB11/AC11, not connected);
-the MMCM-to-GT clock phase (static timing only); the SFP LED and sideband
-behavior; and every hardware behavior.
+**PHY start-up.** [`phy_init_seq.sv`](../rtl/mdio/phy_init_seq.sv) runs inside
+each `mdio_controller` (PHY addresses 2 and 3) on the rising edge of the port's
+PHY-reset-request release, so the PHYs are configured without firmware. Sequence,
+taken from TI's driver in Xilinx's U-Boot (`dp83867.c`, `dp83867_config`) for
+RGMII-ID: check PHYIDR2 = 0xA23x; read STRAP_STS1; PHYCR FIFO depth 1, force-link
+cleared (bit 11 cleared only if strapped); CFG4 bit 7 cleared (rxctrl strap
+quirk); RGMIICTL[1:0] = 0b11 (internal TX/RX delays on); RGMIIDCTL = {TX 0x6, RX 0x7}.
+Extended registers use the REGCR/ADDAR indirect method. While it runs, STATUS.BUSY
+reads 1 and AXI START is ignored; STATUS[3] = INIT_DONE, STATUS[4] = INIT_FAIL.
+Delay codes: Xilinx's device tree uses 0x4 (1.25 ns) for its own MAC; this design
+uses RX 0x7 (2.00 ns) and TX 0x6 (1.75 ns), picked from post-route timing (1.25
+failed TX setup by 0.48 ns, 2.00 failed TX hold by 0.15 ns).
+Checked against the datasheet (`docs/dp83867cs.pdf`, SNLS504G, covers CS/IS/E):
+PHYIDR2 default 0xA231; REGCR/ADDAR indirect sequence (0x001F, address, 0x401F,
+data); RGMIICTL (0x0032) bits 1:0 = TX/RX clock delay enable (both already default
+to 1, and RGMII_EN defaults to 1 for the RGZ package); RGMIIDCTL (0x0086) TX [7:4]
+/ RX [3:0] delay codes in 0.25 ns steps (0x6 = 1.75 ns, 0x7 = 2.00 ns); CFG4 bit 7
+(INT_TST_MODE_1) must be cleared if RX_CTRL is not strapped to mode 3/4; post-reset
+MDC wait is 195 us max (the 2,000,000-clock wait is far longer than needed); MDC
+max 25 MHz (ours about 0.707 MHz). Corrections from the datasheet: STRAP_STS1 bit 11 is
+STRAP_SGMII_EN (U-Boot calls it reserved), so the sequencer's PHYCR bit-11 clear
+forces RGMII if SGMII is strapped; PHYCR FIFO-depth fields only apply in
+GMII/SGMII, so writing them is a harmless no-op in RGMII mode. The chosen delay
+codes are consistent with the datasheet: RX code 0x7 (2.00 ns) matches the PHY's
+nominal TsetupT/TholdT of 2 ns, and TX code 0x6 (1.75 ns) is the closest to the
+nominal TskewR of 1.8 ns.
+Skipped versus the driver: software reset and restarting auto-negotiation.
+
+**I/O timing.** [`kr260_rgmii_io.xdc`](../constraints/kr260_rgmii_io.xdc)
+(implementation only) defines the forwarded TX clocks and RGMII input/output
+delays. Numbers are from datasheet section 6.10 (TskewR 1.0-2.6 ns at the PHY input;
+TsetupT/TholdT min 1.2 ns at the PHY output): RX input delay
+max 2.8 / min 1.2 ns both edges; TX output delay max 3.25 / min 0.85 ns both
+edges (derived from the 1.75 ns PHY TX delay). Consequence found in
+implementation: with the RX clock on a BUFG the data hold failed by 0.26 ns, so
+the RX data/ctl pins now go through `IDELAYE3` (500 ps, one IDELAYCTRL per port,
+IODELAY_GROUP set in the XDC because the attribute cannot take a parameter);
+the clock itself is not delayed (IDELAYE3 cannot drive a BUFG). Result: routed,
+DRC has no errors/critical entries (two warnings remain), WNS +0.019 ns, WHS +0.011 ns, all constraints met, bitstream built.
+**Margin is thin**: the TX data/clock skew at the pins spans about -0.4..+0.65 ns,
+so the window is nearly full. The delay values must still be confirmed on hardware.
+
+## SFP module I2C
+
+Checked against the carrier schematic (sheet 13): SFP+ SDA = HDB17 and SCL =
+HDB16_CC on SOM240_2 (B50 / B49), i.e. **PL pins** (AC11 / AB11, HD bank 43,
+3.3 V), not PS MIO, so a PL master was added rather than enabling a PS I2C. The
+carrier fits 4.7 k pull-ups (R334-R339), so the core's open-drain IOBUFs need none.
+A Xilinx `axi_iic` (100 kHz, AXI-Lite on the 142.9 MHz control clock) sits behind
+`sc_ctl` M06 at **0x8003_0000 (64 KiB)**, its interrupt on `pl_ps_irq1[0]`
+(IRQ1 enabled in the PS), pins constrained in `kr260_sfp.xdc` with false paths.
+Software uses the standard Vitis `xiic` driver; SFF-8472 EEPROM addresses are
+0x50 (A0h) and 0x51 (A2h). Built: routed, DRC has no errors/critical entries (two warnings remain), timing met (WNS +0.019 ns).
+Not tested on hardware or in simulation (vendor IP, no module fitted in a bench).
+
+## SFP sideband control
+
+`sfp_sideband.sv` (axis_clk) drives TX_DISABLE: off while the module is absent,
+through a 10 ms debounce and 300 ms settle after insertion, and while a fault is
+being handled. TX_FAULT (debounced 2 ms) drops the laser for 2 ms, re-enables it
+and ignores TX_FAULT for 300 ms; after 3 consecutive faults it locks off until
+software clears the lockout or the module is removed; the count resets after 5 s
+without a fault. LOS is reported only. Registers in the diagnostics block
+(0x8010_0000): 0x04 SFP_STATUS (bit0 MOD_ABS, bit1 LOS, bit2 TX_FAULT, bit3
+TX_DISABLE driven, bit4 lockout, bit5 fault seen W1C, bit6 removal seen W1C,
+[15:8] fault count), 0x08 SFP_CONTROL (bit0 force laser off, bit1 write 1 to leave
+lockout). Timings are from SFF-8472/8431 as recalled, not re-checked against the
+standards; bench `sim-rx-diag` (tb_sfp_sideband.sv, scaled timers). Not tested
+with a real module.
+
+## RGMII receive elastic buffer
+
+`rgmii_rx_elastic.sv` replaces the old 16-entry FIFO between the PHY receive
+clock and `gtx_clk` (same nominal 125 MHz, different crystals). It is built on a
+2048 x 18 hard FIFO36E2 (`fifo36_async_2kx18.sv`; behavioral model in simulation,
+`EXTENDED_DATACOUNT` because place-and-route DRC rejects the other count mode with
+independent clocks). The clock difference is absorbed only in the inter-frame gap:
+the read side waits for a 64-word cushion outside a frame and never stalls
+inside one; the write side drops idle words above 128 buffered but never shortens
+the pushed idle run below 8. Overflow (word lost, FIFO full) and underrun (FIFO dry inside a frame,
+frame truncated) are reported through `rx_diag_regs.sv`: AXI-Lite slave at
+**0x8010_0000** (64 KiB), STATUS at offset 0: bit0 PL0 overflow, bit1 PL0 underrun,
+bit2 PL1 overflow, bit3 PL1 underrun; sticky, cleared by writing 1 to the bit
+(`sticky_xdomain.sv` carries each flag from its RGMII clock domain, the clear
+travels back by a toggle; a read right after the clear sees it cleared; events in
+the few cycles before the clear reaches the source domain are lost; if the PHY
+receive clock is stopped a clear is not processed until it returns). Bench:
+`sim-rx-diag`. Current inventory runs cover Icarus at 0/±500/±3000 ppm and the checked-in
+XSim target at +500 ppm using the real FIFO36E2 model. Earlier development
+notes also report XSim ±3000 ppm and a failing no-cushion mutation; those
+additional configurations are not reproduced by the standard target. Routed with the rest of the board: DRC has no errors/critical entries (two warnings remain), WNS +0.019 ns. Not measured
+against real PHY clocks.
 
 ## Remaining implementation and verification
 
-- Configure the PHYs over MDIO (DP83867 RX/TX internal delay for RGMII-ID, and
-  the other setup) from firmware; there is no driver for the MDIO register map.
-- Add RGMII input/output delay constraints and verify RX/TX timing on hardware.
-- Replace the continuous RX FIFO transfer assumption with a verified policy
-  for clock drift, packet boundaries, overflow and underflow. The current
-  16-entry FIFO ignores full status and emits an idle when empty.
-- Resolve the CDC findings, repair unsynchronized control paths, and review
-  FIFO storage/pointer constraints and resets. Record justified waivers only
-  after checking the actual structure and protocol.
-- Connect the SFP module I2C, and confirm the SFP sideband, LEDs and the fitted
-  U87 reference on GTR_REFCLK0.
-- Check the MMCM-to-GT clock phase on the SFP PCS path beyond static timing.
-- Everything on hardware: bring-up, link, DMA, throughput.
+- Validate automatic PHY setup and reset sequencing on the fitted board;
+  add firmware polling/recovery for INIT_FAIL and PS PHY/GEM initialization.
+- Measure RGMII timing margins, account for board skew and PHY delay variation,
+  and review remaining unconstrained ports. IDELAYCTRL RDY is not currently
+  used to hold RX logic in reset during calibration.
+- Verify RX elastic-buffer overflow/underrun recovery, stopped/restarted clocks,
+  and diagnostic clear races; nominal drift tests do not cover all failures.
+- Review new diagnostics, PHY-start and SFP sideband crossings alongside the
+  existing CDC analysis. Validate reset sequencing for XPM's single-reset contract.
+- Check SFP module IIC, sideband timings and fitted U87 reference on hardware;
+  sideband timing parameters are implementation choices, not conformance proof.
+- Harden PCS negotiation and frame admission, then implement FreeRTOS DMA,
+  cache/descriptor ownership, interrupts and boot packaging.
+- Exercise all ports, shared DDR contention and sustained traffic on hardware.
 
-The RGMII and PL clock behavioral models do not establish these hardware properties:
-the RGMII model omits the real CDC FIFO and I/O delay primitives; the clock
-model ignores its input reference and free-runs clocks at nominal periods.
+The local TI reference is DP83867CS/IS/E datasheet SNLS504G, revised June 2026,
+obtained as `docs/dp83867cs.pdf`; it remains ignored like the AMD references.
+Download from [TI's DP83867CS datasheet](https://www.ti.com/lit/ds/symlink/dp83867cs.pdf).
+SHA-256 of the inspected local copy:
+
+```text
+64b71a7c18ab4ac14dea02be13155f89ab43aabe955f33fd1e9027d13f40f90c
+```

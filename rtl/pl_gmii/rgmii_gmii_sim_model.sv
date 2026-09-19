@@ -54,8 +54,17 @@ module rgmii_gmii_sim_model (
   input  logic       gmii_tx_er_i,
   output logic [7:0] gmii_rxd_o,
   output logic       gmii_rx_dv_o,
-  output logic       gmii_rx_er_o
+  output logic       gmii_rx_er_o,
+  input  logic       diag_clk_i,
+  input  logic       diag_rst_n_i,
+  input  logic       diag_clr_overflow_i,
+  input  logic       diag_clr_underrun_i,
+  output logic       rx_elastic_overflow_o,
+  output logic       rx_elastic_underrun_o
 );
+
+  assign rx_elastic_overflow_o  = 1'b0;
+  assign rx_elastic_underrun_o  = 1'b0;
 
   wire unused_idelay = idelay_refclk_i ^ idelay_rst_n_i; // silence lint, no functional use
 

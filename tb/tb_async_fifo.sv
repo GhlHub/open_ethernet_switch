@@ -180,8 +180,16 @@ module tb_async_fifo;
     wait_rd_cycles(2 * DEPTH);
     rd_mode = 2;
 
+    // The behavioral model holds exactly DEPTH entries. AMD's xpm_fifo_async
+    // (used when this bench is built with -d SYNTHESIS, see
+    // `make xsim-async-fifo-xpm`) holds one or two more, because its
+    // first-word-fall-through output register counts as storage.
+`ifdef SYNTHESIS
+    if (cap.size() < DEPTH || cap.size() > DEPTH + 2) begin
+`else
     if (cap.size() != DEPTH) begin
-      $display("FAIL: testB drained %0d values, expected exactly DEPTH=%0d (writes past full must be dropped, not overwrite)", cap.size(), DEPTH);
+`endif
+      $display("FAIL: testB drained %0d values, expected DEPTH=%0d (XPM: up to +2) (writes past full must be dropped, not overwrite)", cap.size(), DEPTH);
       errors++;
     end else begin
       bit ok = 1'b1;
@@ -190,7 +198,7 @@ module tb_async_fifo;
         if (cap[i] !== expect_val) ok = 1'b0;
         expect_val = expect_val + 8'h01;
       end
-      if (ok) $display("PASS: testB exactly DEPTH values survived, in order, overflow writes correctly dropped");
+      if (ok) $display("PASS: testB %0d values survived (capacity DEPTH=%0d), in order, overflow writes correctly dropped", cap.size(), DEPTH);
       else begin
         $display("FAIL: testB drained content mismatch");
         errors++;

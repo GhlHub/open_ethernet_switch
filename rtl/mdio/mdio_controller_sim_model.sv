@@ -14,7 +14,9 @@
 // are identical to mdio_controller.sv; only the pin stage differs.
 
 module mdio_controller_sim_model #(
-  parameter int AXI_ADDR_WIDTH = 8
+  parameter int AXI_ADDR_WIDTH = 8,
+  parameter logic [4:0] INIT_PHY_ADDR = 5'd2,
+  parameter int INIT_WAIT_CYCLES = 2_000_000
 ) (
   input  logic s_axi_lite_clk,
   input  logic s_axi_lite_resetn,
@@ -37,6 +39,13 @@ module mdio_controller_sim_model #(
   output logic                       s_axi_rvalid,
   input  logic                       s_axi_rready,
 
+  // DP83867 start-up sequencer (phy_init_seq.sv): runs on a rising edge of
+  // init_go_i (tie to "PHY reset released"); AXI transactions are held off
+  // (STATUS.BUSY reads 1) while it runs.
+  input  logic init_go_i,
+  output logic init_done_o,
+  output logic init_fail_o,
+
   inout  wire mdio_io,
   output logic mdc_o
 );
@@ -52,15 +61,27 @@ module mdio_controller_sim_model #(
   logic        busy, done, error;
   logic        mdio_i, mdio_o, mdio_t;
 
+  logic        init_active, seq_start, seq_write;
+  logic [4:0]  seq_phy, seq_reg;
+  logic [15:0] seq_wdata;
+
+  phy_init_seq #(.PHY_ADDR(INIT_PHY_ADDR), .WAIT_CYCLES(INIT_WAIT_CYCLES)) u_init (
+    .clk (s_axi_lite_clk), .rstn (s_axi_lite_resetn), .go_i (init_go_i),
+    .m_start_o (seq_start), .m_write_o (seq_write), .m_phy_o (seq_phy),
+    .m_reg_o (seq_reg), .m_wdata_o (seq_wdata),
+    .m_busy_i (busy), .m_done_i (done), .m_error_i (error), .m_rdata_i (read_data),
+    .active_o (init_active), .done_o (init_done_o), .fail_o (init_fail_o)
+  );
+
   open_eth_mdio_master u_master (
     .clk            (s_axi_lite_clk),
     .resetn         (s_axi_lite_resetn),
     .clk_divider    (clk_divider_q),
-    .start          (start_pulse),
-    .write_not_read (write_not_read_q),
-    .phy_addr       (phy_addr_q),
-    .reg_addr       (reg_addr_q),
-    .write_data     (write_data_q),
+    .start          (init_active ? seq_start : start_pulse),
+    .write_not_read (init_active ? seq_write : write_not_read_q),
+    .phy_addr       (init_active ? seq_phy   : phy_addr_q),
+    .reg_addr       (init_active ? seq_reg   : reg_addr_q),
+    .write_data     (init_active ? seq_wdata : write_data_q),
     .read_data      (read_data),
     .busy           (busy),
     .done           (done),
@@ -90,7 +111,7 @@ module mdio_controller_sim_model #(
   logic done_sticky_q, error_sticky_q;
 
   assign start_pulse = write_fire && (aw_hold == 8'h0C) && wstrb_hold[0]
-                        && w_hold[0] && !busy;
+                        && w_hold[0] && !busy && !init_active;
 
   always_ff @(posedge s_axi_lite_clk or negedge s_axi_lite_resetn) begin
     if (!s_axi_lite_resetn) begin
@@ -115,8 +136,8 @@ module mdio_controller_sim_model #(
         w_hold_valid <= 1'b1;
       end
 
-      if (done)  done_sticky_q  <= 1'b1;
-      if (error) error_sticky_q <= 1'b1;
+      if (done && !init_active)  done_sticky_q  <= 1'b1;
+      if (error && !init_active) error_sticky_q <= 1'b1;
 
       if (write_fire) begin
         aw_hold_valid <= 1'b0;
@@ -172,7 +193,7 @@ module mdio_controller_sim_model #(
           8'h04:   s_axi_rdata <= {16'd0, write_data_q};
           8'h08:   s_axi_rdata <= {16'd0, read_data};
           8'h0C:   s_axi_rdata <= 32'd0;
-          8'h10:   s_axi_rdata <= {29'd0, error_sticky_q, done_sticky_q, busy};
+          8'h10:   s_axi_rdata <= {27'd0, init_fail_o, init_done_o, error_sticky_q, done_sticky_q, busy | init_active};
           8'h14:   s_axi_rdata <= {16'd0, clk_divider_q};
           default: s_axi_rdata <= 32'd0;
         endcase

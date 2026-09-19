@@ -335,7 +335,7 @@ module tb_egress_gem_tx_integration;
     c = 0;
     while (cap_eop_idx < 0 && c < max_cycles) begin
       @(posedge gem_clk);
-      tx_r_rd <= ($urandom_range(0, 2) != 0) && (tx_r_data_rdy || cap_sop_idx >= 0) && (cap_eop_idx < 0);
+      tx_r_rd <= ($urandom_range(0, 2) != 0) && (tx_r_data_rdy || cap_sop_idx >= 0) && (cap_eop_idx < 0) && !(tx_r_valid && tx_r_eop);
       c++;
     end
     @(posedge gem_clk);
@@ -387,7 +387,7 @@ module tb_egress_gem_tx_integration;
     rst_n = 1'b1;
     repeat (5) @(posedge gem_clk);
     gem_rst_n = 1'b1;
-    wait_cycles(NUM_BUFFERS + 20); // buf_mgr_core's free-list fill sweep
+    wait_cycles(NUM_BUFFERS + 100); // buf_mgr_core's free-list fill sweep
 
     // ---- test A: one frame through the full chain ----
     begin

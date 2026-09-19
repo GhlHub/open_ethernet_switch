@@ -69,6 +69,12 @@
 // turns out already strapped for RGMII-ID (both delaying would double
 // the skew, not cancel it).
 //
+// IMPLEMENTATION FINDING 2 (RX data hold): with the RX clock on a BUFG the clock
+// insertion delay exceeds the data path, and the centre-aligned RGMII input
+// constraints (kr260_rgmii_io.xdc) showed ~-0.26 ns hold at the IDDRE1s. The
+// data/ctl pins therefore go through IDELAYE3 (RX_DATA_IDELAY_PS, needs the
+// IDELAYCTRL below); the clock is not delayed.
+//
 // IMPLEMENTATION FINDING (place_design DRC on the full board build, not
 // visible in simulation or isolated synthesis): IDELAYE3's DATAOUT may not
 // drive a BUFG ("IDELAYE3 drives invalid load ... may not drive a BUFG*"),
@@ -97,6 +103,8 @@
 // remains a board-integration-level decision, out of scope here.
 
 module rgmii_gmii_adapter #(
+  parameter bit RX_DATA_IDELAY_ENABLE = 1'b1, // IDELAYE3 on the 5 RX data/ctl pins (see IMPLEMENTATION FINDING 2)
+  parameter int RX_DATA_IDELAY_PS     = 500,
   parameter bit RX_IDELAY_ENABLE     = 1'b0,
   parameter int RX_IDELAY_VALUE_PS   = 700,  // see header -- verify against real hardware;
                                               // IDELAYE3's own legal range for
@@ -127,7 +135,17 @@ module rgmii_gmii_adapter #(
   input  logic       gmii_tx_er_i,
   output logic [7:0] gmii_rxd_o,
   output logic       gmii_rx_dv_o,
-  output logic       gmii_rx_er_o
+  output logic       gmii_rx_er_o,
+
+  // Elastic-buffer diagnostics: sticky flags in the diag_clk_i (CPU/AXI-Lite)
+  // domain, set by a lost/truncated receive word, cleared by a one-cycle pulse
+  // on the matching clear input. Both should stay 0.
+  input  logic       diag_clk_i,
+  input  logic       diag_rst_n_i,
+  input  logic       diag_clr_overflow_i,
+  input  logic       diag_clr_underrun_i,
+  output logic       rx_elastic_overflow_o,
+  output logic       rx_elastic_underrun_o
 );
 
   genvar gi;
@@ -194,19 +212,22 @@ module rgmii_gmii_adapter #(
   wire rxc_ibuf;
   IBUF u_ibuf_rxc (.I(rgmii_rxc_i), .O(rxc_ibuf));
 
-  wire rxc_delayed;
   generate
-    if (RX_IDELAY_ENABLE) begin : g_rx_idelay
+    if (RX_IDELAY_ENABLE || RX_DATA_IDELAY_ENABLE) begin : g_idelayctrl
       wire idelayctrl_rdy;
       IDELAYCTRL #(
-        .SIM_DEVICE("ULTRASCALE_PLUS") // default is "7SERIES" -- confirmed
-                                        // via Vivado synth_design critical
-                                        // warning, not assumed
+        .SIM_DEVICE("ULTRASCALE_PLUS")
       ) u_idelayctrl (
         .RDY    (idelayctrl_rdy),
         .REFCLK (idelay_refclk_i),
         .RST    (!idelay_rst_n_i)
       );
+    end
+  endgenerate
+
+  wire rxc_delayed;
+  generate
+    if (RX_IDELAY_ENABLE) begin : g_rx_idelay
       IDELAYE3 #(
         .DELAY_TYPE      ("FIXED"),
         .DELAY_FORMAT    ("TIME"),
@@ -251,8 +272,18 @@ module rgmii_gmii_adapter #(
   wire [3:0] rxd_q1, rxd_q2; // q1=rising(low nibble), q2=falling(high nibble)
   generate
     for (gi = 0; gi < 4; gi++) begin : g_rxd_iddr
-      wire rxd_ibuf;
-      IBUF u_ibuf (.I(rgmii_rxd_i[gi]), .O(rxd_ibuf));
+      wire rxd_pin, rxd_ibuf;
+      IBUF u_ibuf (.I(rgmii_rxd_i[gi]), .O(rxd_pin));
+      if (RX_DATA_IDELAY_ENABLE) begin : g_dly
+      IDELAYE3 #(.DELAY_TYPE("FIXED"), .DELAY_FORMAT("TIME"), .DELAY_VALUE(RX_DATA_IDELAY_PS),
+                   .REFCLK_FREQUENCY(IDELAY_REFCLK_MHZ), .SIM_DEVICE("ULTRASCALE_PLUS"), .DELAY_SRC("IDATAIN")) u_idly (
+          .DATAOUT (rxd_ibuf), .IDATAIN (rxd_pin), .CLK (idelay_refclk_i),
+          .CE (1'b0), .INC (1'b0), .LOAD (1'b0), .CNTVALUEIN (9'd0), .CNTVALUEOUT (),
+          .RST (!idelay_rst_n_i), .EN_VTC (1'b1), .CASC_IN (1'b0), .CASC_RETURN (1'b0),
+          .CASC_OUT (), .DATAIN (1'b0));
+      end else begin : g_nodly
+        assign rxd_ibuf = rxd_pin;
+      end
       IDDRE1 #(
         .DDR_CLK_EDGE ("SAME_EDGE_PIPELINED")
       ) u_iddre1 (
@@ -266,8 +297,20 @@ module rgmii_gmii_adapter #(
     end
   endgenerate
 
-  wire rx_ctl_ibuf;
-  IBUF u_ibuf_rx_ctl (.I(rgmii_rx_ctl_i), .O(rx_ctl_ibuf));
+  wire rx_ctl_pin, rx_ctl_ibuf;
+  IBUF u_ibuf_rx_ctl (.I(rgmii_rx_ctl_i), .O(rx_ctl_pin));
+  generate
+    if (RX_DATA_IDELAY_ENABLE) begin : g_dly_ctl
+      IDELAYE3 #(.DELAY_TYPE("FIXED"), .DELAY_FORMAT("TIME"), .DELAY_VALUE(RX_DATA_IDELAY_PS),
+                 .REFCLK_FREQUENCY(IDELAY_REFCLK_MHZ), .SIM_DEVICE("ULTRASCALE_PLUS"), .DELAY_SRC("IDATAIN")) u_idly (
+        .DATAOUT (rx_ctl_ibuf), .IDATAIN (rx_ctl_pin), .CLK (idelay_refclk_i),
+        .CE (1'b0), .INC (1'b0), .LOAD (1'b0), .CNTVALUEIN (9'd0), .CNTVALUEOUT (),
+        .RST (!idelay_rst_n_i), .EN_VTC (1'b1), .CASC_IN (1'b0), .CASC_RETURN (1'b0),
+        .CASC_OUT (), .DATAIN (1'b0));
+    end else begin : g_nodly_ctl
+      assign rx_ctl_ibuf = rx_ctl_pin;
+    end
+  endgenerate
   wire rx_ctl_q1, rx_ctl_q2;
   IDDRE1 #(.DDR_CLK_EDGE("SAME_EDGE_PIPELINED")) u_iddre1_ctl (
     .Q1 (rx_ctl_q1),
@@ -282,35 +325,34 @@ module rgmii_gmii_adapter #(
   wire       rx_dv   = rx_ctl_q1;
   wire       rx_er   = rx_ctl_q1 ^ rx_ctl_q2;
 
-  wire       rx_fifo_empty;
-  wire [9:0] rx_fifo_rd_data;
-
-  async_fifo #(.WIDTH(10), .DEPTH(16)) u_rx_cdc (
-    .wr_clk    (rxc_buf),
-    .wr_rst_n  (rxc_rst_n),
-    .wr_en_i   (rxc_rst_n),
-    .wr_data_i ({rx_dv, rx_er, rx_byte}),
-    .full_o    (),
-
-    .rd_clk    (gtx_clk),
-    .rd_rst_n  (gtx_rst_n),
-    .rd_en_i   (!rx_fifo_empty),
-    .rd_data_o (rx_fifo_rd_data),
-    .empty_o   (rx_fifo_empty)
+  // Elastic buffer (hard FIFO36E2, see rgmii_rx_elastic.sv): absorbs the ppm
+  // difference between the PHY's receive clock and gtx_clk in the inter-frame
+  // gap only, so frames are never corrupted.
+  wire rx_ovf_evt, rx_und_evt;
+  rgmii_rx_elastic u_rx_elastic (
+    .rxc          (rxc_buf),
+    .rxc_rst_n    (rxc_rst_n),
+    .in_dv        (rx_dv),
+    .in_er        (rx_er),
+    .in_data      (rx_byte),
+    .gtx_clk      (gtx_clk),
+    .gtx_rst_n    (gtx_rst_n),
+    .gmii_rxd_o   (gmii_rxd_o),
+    .gmii_rx_dv_o (gmii_rx_dv_o),
+    .gmii_rx_er_o (gmii_rx_er_o),
+    .overflow_evt_o (rx_ovf_evt),
+    .underrun_evt_o (rx_und_evt)
   );
 
-  always_ff @(posedge gtx_clk or negedge gtx_rst_n) begin
-    if (!gtx_rst_n) begin
-      gmii_rxd_o   <= '0;
-      gmii_rx_dv_o <= 1'b0;
-      gmii_rx_er_o <= 1'b0;
-    end else if (!rx_fifo_empty) begin
-      {gmii_rx_dv_o, gmii_rx_er_o, gmii_rxd_o} <= rx_fifo_rd_data;
-    end else begin
-      // fail-safe idle if the CDC FIFO ever runs dry (see header --
-      // shouldn't happen in steady state, both clocks nominally 125MHz)
-      gmii_rx_dv_o <= 1'b0;
-    end
-  end
+  sticky_xdomain u_sticky_ovf (
+    .src_clk (rxc_buf),   .src_rst_n (rxc_rst_n), .event_i (rx_ovf_evt),
+    .dst_clk (diag_clk_i), .dst_rst_n (diag_rst_n_i), .clear_i (diag_clr_overflow_i),
+    .flag_o  (rx_elastic_overflow_o)
+  );
+  sticky_xdomain u_sticky_und (
+    .src_clk (gtx_clk),   .src_rst_n (gtx_rst_n), .event_i (rx_und_evt),
+    .dst_clk (diag_clk_i), .dst_rst_n (diag_rst_n_i), .clear_i (diag_clr_underrun_i),
+    .flag_o  (rx_elastic_underrun_o)
+  );
 
 endmodule

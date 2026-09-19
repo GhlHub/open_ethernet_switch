@@ -23,7 +23,11 @@
 //      which is what test F covers
 //   E. dma_tx_end_tog_i -> dma_tx_status_tog_o ack handshake toggles in
 //      response within a bounded number of cycles
-//   F. TX underflow: the GEM reads faster than the frame arrives -> exactly
+//   G/H. line rate: a 1518-byte frame through TX (upstream gap every 8
+//      words, GEM reading flat out) and through RX (pushed every GEM cycle,
+//      fabric always ready / stalling 1 cycle in 16) -> no underflow /
+//      overflow, content intact
+//   F. TX underflow: the upstream stalls after the start threshold -> exactly
 //      one tx_r_underflow_o, no tx_r_valid/data_rdy while draining, one
 //      tx_r_flushed_o pulse, the remainder of that frame is discarded (its
 //      eop never delivered), and the next frame is delivered intact with sop
@@ -33,7 +37,8 @@
 
 module tb_ps_gem_axis_bridge;
 
-  localparam int FIFO_DEPTH = 64;
+  localparam int RX_FIFO_WORDS = 128; // gem_rx_w_to_axis default (16-bit words)
+  localparam int START_WORDS   = 128; // axis_to_gem_tx_r default
 
   logic clk = 0;
   logic rst_n = 0;
@@ -122,6 +127,21 @@ module tb_ps_gem_axis_bridge;
     .dma_tx_status_tog_o (dma_tx_status_tog),
     .tx_r_status_i       (4'b0)
   );
+
+  // CDC safety monitor: the TX start-permit counter crosses to the GEM clock
+  // as a Gray code, which is only safe if it changes by at most one bit per
+  // fabric clock.
+  int permit_bad = 0;
+  logic [15:0] permit_prev = '0;
+  function automatic int pop16(input logic [15:0] v);
+    int c = 0;
+    for (int b = 0; b < 16; b++) if (v[b] === 1'b1) c++;
+    return c;
+  endfunction
+  always @(posedge clk) begin
+    if (rst_n && pop16(16'(dut.u_tx.permit_gray_q) ^ permit_prev) > 1) permit_bad++;
+    permit_prev <= 16'(dut.u_tx.permit_gray_q);
+  end
 
   int errors = 0;
 
@@ -224,7 +244,7 @@ module tb_ps_gem_axis_bridge;
     // after the frame's eop, which would (correctly) be an underflow
     while (tx_rxd_eop_idx < 0 && c < max_cycles) begin
       @(posedge gem_clk);
-      tx_r_rd <= ($urandom_range(0, 2) != 0) && (tx_r_data_rdy || tx_rxd_sop_idx >= 0) && (tx_rxd_eop_idx < 0);
+      tx_r_rd <= ($urandom_range(0, 2) != 0) && (tx_r_data_rdy || tx_rxd_sop_idx >= 0) && (tx_rxd_eop_idx < 0) && !(tx_r_valid && tx_r_eop);
       c++;
     end
     @(posedge gem_clk);
@@ -282,12 +302,16 @@ module tb_ps_gem_axis_bridge;
       tx_r_rd <= 1'b1;
       @(posedge gem_clk);
       c++;
-      if (tx_r_underflow) begin
+      if (tx_r_valid && tx_r_eop) begin
+        // the frame's last byte was just delivered: a GEM stops here
+        tx_r_rd <= 1'b0;
+        done = 1'b1;
+      end else if (tx_r_underflow) begin
         tx_r_rd <= 1'b0;
         while (!tx_r_flushed && c < max_cycles) begin @(posedge gem_clk); c++; end
         while (tx_r_flushed && c < max_cycles)  begin @(posedge gem_clk); c++; end
         done = 1'b1;
-      end else if (tx_rxd_eop_idx >= 0) done = 1'b1;
+      end
     end
     tx_r_rd <= 1'b0;
     @(posedge gem_clk);
@@ -297,23 +321,29 @@ module tb_ps_gem_axis_bridge;
   // 16-bit word (tkeep=2'b01 on a trailing single byte), nonblocking
   // throughout -- same race/fix as established for the DMA/buf_mgr
   // testbenches earlier in this project.
-  task automatic drive_axis_frame(input byte data[]);
+  // gap_every > 0: leave s_axis_tvalid low for one cycle after every
+  // gap_every words (models egress_port_rd.sv's per-16-byte refill gap).
+  // last_flag=0 leaves the frame open (no tlast), for streaming a frame in
+  // pieces.
+  task automatic drive_axis_frame_ex(input byte data[], input int gap_every, input bit last_flag);
     int n;
     int i;
+    int words;
     logic [15:0] word;
     logic [1:0]  keep;
     bit          is_last;
     n = data.size();
     i = 0;
+    words = 0;
     while (i < n) begin
       if (i + 1 < n) begin
         word    = {data[i+1], data[i]};
         keep    = 2'b11;
-        is_last = (i + 2 >= n);
+        is_last = (i + 2 >= n) && last_flag;
       end else begin
         word    = {8'h00, data[i]};
         keep    = 2'b01;
-        is_last = 1'b1;
+        is_last = last_flag;
       end
       s_axis_tdata  <= word;
       s_axis_tkeep  <= keep;
@@ -322,9 +352,26 @@ module tb_ps_gem_axis_bridge;
       @(posedge clk);
       while (!s_axis_tready) @(posedge clk);
       i = i + ((keep == 2'b11) ? 2 : 1);
+      words++;
+      if (gap_every > 0 && (words % gap_every) == 0) begin
+        s_axis_tvalid <= 1'b0;
+        @(posedge clk);
+      end
     end
     s_axis_tvalid <= 1'b0;
     s_axis_tlast  <= 1'b0;
+  endtask
+
+  task automatic drive_axis_frame(input byte data[]);
+    drive_axis_frame_ex(data, 0, 1'b1);
+  endtask
+
+  // slice of a frame (indices [from, to)), no tlast
+  task automatic drive_axis_slice(input byte data[], input int from, input int to);
+    byte part[];
+    part = new[to - from];
+    for (int i = from; i < to; i++) part[i - from] = data[i];
+    drive_axis_frame_ex(part, 0, 1'b0);
   endtask
 
   initial begin
@@ -346,7 +393,10 @@ module tb_ps_gem_axis_bridge;
     rst_n = 1'b1;
     repeat (5) @(posedge gem_clk);
     gem_rst_n = 1'b1;
-    repeat (10) @(posedge clk);
+    // xpm_fifo_async (SYNTHESIS build) reports busy for a while after reset
+    // and drops writes meanwhile; the behavioral model does not, so this
+    // wait costs nothing there
+    repeat (100) @(posedge clk);
 
     // ---- test A: normal RX push, random downstream backpressure ----
     capture_axis_reset();
@@ -386,8 +436,8 @@ module tb_ps_gem_axis_bridge;
     bp_mode = 0; // no draining at all during this push
     begin
       byte data[];
-      data = new[FIFO_DEPTH + 20];
-      for (int i = 0; i < FIFO_DEPTH + 20; i++) data[i] = byte'(i);
+      data = new[2 * RX_FIFO_WORDS + 40];
+      for (int i = 0; i < 2 * RX_FIFO_WORDS + 40; i++) data[i] = byte'(i);
       gem_push_frame(data, 1'b0);
     end
     repeat (4) @(posedge gem_clk);
@@ -409,9 +459,9 @@ module tb_ps_gem_axis_bridge;
     end
     // drain at full speed; the truncated frame must be closed as a bad one
     bp_mode = 2;
-    repeat (2 * FIFO_DEPTH + 40) @(posedge clk);
+    repeat (2 * RX_FIFO_WORDS + 60) @(posedge clk);
     bp_mode = 0;
-    if (rxd_tlast_idx < 0 || rxd_tuser_at_tlast !== 1'b1 || rxd_bytes.size() < 8 || rxd_bytes[rxd_bytes.size()-1] !== 8'h00) begin
+    if (rxd_tlast_idx < 0 || rxd_tuser_at_tlast !== 1'b1 || rxd_bytes.size() < 64 || rxd_bytes[rxd_bytes.size()-1] !== 8'h00) begin
       $display("FAIL: testB truncated frame not closed as a bad frame (tlast_idx=%0d tuser=%0b bytes=%0d)", rxd_tlast_idx, rxd_tuser_at_tlast, rxd_bytes.size());
       errors++;
     end else begin
@@ -535,26 +585,39 @@ module tb_ps_gem_axis_bridge;
     end
 
     // ---- test F: TX underflow -> flush protocol ----
+    // A frame is released to the GEM only after START_WORDS of it are
+    // buffered, so rate alone can no longer cause underflow. Stream the
+    // first 320 bytes (160 words > START_WORDS, so the GEM starts), let the
+    // GEM drain them and hit the empty FIFO, then finish the frame late.
     tx_capture_reset();
     tx_mon_reset();
     begin
       byte data[];
-      data = new[40];
-      for (int i = 0; i < 40; i++) data[i] = byte'(8'h80 + i);
+      data = new[400];
+      for (int i = 0; i < 400; i++) data[i] = byte'(8'h80 + i);
       fork
-        drive_axis_frame(data);
-        gem_pull_aggressive(2000);
+        begin
+          drive_axis_slice(data, 0, 320);
+          repeat (600) @(posedge clk);  // upstream stalls; the GEM runs dry
+          begin
+            byte tail[];
+            tail = new[80];
+            for (int i = 0; i < 80; i++) tail[i] = data[320 + i];
+            drive_axis_frame(tail);      // remainder, with tlast
+          end
+        end
+        gem_pull_aggressive(4000);
       join
     end
-    repeat (60) @(posedge gem_clk); // let the rest of the aborted frame drain
+    repeat (200) @(posedge gem_clk); // let the rest of the aborted frame drain
     begin
       bit ok;
       ok = 1'b1;
       if (uf_cnt != 1) begin $display("FAIL: testF expected exactly 1 tx_r_underflow_o, saw %0d", uf_cnt); ok = 1'b0; end
       if (fl_cnt != 1) begin $display("FAIL: testF expected exactly 1 tx_r_flushed_o pulse, saw %0d", fl_cnt); ok = 1'b0; end
       if (proto_bad)   begin $display("FAIL: testF tx_r_valid/tx_r_data_rdy asserted while tx_r_flushed_o was high"); ok = 1'b0; end
-      if (tx_rxd_eop_idx != -1 || tx_rxd_bytes.size() >= 40 || tx_rxd_bytes.size() == 0) begin
-        $display("FAIL: testF aborted frame should deliver a partial prefix and no eop (bytes=%0d eop_idx=%0d)", tx_rxd_bytes.size(), tx_rxd_eop_idx); ok = 1'b0;
+      if (tx_rxd_eop_idx != -1 || tx_rxd_bytes.size() < 256 || tx_rxd_bytes.size() > 320) begin
+        $display("FAIL: testF aborted frame should deliver the buffered prefix and no eop (bytes=%0d eop_idx=%0d)", tx_rxd_bytes.size(), tx_rxd_eop_idx); ok = 1'b0;
       end
       for (int i = 0; i < tx_rxd_bytes.size(); i++) if (tx_rxd_bytes[i] !== byte'(8'h80 + i)) ok = 1'b0;
       if (tx_r_data_rdy !== 1'b0) begin $display("FAIL: testF tx_r_data_rdy_o high after the aborted frame drained"); ok = 1'b0; end
@@ -581,6 +644,70 @@ module tb_ps_gem_axis_bridge;
       else begin $display("FAIL: testF frame after flush wrong (bytes=%0d sop_idx=%0d eop_idx=%0d uf=%0d)", tx_rxd_bytes.size(), tx_rxd_sop_idx, tx_rxd_eop_idx, uf_cnt); errors++; end
     end
 
+    // ---- test G: TX at line rate -- a 1518-byte frame, upstream gap every
+    // 8 words (egress_port_rd.sv's cadence), GEM reading every cycle it can:
+    // no underflow, frame intact ----
+    tx_capture_reset();
+    tx_mon_reset();
+    begin
+      byte data[];
+      data = new[1518];
+      for (int i = 0; i < 1518; i++) data[i] = byte'(i * 7 + 3);
+      fork
+        drive_axis_frame_ex(data, 8, 1'b1);
+        gem_pull_aggressive(20000);
+      join
+      repeat (20) @(posedge gem_clk);
+      begin
+        bit ok;
+        ok = (tx_rxd_bytes.size() == 1518) && (tx_rxd_sop_idx == 0) && (tx_rxd_eop_idx == 1517) && (uf_cnt == 0) && (fl_cnt == 0);
+        for (int i = 0; i < tx_rxd_bytes.size() && i < 1518; i++) if (tx_rxd_bytes[i] !== byte'(i * 7 + 3)) ok = 1'b0;
+        if (ok) $display("PASS: testG TX 1518-byte frame at line rate: no underflow, content intact");
+        else begin $display("FAIL: testG TX line rate (bytes=%0d uf=%0d fl=%0d eop_idx=%0d)", tx_rxd_bytes.size(), uf_cnt, fl_cnt, tx_rxd_eop_idx); errors++; end
+      end
+    end
+
+    // ---- test H: RX at line rate -- 1518 bytes pushed every GEM cycle;
+    // (a) fabric always ready, (b) fabric stalls 1 cycle in 16 ----
+    for (int pass = 0; pass < 2; pass++) begin
+      capture_axis_reset();
+      ov_monitor_reset();
+      bp_mode = 2;
+      begin
+        byte data[];
+        data = new[1518];
+        for (int i = 0; i < 1518; i++) data[i] = byte'(i * 5 + pass);
+        if (pass == 1) begin
+          // periodic stall: toggle bp_mode low for one fabric cycle per 16
+          fork
+            gem_push_frame(data, 1'b0);
+            begin
+              for (int k = 0; k < 90; k++) begin
+                repeat (15) @(posedge clk);
+                bp_mode = 0; @(posedge clk); bp_mode = 2;
+              end
+            end
+          join
+        end else begin
+          gem_push_frame(data, 1'b0);
+        end
+        bp_mode = 2;
+        repeat (400) @(posedge clk);
+        bp_mode = 0;
+        begin
+          bit ok;
+          ok = (rxd_bytes.size() == 1518) && (rxd_tlast_idx == 1517) && (rxd_tuser_at_tlast === 1'b0) && !ov_seen;
+          for (int i = 0; i < rxd_bytes.size() && i < 1518; i++) if (rxd_bytes[i] !== byte'(i * 5 + pass)) ok = 1'b0;
+          if (ok) $display("PASS: testH RX 1518-byte frame at line rate (%s): no overflow, content intact", pass ? "fabric stalls 1 in 16" : "fabric always ready");
+          else begin $display("FAIL: testH RX line rate pass %0d (bytes=%0d tlast_idx=%0d overflow_seen=%0b)", pass, rxd_bytes.size(), rxd_tlast_idx, ov_seen); errors++; end
+        end
+      end
+    end
+
+    if (permit_bad != 0) begin
+      $display("FAIL: TX permit Gray counter changed more than one bit at once %0d times", permit_bad);
+      errors++;
+    end else $display("PASS: TX permit Gray counter changed at most one bit per clock (safe to synchronize)");
     if (errors == 0) $display("=== ALL TESTS PASSED ===");
     else              $display("=== %0d TEST(S) FAILED ===", errors);
     $finish;

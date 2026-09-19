@@ -51,3 +51,10 @@ set_max_delay -datapath_only -from [get_clocks clk_gem1_tx_0] -to [get_clocks cl
 set_max_delay -datapath_only -from [get_clocks clk_gem1_tx_0] -to [get_clocks clk_gem1_rx_0] 8.000
 set_max_delay -datapath_only -from [get_clocks pl0_rgmii_rxc] -to [get_clocks clk_out1_pl_eth_clk_gen_ip] 8.000
 set_max_delay -datapath_only -from [get_clocks pl1_rgmii_rxc] -to [get_clocks clk_out1_pl_eth_clk_gen_ip_1] 8.000
+
+# RGMII receive-clock <-> AXI-Lite clock: the CPU-visible sticky diagnostics
+# (sticky_xdomain.sv) set in the receive domain and are cleared from clk_pl_0.
+set_max_delay -datapath_only -from [get_clocks pl0_rgmii_rxc] -to [get_clocks clk_pl_0] 7.000
+set_max_delay -datapath_only -from [get_clocks pl1_rgmii_rxc] -to [get_clocks clk_pl_0] 7.000
+set_max_delay -datapath_only -from [get_clocks clk_pl_0] -to [get_clocks pl0_rgmii_rxc] 7.000
+set_max_delay -datapath_only -from [get_clocks clk_pl_0] -to [get_clocks pl1_rgmii_rxc] 7.000
