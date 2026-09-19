@@ -68,7 +68,7 @@ module mac_addr_table_top
   // -----------------------------------------------------------------
   // Aging tick synchronizer + rising-edge detector
   // -----------------------------------------------------------------
-  logic tick_meta, tick_sync_q, tick_sync_q2;
+  (* ASYNC_REG = "TRUE" *) logic tick_meta, tick_sync_q, tick_sync_q2;
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       tick_meta    <= 1'b0;

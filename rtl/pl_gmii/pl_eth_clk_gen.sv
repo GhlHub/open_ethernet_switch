@@ -67,21 +67,21 @@ module pl_eth_clk_gen (
     .locked   (locked)
   );
 
-  logic [1:0] gtx_rst_sync_q;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] gtx_rst_sync_q;
   always_ff @(posedge gtx_clk_o or negedge locked) begin
     if (!locked) gtx_rst_sync_q <= 2'b00;
     else         gtx_rst_sync_q <= {gtx_rst_sync_q[0], 1'b1};
   end
   assign gtx_rst_n_o = gtx_rst_sync_q[1];
 
-  logic [1:0] idelay_rst_sync_q;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] idelay_rst_sync_q;
   always_ff @(posedge idelay_refclk_o or negedge locked) begin
     if (!locked) idelay_rst_sync_q <= 2'b00;
     else         idelay_rst_sync_q <= {idelay_rst_sync_q[0], 1'b1};
   end
   assign idelay_refclk_rst_n_o = idelay_rst_sync_q[1];
 
-  logic [1:0] clk_rst_sync_q;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] clk_rst_sync_q;
   always_ff @(posedge clk_o or negedge locked) begin
     if (!locked) clk_rst_sync_q <= 2'b00;
     else         clk_rst_sync_q <= {clk_rst_sync_q[0], 1'b1};

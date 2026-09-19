@@ -1,201 +1,130 @@
 # Overall architecture
 
-Inventory baseline: 2026-09-18. This describes the RTL present in this repository
-and the integration still needed to make it a working KR260 switch.
-
-**The implemented architecture is a store-and-forward switch using a shared PS
-DDR packet pool.** PS GEM traffic enters PL through the GEM external FIFO
-interface, bypassing the GEM's built-in DMA. The switch's own PL DMA engines
-then store packets in DDR. These are different DMA paths.
+Inventory baseline: 2026-09-19. The design is a store-and-forward switch
+using a shared PS DDR packet pool. PS GEM traffic enters PL through the GEM
+external FIFO interface, bypassing the GEM's built-in DMA. The switch's own
+PL DMA engines then store packets in DDR.
 
 ## System view
 
-Blue boxes have RTL in the repository. Amber boxes also have RTL but have
-known functional or hardware-integration gaps. Red boxes marked **PENDING**
-have no complete implementation here. Gray boxes are interfaces or existing
-hardware resources. **`switch_top.sv` now joins the port subsystems, forwarding
-logic and shared-buffer datapath.** Its external DDR masters, CPU streams,
-GMII pins and SFP parallel pins still need board/platform integration. Arrows
-to pending blocks show intended connections. Dotted arrows carry control data.
+The board assembly and generated block design now connect the port hardware,
+switch, and PS memory interfaces. Blue boxes are implemented source/IP
+assembly; amber boxes have known functional or verification gaps; red boxes
+are pending development. A connection in this diagram means wiring exists,
+not that operation has been demonstrated on a KR260.
 
 ```mermaid
 flowchart TB
-    subgraph assembled[switch_top.sv - assembled digital switch]
-    subgraph ports[Physical port subsystems]
-        PS["Ports 0-1: PS GEM adapters<br/>ps_gem_axis_bridge x2<br/>RTL present; flush / underrun gaps"]
-        PL["Ports 2-3: PL 1G MACs<br/>pl_gmii_mac_top x2<br/>RTL present; rgmii_gmii_adapter.sv + XDC exist, not yet joined in"]
-        SFP["Port 4: SFP 1G MAC + PCS<br/>sfp_port_top<br/>RTL present; GTH connection / link policy pending"]
-        STREAM["Five physical RX / TX stream pairs<br/>16-bit AXI-S; intended 62.5 MHz"]
-        PS <--> STREAM
-        PL <--> STREAM
-        SFP <--> STREAM
-    end
-
-    subgraph core[Switch datapath and buffer control]
-        subgraph ingwrap[ingress_top - RTL present]
-            INGRESS["Five ingress_port_wr instances<br/>Local frame RAMs + ingress_dma_wr"]
-            BUF["buf_mgr_core<br/>free_list_mgr + queue_mgr<br/>Six queues; reference-counted buffer IDs"]
+    subgraph board[kr260_top.sv - board assembly]
+        subgraph pltop[kr260_pl_top.sv - PL assembly]
+            PHY["Two PL PHYs"] <--> RGMII["RGMII adapters x2<br/>PHY internal delays required"]
+            OPT["SFP optical port"] <--> GT["GTH wrapper + XCI<br/>X0Y6, 1.25 Gb/s"]
+            MDIO["MDIO controllers x2"] -.-> PHY
+            CLOCK["Two PL clock generators<br/>SFP PCS clock generator<br/>Reset synchronizers"]
+            subgraph sw[switch_top.sv - digital switch]
+                PORTS["Ports 0-1: GEM FIFO bridges<br/>Ports 2-3: PL MACs<br/>Port 4: SFP MAC + PCS + experimental AN<br/>16-bit AXI-S, 62.5 MHz fabric"]
+                INGRESS["Five ingress front ends<br/>Local frame RAM + shared write DMA"]
+                EGRESS["Five egress front ends<br/>Shared read DMA + local frame RAM"]
+                CPU["Port 5: CPU streams<br/>Dedicated pool write/read DMA"]
+                BUF["Shared buffer manager<br/>Six queues, reference-counted IDs"]
+                FWD["Six header resolvers<br/>MAC learning, lookup, aging<br/>Hit mask / miss flood"]
+                PORTS --> INGRESS
+                EGRESS --> PORTS
+                INGRESS <--> BUF
+                EGRESS <--> BUF
+                CPU <--> BUF
+                PORTS -. headers .-> FWD
+                CPU -. headers .-> FWD
+                FWD -. masks .-> INGRESS
+                FWD -. masks .-> CPU
+            end
+            RGMII <-->|GMII| PORTS
+            GT <-->|16-bit data and K flags| PORTS
+            CLOCK -.-> PORTS
         end
-        EGRESS["egress_top<br/>egress_dma_rd + five egress_port_rd<br/>Local frame RAMs"]
-        CPU["Port 5: cpu_port_top<br/>Ingress / egress front ends<br/>Dedicated cpu_dma_wr / cpu_dma_rd"]
-        PARSER["mac_forwarding_top<br/>Six mac_addr_resolver instances<br/>Header capture; hit mask / miss flood"]
-        TABLE["mac_addr_table_top<br/>Learning + lookup + aging<br/>Connected to all six ingress streams"]
-        INGRESS <--> BUF
-        EGRESS <--> BUF
-        CPU <--> BUF
-        AGE["Aging tick divider<br/>4 Hz at default fabric clock"]
-        AGE -.-> TABLE
-        PARSER -.-> TABLE
-        TABLE -. lookup result .-> PARSER
-        PARSER -. destination masks .-> INGRESS
-        PARSER -. destination mask .-> CPU
+        subgraph bd[system_wrapper - generated by build_kr260.tcl]
+            PS["Zynq PS<br/>GEM0 SGMII, GEM1 RGMII<br/>External FIFO mode"]
+            CTL["sc_ctl: HPM0_LPD to<br/>3 MACs, 2 MDIO, AXI DMA registers"]
+            HP0["sc_ddr: three switch masters<br/>PS HP0"]
+            DMA["CPU AXI DMA SG<br/>MM2S / S2MM, 16-bit streams"]
+            HP1["sc_dma: SG + MM2S + S2MM<br/>PS HP1"]
+            IRQ["Eight PL interrupts to PS"]
+            PS --> CTL
+            DMA <--> HP1
+            IRQ --> PS
+        end
+        PS <-->|Separate RX and TX FIFO clocks per GEM| PORTS
+        INGRESS -->|128-bit writes| HP0
+        HP0 -->|128-bit reads| EGRESS
+        CPU <-->|128-bit read/write| HP0
+        CPU <-->|16-bit AXI-S| DMA
+        CTL -.-> PORTS
+        CTL -.-> MDIO
+        CTL -.-> DMA
+        PORTS -.-> IRQ
+        DMA -.-> IRQ
     end
-
-    STREAM --> INGRESS
-    EGRESS --> STREAM
-    STREAM -. received headers .-> PARSER
-    CPU -. CPU transmit headers .-> PARSER
-    end
-
-    subgraph platform[PS memory and software integration]
-        AXI["PENDING: AXI interconnect + PS HP/HPC wiring<br/>Address map and arbitration"]
-        DDR["PS DDR shared packet pool<br/>Default: 256 x 2048-byte slots<br/>Base address 0x10000000"]
-        CPUDMA["PENDING: CPU-facing AXI DMA SG IP<br/>MM2S / S2MM and descriptor rings"]
-        RTOS["PENDING: FreeRTOS firmware<br/>Drivers, network interface, PHY / GEM setup<br/>Register and interrupt control"]
-        AXI <--> DDR
-        CPUDMA <--> AXI
-        RTOS -. buffer / descriptor management .-> CPUDMA
-    end
-
-    INGRESS -->|128-bit AXI writes| AXI
-    AXI -->|128-bit AXI reads| EGRESS
-    CPU <-->|128-bit AXI read / write| AXI
-    CPU <-->|16-bit AXI-S| CPUDMA
-
+    DDR["PS DDR<br/>Switch pool: 256 x 2048 bytes at 0x10000000<br/>Separate software buffers and descriptors"]
+    HP0 <--> DDR
+    HP1 <--> DDR
+    RTOS["PENDING: FreeRTOS firmware<br/>Memory reservation, cache and DMA ownership<br/>GEM / PHY setup, drivers, interrupts"]
+    RTOS -.-> PS
     classDef present fill:#e1efff,stroke:#245a9b,color:#10243a
     classDef partial fill:#fff0cb,stroke:#a96a00,color:#473000
     classDef pending fill:#ffe4e4,stroke:#b52a2a,color:#601515,stroke-dasharray:5 3
     classDef hardware fill:#eeeeee,stroke:#666666,color:#222222
-    class INGRESS,BUF,EGRESS,CPU,TABLE,AGE present
-    class PS,PL,SFP,PARSER partial
-    class AXI,CPUDMA,RTOS pending
-    class STREAM,DDR hardware
+    class CLOCK,MDIO,INGRESS,EGRESS,CPU,BUF,CTL,HP0,DMA,HP1,IRQ present
+    class RGMII,GT,PORTS,FWD partial
+    class RTOS pending
+    class PHY,OPT,PS,DDR hardware
 ```
 
-Also pending across the whole diagram: board top level, integration of the
-existing PL clock generators, remaining clock/reset sources, timing/CDC
-constraints, and management-register access. PL pin constraints now exist.
-A GEM0-to-CPU smoke test exists; coverage of all ports, learned forwarding,
-shared DDR arbitration, and sustained load remains pending.
+The local Vivado reports show successful routing and bitstream generation
+under the current constraints. Complete external timing and CDC sign-off are
+still pending. The portable system test covers a GEM0-to-CPU lookup miss;
+all-port forwarding, shared DDR contention, sustained load and hardware
+bring-up remain unverified. See [verification](verification.md).
 
 ## Physical-port boundaries
 
-This diagram separates existing digital adapters from the missing board-level
-pieces. Each double arrow represents receive and transmit paths.
-
-```mermaid
-flowchart LR
-    PSHW["KR260 PS PHYs + hard GEM0 / GEM1"] <-->|External FIFO| GEM["RTL: ps_gem_axis_bridge<br/>gem_rx_w_to_axis<br/>axis_to_gem_tx_r"]
-    GEM <--> AXIS["Common 16-bit AXI-S<br/>switch RX / TX interfaces"]
-
-    PLPHY["KR260 PL copper PHYs<br/>TI DP83867CSRGZ in local schematic"] <--> RGMII["RTL: rgmii_gmii_adapter<br/>ODDRE1/IDDRE1/IDELAYE3 + async_fifo CDC<br/>Board assembly / timing pending"]
-    MDIO["RTL: mdio_controller<br/>AXI4-Lite + open_eth_mdio_master (imported) + IOBUF<br/>Not yet joined to switch_top or a real mdio/mdc pin pair"] -.-> PLPHY
-    RGMII <-.->|GMII connection pending| PLMAC["RTL: pl_gmii_mac_top<br/>open_eth_mac_1g_switch<br/>32-bit / 16-bit CDC adapters"]
-    PLMAC <--> AXIS
-    CLK["RTL: pl_eth_clk_gen + XCI<br/>25 MHz to 125 / 300 / 62.5 MHz"] -. clock wiring pending .-> RGMII
-    CLK -.-> PLMAC
-
-    OPT["SFP module / serial link"] <--> GT["RTL: gth_sfp_wrapper<br/>gtwizard_ultrascale IP + XCI<br/>X0Y6; 156.25 MHz reference<br/>Board / clock integration pending"]
-    GT <-.->|Connection pending: 16-bit data + K at 62.5 MHz| PCS["RTL: sfp_port_top<br/>1000BASE-X PCS + experimental AN + 1G MAC<br/>32-bit / 16-bit CDC adapters"]
-    PCS <--> AXIS
-
-    classDef present fill:#e1efff,stroke:#245a9b,color:#10243a
-    classDef pending fill:#ffe4e4,stroke:#b52a2a,color:#601515,stroke-dasharray:5 3
-    classDef hardware fill:#eeeeee,stroke:#666666,color:#222222
-    classDef partial fill:#fff0cb,stroke:#a96a00,color:#473000
-    class GEM,PLMAC present
-    class GT,RGMII,CLK,MDIO,PCS partial
-    class PSHW,PLPHY,OPT,AXIS hardware
-```
-
-The RGMII adapter implements DDR I/O, optional receive-clock delay, and a
-receive FIFO crossing into the MAC clock domain. Its separate behavioral
-model tests nibble/control encoding but omits that FIFO and physical timing.
-PL package-pin and input-clock constraints exist; complete external timing,
-PHY initialization, and board-level assembly remain pending.
-
-`mdio_controller` wraps an imported Clause 22 master with AXI-Lite registers
-and an IOBUF. Its portable counterpart uses the same register logic and
-master with a tristate pin assignment. Write/read/status-clear tests pass.
-Two instances are intended for the separate PL PHY buses; their CPU address
-map, board pins and firmware initialization remain unconnected. See the
-[MDIO register map](board-integration.md#mdio-management-interface) and
-[source notices](source-notices.md).
-
-`pl_eth_clk_gen` and its Clocking Wizard configuration generate nominal
-125 MHz MAC, 300 MHz delay-reference, and 62.5 MHz fabric clocks from 25 MHz.
-The proposed assembly uses two instances, with PL0's 62.5 MHz output supplying
-the shared switch clock and PL1's corresponding output unused. Neither clock
-generator nor RGMII adapter is instantiated by `switch_top` yet.
-
-The local carrier schematic identifies TI DP83867 PHYs, one buffered 25 MHz
-source shared by both PL reference inputs and PHY XI pins, and PHY reset
-requests routed through U19. See [board integration](board-integration.md) for
-the clock diagram, sheet references, revision scope, and remaining checks.
-Prior isolated Vivado synthesis is reported in source comments; no reproducible
-scripts/reports are committed, and those checks were not rerun for this inventory.
-
-The SFP PCS now exposes decoded 16-bit data plus two K/error flags at
-62.5 MHz. Its internal GMII/symbol logic remains at 125 MHz; the two-phase
-gearbox assumes exactly 2:1, phase-related clocks. These are not independent
-clock domains. The board design must generate and constrain that relationship.
-
-`sfp_1000base_x_pcs` now includes experimental Clause 37 base-page
-negotiation. While active, `autoneg_1000base_x` replaces the TX codec output
-with configuration ordered sets ahead of the gearbox. It monitors received
-symbols and exports link, duplex, pause and remote-fault status through
-`sfp_port_top` to `switch_top` (`sfp_an_*` outputs).
-
-These status outputs do not gate MAC transmission or switch egress. Frames
-accepted during negotiation/restart can be discarded or truncated at the TX
-mux. Timers default to simulation-length values; idle detection, pause
-resolution and compatibility/fault handling need further development. Next
-Page is absent. The test with two PCS instances verifies default-ability
-negotiation, bidirectional frames and recovery from injected corruption using
-shared clocks and the same RTL; it is not an independent interoperability test.
-
-`gth_sfp_wrapper` instantiates the vendor IP separately from `switch_top`.
-Its configuration now selects X0Y6 and a 156.25 MHz reference, replacing the
-earlier X0Y4/125 MHz assumptions. The local schematic and SOM mapping trace
-SFP TX to R4/R3, RX to T2/T1, and reference to Y6/Y5 (P/N). Source comments
-report a Vivado channel/site check and synthesis; these were not rerun here,
-and no reproducible generation/synthesis scripts or reports are committed.
-Line rate and data width remain 1.25 Gb/s and 16 bits, for the intended
-62.5 MHz parallel user clock. Placement, reference routing, resets and the
-phase-related PCS clock still need board integration.
-
-The standalone `gth_sfp_sim_model` test checks delayed parallel loopback,
-reset/status and error injection. The PCS and full SFP-port tests instead
-connect their parallel pins directly; they do not use the GTH model or
-validate a serial link. Neither implementation provides 10G Ethernet.
-`sync_ok_o` indicates code-group synchronization. The new `sfp_an_link_up_o`
-reports the experimental negotiation state; neither establishes a hardware-
-validated link or enforces a transmit-admission policy.
-
-## Port map and external integration
-
-| Index | Port | Boundary exposed by `switch_top` |
+| Index | Port | Digital-switch boundary and board connection |
 | --- | --- | --- |
-| 0–1 | PS GEM0 / GEM1 | GEM external FIFO signals and one clock/reset pair per GEM |
-| 2–3 | PL GMII0 / GMII1 | GMII signals; `rgmii_gmii_adapter.sv` + `constraints/kr260_pl_ethernet.xdc` exist for the carrier RGMII conversion but aren't joined into `switch_top` yet |
-| 4 | SFP 1G | Decoded 16-bit GTH parallel signals; transceiver wrapper remains external |
-| 5 | Virtual CPU | 16-bit AXI-S pair for future CPU-facing AXI DMA |
+| 0–1 | PS GEM0 / GEM1 | External FIFO signals, separate RX/TX clocks and synchronized resets per GEM; connected to PS FIFO ports by the block design and static top |
+| 2–3 | PL GMII0 / GMII1 | GMII to two RGMII adapters; each has a local 125 MHz MAC clock, PHY RX clock, MDIO controller and reset request |
+| 4 | SFP 1G | Decoded 16-bit GTH interface; board wrapper joins the transceiver and a new 125/62.5 MHz PCS clock generator |
+| 5 | Virtual CPU | 16-bit AXI-S pair connected to vendor AXI DMA MM2S/S2MM |
 
-Four separate AXI master channel groups leave the top: physical ingress writes,
-physical egress reads, CPU pool writes, and CPU pool reads. The three MAC
-AXI-Lite interfaces, negotiation status and `default_age_i` also remain external.
-The MDIO wrappers are not instantiated at this level. There is no
-CPU-accessible management register map or PS block design yet.
+`switch_top` exposes four DMA channel groups: physical ingress writes,
+physical egress reads, CPU pool writes and CPU pool reads. The board wrapper
+combines the CPU groups into one AXI interface, giving `sc_ddr` three masters.
+The separate CPU-facing AXI DMA has three memory masters through `sc_dma`.
+Both paths reach PS DDR, through HP0 and HP1 respectively.
+
+The three MAC AXI-Lite interfaces and two MDIO controllers have CPU addresses.
+Eight interrupt signals are wired to the PS. Firmware and a switch-management
+register bank remain absent: `default_age_i` is tied to its package default,
+and SFP sync/negotiation status only drives LEDs. LOS, module-absent and
+TX-fault inputs have no control policy; TX_DISABLE is tied low. See the
+[address and clock maps](board-integration.md).
+
+The hardware RGMII adapters use DDR I/O and a continuous receive FIFO crossing
+into each MAC clock domain. RX_IDELAY_ENABLE defaults off because the optional
+IDELAYE3-to-BUFG clock path is not implementable. PHY internal RX/TX delay
+configuration, external timing constraints and FIFO clock-drift recovery are
+still required. The behavioral RGMII model omits the real FIFO and primitives.
+
+The SFP uses 1000BASE-X at 1.25 Gb/s serial rate. Its 125 MHz codec and
+62.5 MHz gearbox clocks now come from one MMCM driven by GTH TXUSRCLK2.
+The fixed-phase gearbox, MMCM-to-GT relationship and receive clock correction
+still need hardware validation. This is not a 10G datapath.
+
+Experimental Clause 37 negotiation overrides transmitted MAC symbols and
+exports link/duplex/pause/fault status. It does not gate frame admission;
+frames accepted during negotiation/restart can be lost or truncated. Timers
+still default to eight cycles, with incomplete compatibility, fault, idle
+stability and pause rules. Two-PCS tests share clocks and the same RTL; they
+do not establish independent-peer interoperability. See the
+[development backlog](inventory.md#modules-and-integration-still-pending).
 
 ## Packet lifetime
 
@@ -222,8 +151,8 @@ CPU-accessible management register map or PS block design yet.
    with a separate read and local copy for each destination.
 
 The CPU port uses the same front ends and buffer manager, but dedicated
-`cpu_dma_wr` / `cpu_dma_rd` engines. A separate, not-yet-instantiated AXI DMA
-SG block would move data between FreeRTOS-owned buffers and this port's streams.
+`cpu_dma_wr` / `cpu_dma_rd` engines. The block design instantiates a separate AXI DMA
+SG block to move data between FreeRTOS-owned buffers and this port's streams.
 The current CPU design therefore copies between software buffers and the
 switch pool; it is not a direct zero-copy software interface to pool buffers.
 
@@ -239,7 +168,7 @@ switch pool; it is not a direct zero-copy software interface to pool buffers.
 | CPU switch-pool access | Dedicated 128-bit write/read engines; same pool geometry as physical ports |
 | Port mask | Six bits in the buffer manager; eight bits in MAC-table results. `mac_forwarding_top` uses bits 0–5 and disables request ports 6–7. |
 
-Clock values in source comments are intended operating points, not timing-closure
-results. In particular, the current GEM adapters transfer individual bytes on
+The clock plan and limits of the local timing results are recorded in
+[board integration](board-integration.md). In particular, the current GEM adapters transfer individual bytes on
 their fabric-side FIFO ports, so a 16-bit external interface alone does not
 establish 1 Gb/s sustained throughput. See the [inventory gaps](inventory.md#known-gaps-in-existing-rtl).

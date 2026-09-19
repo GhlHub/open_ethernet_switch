@@ -91,17 +91,21 @@ module switch_top
   input  logic mac_clk_en,
 
   // PS GEM FIFO interface clocks -- one per independent GEM instance
-  input  logic gem_clk_ps0,
-  input  logic gem_rst_n_ps0,
-  input  logic gem_clk_ps1,
-  input  logic gem_rst_n_ps1,
+  input  logic gem_rx_clk_ps0,
+  input  logic gem_rx_rst_n_ps0,
+  input  logic gem_tx_clk_ps0,
+  input  logic gem_tx_rst_n_ps0,
+  input  logic gem_rx_clk_ps1,
+  input  logic gem_rx_rst_n_ps1,
+  input  logic gem_tx_clk_ps1,
+  input  logic gem_tx_rst_n_ps1,
 
   // MAC address table: aging schedule input, still software-configurable
   // (see header note); age_tick_i itself is generated internally below
   input  logic [AGE_W-1:0] default_age_i,
 
   // ---------------------------------------------------------------------
-  // PS GEM0 FIFO interface (gem_clk_ps0 domain)
+  // PS GEM0 FIFO interface (gem_rx_clk_ps0/gem_tx_clk_ps0 domains)
   // ---------------------------------------------------------------------
   input  logic [7:0]  gem0_rx_w_data_i,
   input  logic        gem0_rx_w_wr_i,
@@ -127,7 +131,7 @@ module switch_top
   input  logic [3:0]  gem0_tx_r_status_i,
 
   // ---------------------------------------------------------------------
-  // PS GEM1 FIFO interface (gem_clk_ps1 domain)
+  // PS GEM1 FIFO interface (gem_rx_clk_ps1/gem_tx_clk_ps1 domains)
   // ---------------------------------------------------------------------
   input  logic [7:0]  gem1_rx_w_data_i,
   input  logic        gem1_rx_w_wr_i,
@@ -605,8 +609,10 @@ module switch_top
   ps_gem_axis_bridge u_ps_gem0 (
     .clk              (clk),
     .rst_n            (rst_n),
-    .gem_clk          (gem_clk_ps0),
-    .gem_rst_n        (gem_rst_n_ps0),
+    .gem_rx_clk       (gem_rx_clk_ps0),
+    .gem_rx_rst_n     (gem_rx_rst_n_ps0),
+    .gem_tx_clk       (gem_tx_clk_ps0),
+    .gem_tx_rst_n     (gem_tx_rst_n_ps0),
     .rx_w_data_i      (gem0_rx_w_data_i),
     .rx_w_wr_i        (gem0_rx_w_wr_i),
     .rx_w_sop_i       (gem0_rx_w_sop_i),
@@ -645,8 +651,10 @@ module switch_top
   ps_gem_axis_bridge u_ps_gem1 (
     .clk              (clk),
     .rst_n            (rst_n),
-    .gem_clk          (gem_clk_ps1),
-    .gem_rst_n        (gem_rst_n_ps1),
+    .gem_rx_clk       (gem_rx_clk_ps1),
+    .gem_rx_rst_n     (gem_rx_rst_n_ps1),
+    .gem_tx_clk       (gem_tx_clk_ps1),
+    .gem_tx_rst_n     (gem_tx_rst_n_ps1),
     .rx_w_data_i      (gem1_rx_w_data_i),
     .rx_w_wr_i        (gem1_rx_w_wr_i),
     .rx_w_sop_i       (gem1_rx_w_sop_i),

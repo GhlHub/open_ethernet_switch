@@ -139,7 +139,7 @@ module gth_sfp_wrapper (
   );
 
   // ---- system reset -> gtwiz_reset_all_in, synchronized to freerun_clk ----
-  logic [1:0] reset_all_sync_q;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] reset_all_sync_q;
   always_ff @(posedge freerun_clk_int or negedge rst_n) begin
     if (!rst_n) reset_all_sync_q <= 2'b11;
     else        reset_all_sync_q <= {reset_all_sync_q[0], 1'b0};
@@ -226,7 +226,7 @@ module gth_sfp_wrapper (
   // ---- gth_rst_n_o: async assert on either done signal dropping,
   // synchronous release 2 gth_clk_o cycles after both are done ----
   wire gt_done_int = gtwiz_reset_tx_done_int && gtwiz_reset_rx_done_int;
-  logic [1:0] gth_rst_sync_q;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] gth_rst_sync_q;
   always_ff @(posedge gth_clk_o or negedge gt_done_int) begin
     if (!gt_done_int) gth_rst_sync_q <= 2'b00;
     else               gth_rst_sync_q <= {gth_rst_sync_q[0], 1'b1};

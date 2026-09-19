@@ -21,3 +21,6 @@
 # Python caches
 __pycache__/
 .pytest_cache/
+build/vivado_kr260/
+build/reports/
+build/reports_*.txt

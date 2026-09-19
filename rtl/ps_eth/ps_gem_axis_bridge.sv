@@ -6,7 +6,7 @@
 // axis_to_gem_tx_r.sv (switch egress, GEM TX pull) for the per-direction
 // protocol notes/caveats, both sourced from UG1085 Chapter 34.
 //
-// Two clock domains: gem_clk/gem_rst_n for the GEM-facing side (its own
+// Clock domains: gem_rx_clk/gem_tx_clk (with resets) for the GEM-facing side (its own
 // required rate, ~125MHz-class, to sustain full gigabit at 8-bit width --
 // fixed hardware timing, can't be reclocked) and clk/rst_n for the
 // fabric-facing side (the switch's 62.5MHz/16-bit convention). Each half
@@ -16,10 +16,17 @@
 module ps_gem_axis_bridge (
   input  logic clk,      // fabric clock (62.5 MHz)
   input  logic rst_n,
-  input  logic gem_clk,  // GEM FIFO interface clock (its own required rate)
-  input  logic gem_rst_n,
+  // The PS gives the GEM FIFO interface SEPARATE receive and transmit
+  // clocks (fmio_gemN_fifo_rx/tx_clk_to_pl_bufg); the RX-push side and the
+  // TX-pull side each run on their own. (An earlier revision had one
+  // gem_clk for both, which put the PS's RX signals in the wrong domain --
+  // the board build's CDC report flagged it: gem RX clk -> gem TX clk.)
+  input  logic gem_rx_clk,
+  input  logic gem_rx_rst_n,
+  input  logic gem_tx_clk,
+  input  logic gem_tx_rst_n,
 
-  // GEM RX FIFO (gem_clk domain; GEM push -> switch ingress)
+  // GEM RX FIFO (gem_rx_clk domain; GEM push -> switch ingress)
   input  logic [7:0]  rx_w_data_i,
   input  logic        rx_w_wr_i,
   input  logic        rx_w_sop_i,
@@ -47,7 +54,7 @@ module ps_gem_axis_bridge (
   input  logic         s_axis_tlast,
   output logic         s_axis_tready,
 
-  // GEM TX FIFO (gem_clk domain; switch egress -> GEM pull)
+  // GEM TX FIFO (gem_tx_clk domain; switch egress -> GEM pull)
   input  logic       tx_r_rd_i,
   output logic       tx_r_data_rdy_o,
   output logic       tx_r_valid_o,
@@ -64,8 +71,8 @@ module ps_gem_axis_bridge (
 );
 
   gem_rx_w_to_axis u_rx (
-    .gem_clk         (gem_clk),
-    .gem_rst_n       (gem_rst_n),
+    .gem_clk         (gem_rx_clk),
+    .gem_rst_n       (gem_rx_rst_n),
     .clk             (clk),
     .rst_n           (rst_n),
     .rx_w_data_i     (rx_w_data_i),
@@ -88,8 +95,8 @@ module ps_gem_axis_bridge (
   axis_to_gem_tx_r u_tx (
     .clk                 (clk),
     .rst_n               (rst_n),
-    .gem_clk             (gem_clk),
-    .gem_rst_n           (gem_rst_n),
+    .gem_clk             (gem_tx_clk),
+    .gem_rst_n           (gem_tx_rst_n),
     .s_axis_tdata        (s_axis_tdata),
     .s_axis_tkeep        (s_axis_tkeep),
     .s_axis_tvalid       (s_axis_tvalid),

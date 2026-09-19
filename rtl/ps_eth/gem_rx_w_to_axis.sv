@@ -33,10 +33,10 @@
 // with rx_w_eop, per the doc) -- so the async FIFO doubles as the elastic
 // buffer absorbing ingress_port_wr.sv's ordinary brief backpressure
 // (alloc-wait stalls etc.) without needing to raise overflow for that.
-// rx_w_overflow_o is still asserted (and latched until the FIFO drains
-// empty) if the FIFO itself ever fills, which is the correctness
-// backstop if FIFO_DEPTH is ever undersized for the actual downstream
-// stall profile.
+// rx_w_overflow_o is still asserted if the FIFO itself ever fills (for
+// the rest of the affected frame, ending one cycle after its rx_w_eop --
+// see the block below), which is the correctness backstop if FIFO_DEPTH
+// is ever undersized for the actual downstream stall profile.
 //
 // rx_w_err (asserted by the GEM coincident with rx_w_eop on a bad frame
 // -- short/CRC-error/etc.) maps directly onto ingress_port_wr.sv's
@@ -44,18 +44,16 @@
 // partial-word transfer of the frame).
 //
 // rx_w_flush_i (GEM signaling "clear the RX FIFO", e.g. receive disabled
-// mid-frame): this revision only implements the gem_clk-side half of
-// this -- on flush, it stops pushing any further bytes of the current
-// (now-aborted) frame into the async FIFO until the next rx_w_sop_i.
-// KNOWN GAP: bytes already pushed *before* the flush arrived are not
-// purged from the FIFO or from the fabric-side packer's in-progress
-// pair -- properly draining/discarding those across a real CDC boundary
-// needs its own request/acknowledge handshake, which wasn't built here
-// given how rare/administrative this event is expected to be. Revisit if
-// flush turns out to be exercised more than that in practice.
+// mid-frame): on flush, it stops pushing any further bytes of the current
+// (now-aborted) frame into the async FIFO until the next rx_w_sop_i, and
+// closes a partly-pushed frame with a synthetic err+eop entry so the
+// downstream sees a bad frame rather than a frame that never ends.
+// KNOWN GAP: bytes already pushed *before* the flush arrived are still
+// delivered (as part of that bad frame) -- they are not purged from the
+// FIFO or from the fabric-side packer's in-progress pair.
 //
 // rx_w_status[44:0] (frame length / address-match / VLAN classification
-// bits) is passed through as a raw, gem_clk-domain-timed side output for
+// bits) is passed through as a raw, gem_rx_clk-domain-timed side output for
 // a future consumer -- unlike the single-clock version of this module,
 // it is NOT guaranteed to line up with m_axis_tlast's cycle any more
 // (that now happens later, after crossing into the fabric clock domain);
@@ -95,20 +93,63 @@ module gem_rx_w_to_axis #(
 
   localparam int ENTRY_W = 8 + 1 + 1; // data + eop + err
 
-  // ---- GEM-side (gem_clk): push into the async FIFO, with the
-  // discard-until-next-SOP flush handling described above ----
-  logic discard_q;
-  always_ff @(posedge gem_clk or negedge gem_rst_n) begin
-    if (!gem_rst_n) discard_q <= 1'b0;
-    else if (rx_w_flush_i) discard_q <= 1'b1;
-    else if (rx_w_wr_i && rx_w_sop_i) discard_q <= 1'b0;
-  end
+  // ---- GEM-side (gem_clk): push into the async FIFO ----
+  //
+  // Everything in this block is gem_clk-domain only: fifo_full is the async
+  // FIFO's write-side flag. (The FIFO's empty flag belongs to the fabric
+  // clock and must NOT be used here -- an earlier version cleared the
+  // overflow flag from it, an unsynchronized clock-domain crossing.)
+  //
+  // When bytes of a frame have to be thrown away (FIFO full, or flush) after
+  // part of that frame is already in the FIFO, the FIFO would be left with a
+  // frame that has no end marker, and the fabric-side packer would glue the
+  // next frame onto it. So an aborted frame is closed with one synthetic
+  // {err=1, eop=1} entry (data 0x00) as soon as the FIFO has room, and the
+  // rest of that frame is discarded up to the next SOP. The synthetic entry
+  // reaches ingress_port_wr.sv as a frame with tuser (bad frame) set, which
+  // it already drops.
+  logic discard_q;   // throwing bytes away until the next SOP
+  logic in_frame_q;  // a non-final byte of the current frame is in the FIFO
+  logic abort_q;     // owe the FIFO a synthetic err+eop entry
+
+  // an SOP byte always ends a discard, and is itself kept
+  wire sop_now     = rx_w_wr_i && rx_w_sop_i;
+  wire discard_eff = discard_q && !sop_now;
 
   logic [ENTRY_W-1:0] fifo_wr_data;
   logic                fifo_wr_en, fifo_full;
 
-  assign fifo_wr_data = {rx_w_err_i, rx_w_eop_i, rx_w_data_i};
-  assign fifo_wr_en   = rx_w_wr_i && !discard_q;
+  wire term_push = abort_q && !fifo_full;
+  wire byte_push = rx_w_wr_i && !discard_eff && !fifo_full && !term_push;
+  wire byte_drop = rx_w_wr_i && !discard_eff && (fifo_full || term_push);
+
+  assign fifo_wr_en   = term_push || byte_push;
+  assign fifo_wr_data = term_push ? {1'b1, 1'b1, 8'h00}
+                                  : {rx_w_err_i, rx_w_eop_i, rx_w_data_i};
+
+  always_ff @(posedge gem_clk or negedge gem_rst_n) begin
+    if (!gem_rst_n) begin
+      discard_q  <= 1'b0;
+      in_frame_q <= 1'b0;
+      abort_q    <= 1'b0;
+    end else begin
+      if (byte_push) in_frame_q <= !rx_w_eop_i;
+      if (term_push) begin
+        in_frame_q <= 1'b0;
+        abort_q    <= 1'b0;
+      end
+      if (rx_w_flush_i) begin
+        discard_q <= 1'b1;
+        if (in_frame_q && !term_push) abort_q <= 1'b1;
+      end else begin
+        if (sop_now) discard_q <= 1'b0;
+        if (byte_drop) begin
+          discard_q <= 1'b1;
+          if (in_frame_q && !term_push) abort_q <= 1'b1;
+        end
+      end
+    end
+  end
 
   logic [ENTRY_W-1:0] fifo_rd_data;
   logic                fifo_rd_en, fifo_empty;
@@ -135,17 +176,19 @@ module gem_rx_w_to_axis #(
   end
   assign rx_w_status_o = rx_w_status_q;
 
-  // overflow: latch as soon as a push is dropped, hold until the FIFO has
-  // fully drained -- see the header note above; this is now the
-  // fill-based backstop (the discard_q flush handling is a separate,
-  // best-effort mechanism, not a substitute for it).
-  logic overflow_q;
+  // overflow (UG1085 Table 34-3 text): tells the GEM the PL FIFO dropped
+  // data. Set the cycle after a byte is dropped; cleared one cycle after
+  // the GEM's own rx_w_eop for that frame, which satisfies "asserted no later
+  // than one cycle after rx_w_eop". Entirely gem_clk-domain.
+  logic overflow_q, frame_end_q;
   always_ff @(posedge gem_clk or negedge gem_rst_n) begin
     if (!gem_rst_n || rx_w_flush_i) begin
-      overflow_q <= 1'b0;
+      overflow_q  <= 1'b0;
+      frame_end_q <= 1'b0;
     end else begin
-      if (rx_w_wr_i && fifo_full) overflow_q <= 1'b1;
-      else if (overflow_q && fifo_empty) overflow_q <= 1'b0;
+      frame_end_q <= rx_w_wr_i && rx_w_eop_i;
+      if (byte_drop)         overflow_q <= 1'b1;
+      else if (frame_end_q)  overflow_q <= 1'b0;
     end
   end
   assign rx_w_overflow_o = overflow_q;

@@ -53,7 +53,9 @@
 // on both sides, since RGMII RX has no separate "valid" qualifier beyond
 // rx_dv itself and idles just as continuously as it carries frames.
 //
-// RX clock-skew compensation (RX_IDELAY_ENABLE, default on): the
+// RX clock-skew compensation (RX_IDELAY_ENABLE, default OFF -- see the
+// implementation note below; the paragraph that follows describes the
+// original clock-delay scheme, kept for RX_IDELAY_ENABLE=1): the
 // DP83867 can be strapped for either "RGMII" (needs board/FPGA-side
 // delay between RXC and RXD/RX_CTL) or "RGMII-ID" (PHY adds the delay
 // internally, no FPGA-side delay wanted) -- the schematic doesn't show
@@ -66,6 +68,19 @@
 // verified/disabled against real hardware before bring-up if the PHY
 // turns out already strapped for RGMII-ID (both delaying would double
 // the skew, not cancel it).
+//
+// IMPLEMENTATION FINDING (place_design DRC on the full board build, not
+// visible in simulation or isolated synthesis): IDELAYE3's DATAOUT may not
+// drive a BUFG ("IDELAYE3 drives invalid load ... may not drive a BUFG*"),
+// so the clock-delay scheme above (IBUF -> IDELAYE3 -> BUFG) is illegal on
+// this device and RX_IDELAY_ENABLE=1 cannot be implemented as written.
+// Fixing it means delaying the data/ctl lines instead (the other standard
+// scheme, with the PHY clock edge-aligned), or -- the choice made here --
+// having the PHY add the RX delay (RGMII-ID, which is how the KR260
+// Linux device tree describes these PHYs), so the FPGA needs none. That
+// requires the DP83867's RX internal delay to be enabled (strap or MDIO)
+// before real traffic; until it is, RX sampling margin is unverified.
+// TX likewise forwards an unshifted clock, relying on the PHY's TX delay.
 //
 // idelay_refclk_i (200-800MHz-class, IDELAYE3/IDELAYCTRL's own
 // reference, per UG571) has no source anywhere yet in this project.
@@ -82,7 +97,7 @@
 // remains a board-integration-level decision, out of scope here.
 
 module rgmii_gmii_adapter #(
-  parameter bit RX_IDELAY_ENABLE     = 1'b1,
+  parameter bit RX_IDELAY_ENABLE     = 1'b0,
   parameter int RX_IDELAY_VALUE_PS   = 700,  // see header -- verify against real hardware;
                                               // IDELAYE3's own legal range for
                                               // DELAY_FORMAT="TIME" on this part is
@@ -226,7 +241,7 @@ module rgmii_gmii_adapter #(
 
   // small reset synchronizer into the rxc_buf domain, for the CDC FIFO
   // below only (IDDRE1 itself is left free-running -- see header)
-  logic [1:0] rxc_rst_sync_q;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] rxc_rst_sync_q;
   always_ff @(posedge rxc_buf or negedge gtx_rst_n) begin
     if (!gtx_rst_n) rxc_rst_sync_q <= 2'b00;
     else            rxc_rst_sync_q <= {rxc_rst_sync_q[0], 1'b1};

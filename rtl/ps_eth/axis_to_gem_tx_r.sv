@@ -38,17 +38,20 @@
 // means the rest of a frame follows shortly after its first byte crosses
 // into the FIFO, and FIFO_DEPTH provides slack over egress_port_rd.sv's
 // brief every-16-bytes RAM-refill bubble, but this is a slightly weaker
-// guarantee than before. tx_r_underflow_o is tied low regardless (an
-// existing simplification, not new) -- worth reconsidering together if
-// real hardware testing ever shows underflow.
+// guarantee than before. If the GEM catches the FIFO empty mid-frame it
+// gets tx_r_underflow_o and the flush handshake described in the GEM-side
+// block below. NOTE: at 62.5 MHz this module fills the FIFO at one byte per
+// fabric cycle (500 Mb/s) while the GEM drains at up to 1 Gb/s, so underflow
+// mid-frame is expected for any frame longer than the FIFO on real hardware
+// until the fill rate/width is reworked (see docs/inventory.md).
 //
 // Frame content is assumed to already exclude the trailing Ethernet FCS
 // -- the GEM's MAC appends its own CRC on transmit, same as it would for
 // a normal DMA-sourced frame; tx_r_control_o (no-crc-append) is tied low
 // accordingly. tx_r_err_o is tied low: nothing on the egress path here
 // marks a frame bad after it has already been buffered (bad frames were
-// dropped at ingress). tx_r_flushed_o is tied low, matching tx_r_err_o
-// never being asserted (nothing to flush after).
+// dropped at ingress). tx_r_flushed_o pulses only as part of the underflow
+// recovery (tx_r_err_o is never asserted).
 //
 // dma_tx_end_tog_i/dma_tx_status_tog_o implement the frame-complete
 // acknowledgement handshake from Table 34-2, gem_clk-domain end to end
@@ -92,8 +95,6 @@ module axis_to_gem_tx_r #(
 );
 
   assign tx_r_err_o       = 1'b0;
-  assign tx_r_underflow_o = 1'b0;
-  assign tx_r_flushed_o   = 1'b0;
   assign tx_r_control_o   = 1'b0;
 
   localparam int ENTRY_W = 8 + 1; // data + eop
@@ -170,30 +171,68 @@ module axis_to_gem_tx_r #(
     .empty_o   (fifo_empty)
   );
 
-  // ---- GEM side (gem_clk): same-cycle pull/response, structurally
-  // identical to the original single-clock design, just sourced from the
-  // FIFO's read port instead of s_axis_* directly. async_fifo's read
-  // side is a combinational peek-before-pop, so this needs no extra
-  // registered-read wait state (see the same note in gem_rx_w_to_axis.sv). ----
+  // ---- GEM side (gem_clk): same-cycle pull/response, sourced from the
+  // FIFO's read port. async_fifo's read side is a combinational
+  // peek-before-pop, so this needs no extra registered-read wait state
+  // (see the same note in gem_rx_w_to_axis.sv).
+  //
+  // Underflow / flush (UG1085 Ch.34 Table 34-1 and text): once the GEM starts
+  // a read (tx_r_rd) it must be answered with tx_r_valid OR tx_r_underflow.
+  // If the FIFO is empty when the GEM reads (a frame's later bytes have not
+  // arrived yet), tx_r_underflow_o answers it in the same cycle. The GEM then
+  // waits for tx_r_flushed, so this module:
+  //   T_DRAIN     data_rdy low; discard the rest of the frame as it arrives
+  //               (up to and including its eop) -- only if the underflow hit
+  //               mid-frame; an underflow before any byte was sent skips this
+  //   T_FLUSH     tx_r_flushed_o high for one cycle, then low -- the falling
+  //               edge is what tells the GEM the flush is complete
+  //   T_RUN       normal; data_rdy is raised again only after the flush
+  // The manual's other flush cases (tx_r_err, half-duplex collisions) are not
+  // produced by anything here.
   wire byte_eop = fifo_rd_data[8];
   wire [7:0] byte_val = fifo_rd_data[7:0];
 
-  assign tx_r_data_rdy_o = !fifo_empty;
+  typedef enum logic [1:0] {T_RUN, T_DRAIN, T_FLUSH} tx_state_t;
+  tx_state_t tx_state_q;
 
   logic sop_q;
-  always_ff @(posedge gem_clk or negedge gem_rst_n) begin
-    if (!gem_rst_n) begin
-      sop_q <= 1'b1;
-    end else if (tx_r_valid_o) begin
-      sop_q <= byte_eop;
-    end
-  end
 
-  assign fifo_rd_en   = tx_r_rd_i && !fifo_empty;
-  assign tx_r_valid_o = fifo_rd_en;
+  assign tx_r_data_rdy_o  = (tx_state_q == T_RUN) && !fifo_empty;
+  assign tx_r_underflow_o = (tx_state_q == T_RUN) && tx_r_rd_i && fifo_empty;
+  assign tx_r_flushed_o   = (tx_state_q == T_FLUSH);
+
+  wire drain_pop = (tx_state_q == T_DRAIN) && !fifo_empty;
+
+  assign fifo_rd_en   = drain_pop || ((tx_state_q == T_RUN) && tx_r_rd_i && !fifo_empty);
+  assign tx_r_valid_o = (tx_state_q == T_RUN) && tx_r_rd_i && !fifo_empty;
   assign tx_r_data_o  = byte_val;
   assign tx_r_sop_o   = tx_r_valid_o && sop_q;
   assign tx_r_eop_o   = tx_r_valid_o && byte_eop;
+
+  always_ff @(posedge gem_clk or negedge gem_rst_n) begin
+    if (!gem_rst_n) begin
+      sop_q      <= 1'b1;
+      tx_state_q <= T_RUN;
+    end else begin
+      if (tx_r_valid_o) sop_q <= byte_eop;
+      unique case (tx_state_q)
+        T_RUN: begin
+          if (tx_r_underflow_o) begin
+            if (sop_q) tx_state_q <= T_FLUSH;
+            else       tx_state_q <= T_DRAIN;
+          end
+        end
+        T_DRAIN: begin
+          if (drain_pop && byte_eop) begin
+            sop_q      <= 1'b1;
+            tx_state_q <= T_FLUSH;
+          end
+        end
+        T_FLUSH: tx_state_q <= T_RUN;
+        default: tx_state_q <= T_RUN;
+      endcase
+    end
+  end
 
   // frame-complete ack: unconditionally follow dma_tx_end_tog_i one
   // cycle later (tx_r_status_i isn't otherwise consumed by this module)

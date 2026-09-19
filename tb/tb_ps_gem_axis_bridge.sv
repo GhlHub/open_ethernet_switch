@@ -11,20 +11,23 @@
 //      exactly, no overflow (the CDC FIFO absorbs the backpressure)
 //   B. GEM RX push overflow -> push a frame longer than the CDC FIFO
 //      while m_axis_tready is held low throughout -> rx_w_overflow_o
-//      must assert during the frame and clear once it's released and
-//      drains
-//   C. GEM RX flush mid-frame -> the frame's remaining bytes (everything
-//      after the flush takes effect) are suppressed, so it never
-//      completes (no tlast). NOTE: this module only guarantees that --
-//      bytes already pushed *before* the flush are not purged from the
-//      FIFO (see gem_rx_w_to_axis.sv's header comment for why a true
-//      purge across this CDC boundary wasn't built), so this test
-//      doesn't attempt to assert anything about a frame pushed
-//      afterward.
-//   D. s_axis_* egress -> GEM TX pull, fake GEM issues tx_r_rd_i pulses
-//      with random gaps -> content/sop/eop reproduced exactly
+//      is high one cycle after the frame's rx_w_eop (UG1085: no later than
+//      that), is low again soon after, the truncated frame comes out closed
+//      with tlast+tuser (a bad frame), and the NEXT frame is intact
+//   C. GEM RX flush mid-frame -> the partly-pushed frame is closed as a bad
+//      frame (tlast+tuser), the rest of it is suppressed, and the next
+//      frame (whose SOP byte must survive the discard) is intact
+//   D. s_axis_* egress -> GEM TX pull -> content/sop/eop reproduced exactly.
+//      The frame is buffered first: pulling while it is still filling
+//      genuinely underflows (fill 1 byte/16 ns vs pull up to 1 byte/8 ns),
+//      which is what test F covers
 //   E. dma_tx_end_tog_i -> dma_tx_status_tog_o ack handshake toggles in
 //      response within a bounded number of cycles
+//   F. TX underflow: the GEM reads faster than the frame arrives -> exactly
+//      one tx_r_underflow_o, no tx_r_valid/data_rdy while draining, one
+//      tx_r_flushed_o pulse, the remainder of that frame is discarded (its
+//      eop never delivered), and the next frame is delivered intact with sop
+//      on its first byte
 
 `timescale 1ns/1ps
 
@@ -73,14 +76,18 @@ module tb_ps_gem_axis_bridge;
   logic [7:0] tx_r_data;
   logic       tx_r_sop;
   logic       tx_r_eop;
+  logic       tx_r_underflow;
+  logic       tx_r_flushed;
   logic       dma_tx_end_tog;
   logic       dma_tx_status_tog;
 
   ps_gem_axis_bridge dut (
     .clk                 (clk),
     .rst_n               (rst_n),
-    .gem_clk             (gem_clk),
-    .gem_rst_n           (gem_rst_n),
+    .gem_rx_clk          (gem_clk),
+    .gem_rx_rst_n        (gem_rst_n),
+    .gem_tx_clk          (gem_clk),
+    .gem_tx_rst_n        (gem_rst_n),
     .rx_w_data_i         (rx_w_data),
     .rx_w_wr_i           (rx_w_wr),
     .rx_w_sop_i          (rx_w_sop),
@@ -108,8 +115,8 @@ module tb_ps_gem_axis_bridge;
     .tx_r_sop_o          (tx_r_sop),
     .tx_r_eop_o          (tx_r_eop),
     .tx_r_err_o          (),
-    .tx_r_underflow_o    (),
-    .tx_r_flushed_o      (),
+    .tx_r_underflow_o    (tx_r_underflow),
+    .tx_r_flushed_o      (tx_r_flushed),
     .tx_r_control_o      (),
     .dma_tx_end_tog_i    (dma_tx_end_tog),
     .dma_tx_status_tog_o (dma_tx_status_tog),
@@ -212,13 +219,78 @@ module tb_ps_gem_axis_bridge;
     tx_r_rd <= 1'b0;
     while (!tx_r_data_rdy) @(posedge gem_clk);
     c = 0;
+    // a GEM starts reading only while tx_r_data_rdy is high, and keeps
+    // reading to the end of a frame it has started (UG1085) -- so no read
+    // after the frame's eop, which would (correctly) be an underflow
     while (tx_rxd_eop_idx < 0 && c < max_cycles) begin
       @(posedge gem_clk);
-      tx_r_rd <= ($urandom_range(0, 2) != 0);
+      tx_r_rd <= ($urandom_range(0, 2) != 0) && (tx_r_data_rdy || tx_rxd_sop_idx >= 0) && (tx_rxd_eop_idx < 0);
       c++;
     end
     @(posedge gem_clk);
     tx_r_rd <= 1'b0;
+  endtask
+
+  // RX overflow monitor: was it high the cycle after an rx_w_eop, and how
+  // long did it stay high after the last eop
+  int  ov_cyc = 0;
+  int  last_eop_cyc = -1000;
+  bit  ov_seen = 1'b0;
+  bit  ov_at_eop_p1 = 1'b0;
+  int  ov_max_after_eop = 0;
+  always_ff @(posedge gem_clk) begin
+    ov_cyc <= ov_cyc + 1;
+    if (rx_w_wr && rx_w_eop) last_eop_cyc <= ov_cyc;
+    if (rx_w_overflow) begin
+      ov_seen <= 1'b1;
+      if (ov_cyc == last_eop_cyc + 1) ov_at_eop_p1 <= 1'b1;
+      if (ov_cyc - last_eop_cyc > ov_max_after_eop && ov_cyc - last_eop_cyc < 100) ov_max_after_eop <= ov_cyc - last_eop_cyc;
+    end
+  end
+  task automatic ov_monitor_reset();
+    ov_seen = 1'b0; ov_at_eop_p1 = 1'b0; ov_max_after_eop = 0;
+  endtask
+
+  // TX underflow/flush monitor
+  int uf_cnt = 0;
+  int fl_cnt = 0;
+  int fl_hi_cycles = 0;
+  bit proto_bad = 1'b0;
+  always_ff @(posedge gem_clk) begin
+    if (tx_r_underflow) uf_cnt <= uf_cnt + 1;
+    if (tx_r_flushed) begin
+      fl_hi_cycles <= fl_hi_cycles + 1;
+      if (tx_r_valid || tx_r_data_rdy) proto_bad <= 1'b1;
+    end else if (fl_hi_cycles != 0) begin
+      fl_cnt <= fl_cnt + 1;
+      fl_hi_cycles <= 0;
+    end
+  end
+  task automatic tx_mon_reset();
+    uf_cnt = 0; fl_cnt = 0; fl_hi_cycles = 0; proto_bad = 1'b0;
+  endtask
+
+  // a GEM that reads every cycle it can, and after tx_r_underflow stops
+  // reading until tx_r_flushed has gone high and back low (UG1085)
+  task automatic gem_pull_aggressive(input int max_cycles);
+    int c;
+    bit done;
+    tx_r_rd <= 1'b0;
+    while (!tx_r_data_rdy) @(posedge gem_clk);
+    c = 0; done = 1'b0;
+    while (!done && c < max_cycles) begin
+      tx_r_rd <= 1'b1;
+      @(posedge gem_clk);
+      c++;
+      if (tx_r_underflow) begin
+        tx_r_rd <= 1'b0;
+        while (!tx_r_flushed && c < max_cycles) begin @(posedge gem_clk); c++; end
+        while (tx_r_flushed && c < max_cycles)  begin @(posedge gem_clk); c++; end
+        done = 1'b1;
+      end else if (tx_rxd_eop_idx >= 0) done = 1'b1;
+    end
+    tx_r_rd <= 1'b0;
+    @(posedge gem_clk);
   endtask
 
   // drive one frame into s_axis_* (egress source), packed two bytes per
@@ -310,6 +382,7 @@ module tb_ps_gem_axis_bridge;
 
     // ---- test B: RX push overflow (FIFO held full, tready never given) ----
     capture_axis_reset();
+    ov_monitor_reset();
     bp_mode = 0; // no draining at all during this push
     begin
       byte data[];
@@ -317,27 +390,62 @@ module tb_ps_gem_axis_bridge;
       for (int i = 0; i < FIFO_DEPTH + 20; i++) data[i] = byte'(i);
       gem_push_frame(data, 1'b0);
     end
-    if (rx_w_overflow !== 1'b1) begin
-      $display("FAIL: testB rx_w_overflow_o not asserted after exceeding FIFO_DEPTH");
+    repeat (4) @(posedge gem_clk);
+    if (!ov_seen) begin
+      $display("FAIL: testB rx_w_overflow_o never asserted after exceeding FIFO_DEPTH");
       errors++;
     end else begin
       $display("PASS: testB rx_w_overflow_o asserted once the elastic FIFO filled");
     end
-    // drain at full speed (no backpressure) so the wait below is a hard
-    // guarantee, not a probabilistic one -- FIFO_DEPTH entries max, plus
-    // margin for the CDC + packer latency
+    if (!ov_at_eop_p1 || ov_max_after_eop > 1) begin
+      $display("FAIL: testB overflow timing vs rx_w_eop (high at eop+1: %0b, max cycles after eop: %0d; UG1085: no later than one cycle after)", ov_at_eop_p1, ov_max_after_eop);
+      errors++;
+    end else begin
+      $display("PASS: testB rx_w_overflow_o high at eop+1 and gone by eop+2 (UG1085 timing)");
+    end
+    if (rx_w_overflow !== 1'b0) begin
+      $display("FAIL: testB rx_w_overflow_o still high after the frame ended");
+      errors++;
+    end
+    // drain at full speed; the truncated frame must be closed as a bad one
     bp_mode = 2;
     repeat (2 * FIFO_DEPTH + 40) @(posedge clk);
     bp_mode = 0;
-    if (rx_w_overflow !== 1'b0) begin
-      $display("FAIL: testB rx_w_overflow_o did not clear after the frame drained");
+    if (rxd_tlast_idx < 0 || rxd_tuser_at_tlast !== 1'b1 || rxd_bytes.size() < 8 || rxd_bytes[rxd_bytes.size()-1] !== 8'h00) begin
+      $display("FAIL: testB truncated frame not closed as a bad frame (tlast_idx=%0d tuser=%0b bytes=%0d)", rxd_tlast_idx, rxd_tuser_at_tlast, rxd_bytes.size());
       errors++;
     end else begin
-      $display("PASS: testB rx_w_overflow_o cleared after the frame drained");
+      bit ok = 1'b1;
+      for (int i = 0; i < rxd_bytes.size()-1; i++) if (rxd_bytes[i] !== byte'(i)) ok = 1'b0;
+      if (ok) $display("PASS: testB truncated frame delivered as %0d good bytes + a bad-frame terminator", rxd_bytes.size()-1);
+      else begin $display("FAIL: testB truncated frame's bytes are wrong"); errors++; end
+    end
+    // ...and the next frame must not be glued onto it
+    capture_axis_reset();
+    bp_mode = 1;
+    begin
+      byte data[];
+      data = new[20];
+      for (int i = 0; i < 20; i++) data[i] = byte'(8'hC0 + i);
+      gem_push_frame(data, 1'b0);
+    end
+    repeat (40) @(posedge clk);
+    bp_mode = 0;
+    begin
+      bit ok;
+      ok = (rxd_bytes.size() == 20) && (rxd_tlast_idx == 19) && (rxd_tuser_at_tlast === 1'b0);
+      for (int i = 0; i < rxd_bytes.size() && i < 20; i++) if (rxd_bytes[i] !== byte'(8'hC0 + i)) ok = 1'b0;
+      if (ok) $display("PASS: testB the frame after the overflow is intact (not glued to the truncated one)");
+      else begin
+        $display("FAIL: testB frame after overflow wrong (bytes=%0d tlast_idx=%0d tuser=%0b)", rxd_bytes.size(), rxd_tlast_idx, rxd_tuser_at_tlast);
+        for (int i = 0; i < rxd_bytes.size(); i++) $write("%02h ", rxd_bytes[i]);
+        $write("\n");
+        errors++;
+      end
     end
 
-    // ---- test C: flush mid-frame -> the frame's remainder is suppressed,
-    // so it never completes (see the file header note on scope) ----
+    // ---- test C: flush mid-frame -> closed as a bad frame, remainder
+    // suppressed, next frame (SOP must survive the discard) intact ----
     capture_axis_reset();
     bp_mode = 1;
     fork
@@ -345,7 +453,7 @@ module tb_ps_gem_axis_bridge;
         byte data[];
         data = new[10];
         for (int i = 0; i < 10; i++) data[i] = byte'(8'hA0 + i);
-        gem_push_frame(data, 1'b0); // never completes: flushed mid-frame below
+        gem_push_frame(data, 1'b0); // flushed mid-frame below
       end
       begin
         repeat (4) @(posedge gem_clk);
@@ -354,14 +462,28 @@ module tb_ps_gem_axis_bridge;
         rx_w_flush <= 1'b0;
       end
     join
-    repeat (30) @(posedge clk); // let anything already in flight drain
-    bp_mode = 0;
-
-    if (rxd_tlast_idx != -1) begin
-      $display("FAIL: testC flushed frame unexpectedly completed (tlast seen)");
+    repeat (30) @(posedge clk);
+    if (rxd_tlast_idx < 0 || rxd_tuser_at_tlast !== 1'b1 || rxd_bytes.size() > 8 || rxd_bytes[rxd_bytes.size()-1] !== 8'h00) begin
+      $display("FAIL: testC flushed frame not closed as a bad frame (tlast_idx=%0d tuser=%0b bytes=%0d)", rxd_tlast_idx, rxd_tuser_at_tlast, rxd_bytes.size());
       errors++;
     end else begin
-      $display("PASS: testC flush suppressed the remainder of the frame (no tlast ever seen)");
+      $display("PASS: testC flushed frame closed as a bad frame (%0d bytes incl. terminator), remainder suppressed", rxd_bytes.size());
+    end
+    capture_axis_reset();
+    begin
+      byte data[];
+      data = new[16];
+      for (int i = 0; i < 16; i++) data[i] = byte'(8'h30 + i);
+      gem_push_frame(data, 1'b0);
+    end
+    repeat (40) @(posedge clk);
+    bp_mode = 0;
+    begin
+      bit ok;
+      ok = (rxd_bytes.size() == 16) && (rxd_tlast_idx == 15) && (rxd_tuser_at_tlast === 1'b0);
+      for (int i = 0; i < rxd_bytes.size() && i < 16; i++) if (rxd_bytes[i] !== byte'(8'h30 + i)) ok = 1'b0;
+      if (ok) $display("PASS: testC the frame after the flush is intact, including its first (SOP) byte");
+      else begin $display("FAIL: testC frame after flush wrong (bytes=%0d first=%0h)", rxd_bytes.size(), rxd_bytes.size() ? rxd_bytes[0] : 8'hxx); errors++; end
     end
 
     // ---- test D: egress AXI4-Stream -> GEM TX pull ----
@@ -370,10 +492,9 @@ module tb_ps_gem_axis_bridge;
       byte data[];
       data = new[18];
       for (int i = 0; i < 18; i++) data[i] = byte'(8'h60 + i);
-      fork
-        drive_axis_frame(data);
-        gem_pull_frame(500);
-      join
+      drive_axis_frame(data);          // buffer the whole frame first (see header)
+      repeat (10) @(posedge gem_clk);
+      gem_pull_frame(500);
     end
     repeat (10) @(posedge gem_clk);
 
@@ -411,6 +532,53 @@ module tb_ps_gem_axis_bridge;
       end else begin
         $display("PASS: testE dma_tx_status_tog_o acked dma_tx_end_tog_i within %0d cycles", timeout);
       end
+    end
+
+    // ---- test F: TX underflow -> flush protocol ----
+    tx_capture_reset();
+    tx_mon_reset();
+    begin
+      byte data[];
+      data = new[40];
+      for (int i = 0; i < 40; i++) data[i] = byte'(8'h80 + i);
+      fork
+        drive_axis_frame(data);
+        gem_pull_aggressive(2000);
+      join
+    end
+    repeat (60) @(posedge gem_clk); // let the rest of the aborted frame drain
+    begin
+      bit ok;
+      ok = 1'b1;
+      if (uf_cnt != 1) begin $display("FAIL: testF expected exactly 1 tx_r_underflow_o, saw %0d", uf_cnt); ok = 1'b0; end
+      if (fl_cnt != 1) begin $display("FAIL: testF expected exactly 1 tx_r_flushed_o pulse, saw %0d", fl_cnt); ok = 1'b0; end
+      if (proto_bad)   begin $display("FAIL: testF tx_r_valid/tx_r_data_rdy asserted while tx_r_flushed_o was high"); ok = 1'b0; end
+      if (tx_rxd_eop_idx != -1 || tx_rxd_bytes.size() >= 40 || tx_rxd_bytes.size() == 0) begin
+        $display("FAIL: testF aborted frame should deliver a partial prefix and no eop (bytes=%0d eop_idx=%0d)", tx_rxd_bytes.size(), tx_rxd_eop_idx); ok = 1'b0;
+      end
+      for (int i = 0; i < tx_rxd_bytes.size(); i++) if (tx_rxd_bytes[i] !== byte'(8'h80 + i)) ok = 1'b0;
+      if (tx_r_data_rdy !== 1'b0) begin $display("FAIL: testF tx_r_data_rdy_o high after the aborted frame drained"); ok = 1'b0; end
+      if (ok) $display("PASS: testF underflow -> 1 underflow, 1 flushed pulse, remainder of the frame discarded (%0d-byte prefix delivered)", tx_rxd_bytes.size());
+      else errors++;
+    end
+    // the next frame is delivered intact, sop on its first byte
+    tx_capture_reset();
+    tx_mon_reset();
+    begin
+      byte data[];
+      data = new[12];
+      for (int i = 0; i < 12; i++) data[i] = byte'(8'h20 + i);
+      drive_axis_frame(data);
+      repeat (10) @(posedge gem_clk);
+      gem_pull_frame(500);
+    end
+    repeat (10) @(posedge gem_clk);
+    begin
+      bit ok;
+      ok = (tx_rxd_bytes.size() == 12) && (tx_rxd_sop_idx == 0) && (tx_rxd_eop_idx == 11) && (uf_cnt == 0);
+      for (int i = 0; i < tx_rxd_bytes.size() && i < 12; i++) if (tx_rxd_bytes[i] !== byte'(8'h20 + i)) ok = 1'b0;
+      if (ok) $display("PASS: testF the frame after the flush is delivered intact with sop on its first byte");
+      else begin $display("FAIL: testF frame after flush wrong (bytes=%0d sop_idx=%0d eop_idx=%0d uf=%0d)", tx_rxd_bytes.size(), tx_rxd_sop_idx, tx_rxd_eop_idx, uf_cnt); errors++; end
     end
 
     if (errors == 0) $display("=== ALL TESTS PASSED ===");

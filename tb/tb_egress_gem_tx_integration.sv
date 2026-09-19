@@ -282,10 +282,12 @@ module tb_egress_gem_tx_integration;
   int  cap_sop_idx;
   int  cap_eop_idx;
 
+  bit frame_in = 1'b0; // whole frame accepted by the bridge (see gem_pull_frame)
   task automatic cap_reset();
     cap_bytes.delete();
     cap_sop_idx = -1;
     cap_eop_idx = -1;
+    frame_in = 1'b0;
   endtask
 
   // gem_clk domain now -- tx_r_valid/tx_r_data/tx_r_sop/tx_r_eop are all
@@ -311,14 +313,29 @@ module tb_egress_gem_tx_integration;
   // beat), so a tx_r_rd pulse doesn't always land on an accepted
   // transfer; counting pulses as if it always did overcounts and exits
   // this loop before the whole frame has actually gone through.
+  //
+  // The frame is buffered completely before the GEM starts reading: the
+  // bridge now reports a mid-frame empty FIFO as tx_r_underflow_o (UG1085's
+  // required handshake) and discards the frame, and this bench checks
+  // content, not rate -- the fill rate (1 byte per 62.5 MHz cycle) is below
+  // what a GEM can pull, so a reader that starts early would underflow.
+  // (tb_ps_gem_axis_bridge.sv test F covers the underflow path itself.)
+  // The reader also follows the GEM's rules: it only starts a read while
+  // tx_r_data_rdy is high and keeps reading until the frame's eop.
+  always @(posedge clk) begin
+    if (eg_tvalid[GEM_PORT] && eg_tready[GEM_PORT] && eg_tlast[GEM_PORT]) frame_in <= 1'b1;
+  end
+
   task automatic gem_pull_frame(input int max_cycles);
     int c;
     tx_r_rd <= 1'b0;
+    while (!frame_in) @(posedge gem_clk);
+    repeat (12) @(posedge gem_clk); // last bytes through the unpacker + CDC
     while (!tx_r_data_rdy) @(posedge gem_clk);
     c = 0;
     while (cap_eop_idx < 0 && c < max_cycles) begin
       @(posedge gem_clk);
-      tx_r_rd <= ($urandom_range(0, 2) != 0);
+      tx_r_rd <= ($urandom_range(0, 2) != 0) && (tx_r_data_rdy || cap_sop_idx >= 0) && (cap_eop_idx < 0);
       c++;
     end
     @(posedge gem_clk);

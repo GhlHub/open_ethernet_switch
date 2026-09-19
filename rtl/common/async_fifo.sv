@@ -63,7 +63,7 @@ module async_fifo #(
   logic [AW:0] rd_ptr_bin_q, rd_ptr_gray_q;
 
   // ---- write side ----
-  logic [AW:0] rd_ptr_gray_sync1, rd_ptr_gray_sync2;
+  (* ASYNC_REG = "TRUE" *) logic [AW:0] rd_ptr_gray_sync1, rd_ptr_gray_sync2;
 
   wire do_write = wr_en_i && !full_o;
   wire [AW:0] wr_ptr_bin_next  = wr_ptr_bin_q + (AW+1)'(do_write);
@@ -88,7 +88,7 @@ module async_fifo #(
   end
 
   // ---- read side ----
-  logic [AW:0] wr_ptr_gray_sync1, wr_ptr_gray_sync2;
+  (* ASYNC_REG = "TRUE" *) logic [AW:0] wr_ptr_gray_sync1, wr_ptr_gray_sync2;
 
   wire do_read = rd_en_i && !empty_o;
   wire [AW:0] rd_ptr_bin_next  = rd_ptr_bin_q + (AW+1)'(do_read);
