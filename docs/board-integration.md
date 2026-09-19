@@ -1,7 +1,7 @@
 # KR260 board integration status
 
-Inventory: 2026-09-18. RGMII adapter, clock-generator, and PL pin-constraint
-sources exist. A board wrapper joining them to `switch_top` does not yet exist.
+Inventory: 2026-09-18. RGMII adapters, clock generation, AXI-Lite MDIO,
+experimental SFP negotiation, and PL pin-constraint sources exist. A board wrapper joining them to `switch_top` does not yet exist.
 The existing switch simulations stop at GMII, GEM FIFO, CPU AXI-S, and decoded
 SFP parallel interfaces.
 
@@ -34,7 +34,8 @@ metadata is not sufficient to identify the fitted PHY or oscillator topology.
 | 20–21 | Both PL Ethernet PHYs are TI DP83867CSRGZ. The installed carrier board XML instead names a Marvell part. | Use the TI PHY register definitions for MDIO setup and delay configuration. |
 | 16 | U92 supplies 25 MHz to U91, an NB3V1104 1:4 buffer. Outputs feed `HPA_CLK0P_CLK`, `HPB_CLK0P_CLK`, `GEM2_XTAL_IN`, and `GEM3_XTAL_IN`. | The two PL reference inputs share one oscillator in this drawing. They are not two independent oscillator sources. |
 | 16 | FPGA nets `HPA05_CCN` and `HPB05_CCN` enter U19 (SLG7XL45106), which outputs the two PL PHY resets. | The XDC's `phy_reset_n` ports are reset requests into the sequencer. Establish its actual reset behavior during bring-up. |
-| 16 | U90 supplies a 156.25 MHz differential reference on `GTH_REFCLK0_C2M_P/N` for SFP+. | The GTH IP's current 125 MHz reference setting must be reconciled and regenerated before hardware use. The 1G line-rate target does not itself require a 125 MHz reference. |
+| 16 | U90 supplies a 156.25 MHz differential reference on `GTH_REFCLK0_C2M_P/N` for SFP+. | The GTH IP now selects 156.25 MHz. Its 1.25 Gb/s line rate and 16-bit user width remain unchanged. The nearby U87 125 MHz source feeds PS GTR, not SFP GTH. |
+| 14 / 7 | SFP TD_P/N and RD_P/N use `GTH_DP2_M2C_P/N` and `GTH_DP2_C2M_P/N`. The SOM map gives TX R4/R3, RX T2/T1 and reference Y6/Y5 (P/N). | The IP now selects X0Y6 for channel and TX/RX masters. The wrapper header reports a Vivado site check resolving the serial pins to GTHE4_CHANNEL_X0Y6 and reference pins to GTHE4_COMMON_X0Y1. This inventory checked the XCI and SOM pin map; vendor-tool validation was not rerun. |
 
 ## PL pin and clock plan
 
@@ -82,12 +83,55 @@ it through a FIFO to its local GMII clock. The two MMCM output sets also need
 an explicit timing relationship or safe crossings; identical nominal frequency
 alone is insufficient.
 
+## MDIO management interface
+
+[`mdio_controller`](../rtl/mdio/mdio_controller.sv) provides a Clause 22
+master with a 32-bit AXI-Lite slave and a physical IOBUF. Its separate
+[`portable model`](../rtl/mdio/mdio_controller_sim_model.sv) replaces only
+the pin stage with tristate logic. The board plan uses one controller per
+PL MDIO bus; the source records PHY addresses 2 and 3 for PL0 and PL1.
+No controller is instantiated in `switch_top`, and no CPU address assignment
+or FreeRTOS driver exists yet.
+
+| Offset | Register | Current behavior |
+| --- | --- | --- |
+| `0x00` | CONFIG | PHY address `[4:0]`, PHY register `[12:8]`, write/read direction `[16]` (1 = write) |
+| `0x04` | WRITE_DATA | Staged 16-bit data, byte-strobe writable |
+| `0x08` | READ_DATA | Live master read shift register; use after completion |
+| `0x0C` | CONTROL | Bit 0 starts a transaction; requests while busy are ignored |
+| `0x10` | STATUS | Bit 0 BUSY, bit 1 sticky DONE, bit 2 sticky ERROR; bits 1–2 are write-one-to-clear |
+| `0x14` | CLK_DIVIDER | 16-bit divider, reset value 100; MDC toggles every divider + 1 input clocks while busy |
+
+At a 150 MHz register clock, divider 100 gives approximately 742.6 kHz MDC.
+Clear old status, configure the transaction, issue START, wait for completion,
+and inspect ERROR before consuming data. The master clears READ_DATA on every
+START, including writes; it is not a separately retained last-successful-read
+register. Keep the divider stable while a transaction is running. There is no
+interrupt output or native Clause 45 transaction engine. PHY setup and extended
+register access through Clause 22 procedures remain software work.
+
+## SFP negotiation and transceiver integration
+
+The SFP PCS now includes `autoneg_1000base_x` and exports informational
+link/duplex/pause/fault status through the switch. Its three timer parameters
+default to 8 cycles and are not exposed through the enclosing SFP/switch tops.
+There is no TX backpressure or frame-boundary coordination while configuration
+ordered sets override MAC data. Hardware timers, compatibility/fault rules,
+idle detection, and link-down admission policy must be completed before use
+with a real peer. See [known RTL gaps](inventory.md#known-gaps-in-existing-rtl).
+
+The GTH configuration now matches the schematic reference frequency and
+selects the traced channel. Board assembly must still regenerate IP products,
+verify their placement/reference-clock constraints and physical routing, and
+supply the 125/62.5 MHz PCS clock relationship. Source comments report prior
+isolated synthesis; no reproducible build or hardware evidence is committed.
+
 ## Remaining implementation and verification
 
 - Connect the hardware adapters and clock generators to the MACs in a board
   wrapper with port names matching the XDC; add PS/DDR and management wiring.
-- Implement MDIO/MDC and PHY initialization, including explicit RX/TX delay
-  settings. TX currently forwards an unshifted clock and RX defaults to 700 ps
+- Wire the existing MDIO controllers to the CPU and PHY buses; implement PHY
+  initialization, including explicit RX/TX delay settings. TX currently forwards an unshifted clock and RX defaults to 700 ps
   FPGA delay; neither is a validated board timing solution.
 - Define reset pulse widths and calibration readiness. The RGMII adapter
   currently leaves `IDELAYCTRL.RDY` unused.
@@ -99,7 +143,7 @@ alone is insufficient.
   package pins, I/O standards and primary clock declarations only.
 - Check in reproducible IP-generation, isolated synthesis and board-build
   scripts. Existing source comments report isolated Vivado checks; this
-  inventory reran the portable model tests, not those vendor-tool checks.
+  inventory reran the affected portable tests, not those vendor-tool checks.
 
 The two new behavioral models do not establish these hardware properties:
 the RGMII model omits the real CDC FIFO and I/O delay primitives; the clock

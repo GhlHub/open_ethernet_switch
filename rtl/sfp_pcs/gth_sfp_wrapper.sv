@@ -24,18 +24,37 @@
 //
 // IP configuration highlights (see rtl/sfp_pcs/ip/gth_sfp_ip.xci for the
 // authoritative, tool-validated full parameter set):
-//   - GTH_TYPE=GTH, channel X0Y4 (KR260 SFP transceiver channel/quad
-//     LOC is a carrier-board-schematic fact this project doesn't have
-//     on hand -- X0Y4 is a placeholder that must be confirmed against
-//     the actual KR260 carrier board TRM/schematic before implementation;
-//     update CHANNEL_ENABLE/TX_MASTER_CHANNEL/RX_MASTER_CHANNEL in the
-//     .xci together with this file's IBUFDS_GTE4/gth_sfp_ip instance
-//     location constraints if it differs)
-//   - CPLL (not QPLL), 125 MHz reference clock -- also a placeholder:
-//     the KR260 SFP cage's actual reference clock frequency is another
-//     carrier-board-schematic fact not available here; a different
-//     refclk frequency needs a re-run of the wizard (CPLL multiplier
-//     values are frequency-specific), not just a parameter edit
+//   - GTH_TYPE=GTH, channel X0Y6 -- confirmed, not a placeholder. Traced
+//     from the real schematic through to the actual FPGA package pins:
+//     sheet 14 ("SFP+") shows the cage's TD_P/TD_N and RD_P/RD_N wired to
+//     nets GTH_DP2_M2C_P/N and GTH_DP2_C2M_P/N; sheet 7 (SOM240_2
+//     connector) traces those to som240_2_b5/b6 (TX) and som240_2_b1/b2
+//     (RX); the K26 SOM's own part0_pins.xml maps those connector names
+//     to package pins R4/R3 (TX P/N) and T2/T1 (RX P/N). Querying Vivado
+//     directly (`get_sites -of_objects [get_package_pins T1]` etc., part
+//     xck26-sfvc784-2LV-c) shows those pins belong to GTHE4_CHANNEL_X0Y6
+//     (the refclk pins Y6/Y5, from GTH_REFCLK0_C2M_P/N -> som240_2_c3/c4
+//     -> Y6/Y5, land in GTHE4_COMMON_X0Y1, consistent with the same
+//     quad). CHANNEL_ENABLE/TX_MASTER_CHANNEL/RX_MASTER_CHANNEL in the
+//     .xci were regenerated from the earlier X0Y4 placeholder to X0Y6 and
+//     re-validated via synth_design (0 errors, 0 critical warnings). No
+//     package-pin LOC constraints are needed for the GT serial/refclk
+//     pins themselves -- they're dedicated pins fixed by CHANNEL_ENABLE,
+//     unlike ordinary I/O.
+//   - CPLL (not QPLL), 156.25 MHz reference clock -- confirmed against
+//     the real carrier schematic (sheet 16: U90, "156.25 MHz LVDS (GTH
+//     SFP+)", driving GTH_REFCLK0_C2M_P/N). An earlier 125 MHz setting
+//     was a placeholder guess that did not match the board; the .xci
+//     was regenerated at 156.25 MHz (CPLL multiplier/divider values are
+//     frequency-specific, so this needed a wizard re-run, not just a
+//     parameter edit -- confirmed via synth_design: the resulting
+//     TX/RX USRCLK2 frequency is still exactly 62.5 MHz, since that's
+//     set by line rate/user-data-width, not refclk frequency, so this
+//     regeneration did not ripple into sfp_1000base_x_pcs.sv's gearbox
+//     assumption). A nearby, separate 125 MHz oscillator (U87) feeds a
+//     different transceiver quad's GTR_REFCLK0_C2M_P/N net (PS GTR, not
+//     this SFP GTH channel) and was not the source of the original 125
+//     MHz assumption's correctness -- it never applied to this wrapper.
 //   - 8b10b enabled both directions, hardware comma align enabled both
 //     polarities (RXCOMMADETEN/RXMCOMMAALIGNEN/RXPCOMMAALIGNEN) --
 //     matches sfp_1000base_x_pcs.sv's own documented tolerance for comma

@@ -20,9 +20,14 @@
 //     rxnotintable_i are the GTH-parallel-interface boundary signals,
 //     meant to connect to rtl/sfp_pcs/gth_sfp_wrapper.sv (or its sim
 //     stand-in, gth_sfp_sim_model.sv), not instantiated here.
-//   - Clause 37 autonegotiation (link-up/duplex/speed resolution over
-//     the /C1//C2/ ordered sets) -- sync_ok_o here only reflects PCS
-//     code-group synchronization (Clause 36.2.5.2), not a negotiated link.
+//
+// Clause 37 auto-negotiation now lives inside sfp_1000base_x_pcs.sv
+// (autoneg_1000base_x.sv); an_link_up_o/an_duplex_full_o/an_pause_o/
+// an_remote_fault_o below are that module's informational status,
+// passed straight through -- sync_ok_o is still only PCS code-group
+// synchronization (Clause 36.2.5.2), a precondition for a negotiated
+// link, not the negotiated link itself. No MAC TX gating on
+// an_link_up_o is implemented here -- see autoneg_1000base_x.sv's header.
 //
 // Five clock domains: clk/rst_n (fabric, 62.5MHz) for the switch-side
 // AXI4-Stream; axis_clk/axis_rst_n (150MHz) for the MAC's AXI4-Stream +
@@ -63,6 +68,12 @@ module sfp_port_top (
 
   // PCS code-group sync status (not a negotiated link -- see header note)
   output logic sync_ok_o,
+
+  // Clause 37 auto-negotiation status (informational -- see header note)
+  output logic       an_link_up_o,
+  output logic       an_duplex_full_o,
+  output logic [1:0] an_pause_o,
+  output logic       an_remote_fault_o,
 
   // switch ingress AXI4-Stream master, 16-bit, clk domain
   // (-> ingress_port_wr.sv s_axis_*)
@@ -129,7 +140,11 @@ module sfp_port_top (
     .rxcharisk_i     (rxcharisk_i),
     .rxdisperr_i     (rxdisperr_i),
     .rxnotintable_i  (rxnotintable_i),
-    .sync_ok_o       (sync_ok_o)
+    .sync_ok_o       (sync_ok_o),
+    .an_link_up_o      (an_link_up_o),
+    .an_duplex_full_o  (an_duplex_full_o),
+    .an_pause_o        (an_pause_o),
+    .an_remote_fault_o (an_remote_fault_o)
   );
 
   // MAC <-> ingress adapter (32-bit m_axis_rxd, axis_clk domain)

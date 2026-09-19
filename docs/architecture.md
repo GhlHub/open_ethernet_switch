@@ -24,7 +24,7 @@ flowchart TB
     subgraph ports[Physical port subsystems]
         PS["Ports 0-1: PS GEM adapters<br/>ps_gem_axis_bridge x2<br/>RTL present; flush / underrun gaps"]
         PL["Ports 2-3: PL 1G MACs<br/>pl_gmii_mac_top x2<br/>RTL present; rgmii_gmii_adapter.sv + XDC exist, not yet joined in"]
-        SFP["Port 4: SFP 1G MAC + PCS<br/>sfp_port_top<br/>RTL present; GTH connection / negotiation pending"]
+        SFP["Port 4: SFP 1G MAC + PCS<br/>sfp_port_top<br/>RTL present; GTH connection / link policy pending"]
         STREAM["Five physical RX / TX stream pairs<br/>16-bit AXI-S; intended 62.5 MHz"]
         PS <--> STREAM
         PL <--> STREAM
@@ -98,24 +98,23 @@ flowchart LR
     PSHW["KR260 PS PHYs + hard GEM0 / GEM1"] <-->|External FIFO| GEM["RTL: ps_gem_axis_bridge<br/>gem_rx_w_to_axis<br/>axis_to_gem_tx_r"]
     GEM <--> AXIS["Common 16-bit AXI-S<br/>switch RX / TX interfaces"]
 
-    PLPHY["KR260 PL copper PHYs<br/>TI DP83867CSRGZ in local schematic"] <--> RGMII["RTL: rgmii_gmii_adapter<br/>ODDRE1/IDDRE1/IDELAYE3 + async_fifo CDC<br/>Board assembly / timing / MDIO pending"]
+    PLPHY["KR260 PL copper PHYs<br/>TI DP83867CSRGZ in local schematic"] <--> RGMII["RTL: rgmii_gmii_adapter<br/>ODDRE1/IDDRE1/IDELAYE3 + async_fifo CDC<br/>Board assembly / timing pending"]
+    MDIO["RTL: mdio_controller<br/>AXI4-Lite + open_eth_mdio_master (imported) + IOBUF<br/>Not yet joined to switch_top or a real mdio/mdc pin pair"] -.-> PLPHY
     RGMII <-.->|GMII connection pending| PLMAC["RTL: pl_gmii_mac_top<br/>open_eth_mac_1g_switch<br/>32-bit / 16-bit CDC adapters"]
     PLMAC <--> AXIS
     CLK["RTL: pl_eth_clk_gen + XCI<br/>25 MHz to 125 / 300 / 62.5 MHz"] -. clock wiring pending .-> RGMII
     CLK -.-> PLMAC
 
-    OPT["SFP module / serial link"] <--> GT["RTL: gth_sfp_wrapper<br/>gtwizard_ultrascale IP + XCI<br/>Board parameters / clock integration pending"]
-    GT <-.->|Connection pending: 16-bit data + K at 62.5 MHz| PCS["RTL: sfp_port_top<br/>1000BASE-X PCS + 1G MAC<br/>32-bit / 16-bit CDC adapters"]
+    OPT["SFP module / serial link"] <--> GT["RTL: gth_sfp_wrapper<br/>gtwizard_ultrascale IP + XCI<br/>X0Y6; 156.25 MHz reference<br/>Board / clock integration pending"]
+    GT <-.->|Connection pending: 16-bit data + K at 62.5 MHz| PCS["RTL: sfp_port_top<br/>1000BASE-X PCS + experimental AN + 1G MAC<br/>32-bit / 16-bit CDC adapters"]
     PCS <--> AXIS
-    AN["PENDING: Clause 37 negotiation<br/>or validated fixed-link policy"] -.-> PCS
 
     classDef present fill:#e1efff,stroke:#245a9b,color:#10243a
     classDef pending fill:#ffe4e4,stroke:#b52a2a,color:#601515,stroke-dasharray:5 3
     classDef hardware fill:#eeeeee,stroke:#666666,color:#222222
     classDef partial fill:#fff0cb,stroke:#a96a00,color:#473000
-    class GEM,PLMAC,PCS present
-    class GT,RGMII,CLK partial
-    class AN pending
+    class GEM,PLMAC present
+    class GT,RGMII,CLK,MDIO,PCS partial
     class PSHW,PLPHY,OPT,AXIS hardware
 ```
 
@@ -123,7 +122,15 @@ The RGMII adapter implements DDR I/O, optional receive-clock delay, and a
 receive FIFO crossing into the MAC clock domain. Its separate behavioral
 model tests nibble/control encoding but omits that FIFO and physical timing.
 PL package-pin and input-clock constraints exist; complete external timing,
-MDIO control, PHY initialization, and board-level assembly remain pending.
+PHY initialization, and board-level assembly remain pending.
+
+`mdio_controller` wraps an imported Clause 22 master with AXI-Lite registers
+and an IOBUF. Its portable counterpart uses the same register logic and
+master with a tristate pin assignment. Write/read/status-clear tests pass.
+Two instances are intended for the separate PL PHY buses; their CPU address
+map, board pins and firmware initialization remain unconnected. See the
+[MDIO register map](board-integration.md#mdio-management-interface) and
+[source notices](source-notices.md).
 
 `pl_eth_clk_gen` and its Clocking Wizard configuration generate nominal
 125 MHz MAC, 300 MHz delay-reference, and 62.5 MHz fabric clocks from 25 MHz.
@@ -143,20 +150,37 @@ The SFP PCS now exposes decoded 16-bit data plus two K/error flags at
 gearbox assumes exactly 2:1, phase-related clocks. These are not independent
 clock domains. The board design must generate and constrain that relationship.
 
-`gth_sfp_wrapper.sv` instantiates the vendor `gth_sfp_ip` from the checked-in
-Transceiver Wizard configuration. Neither `sfp_port_top` nor `switch_top`
-instantiates the GTH wrapper. Its channel X0Y4 and 125 MHz reference clock are
-placeholders. The local schematic shows a 156.25 MHz SFP reference, requiring
-IP reconfiguration and channel/pin confirmation. Generated IP output products and
-a reproducible board build are not included. Source comments report prior
-Vivado/UNISIM elaboration; this inventory did not rerun or independently
-establish that result.
+`sfp_1000base_x_pcs` now includes experimental Clause 37 base-page
+negotiation. While active, `autoneg_1000base_x` replaces the TX codec output
+with configuration ordered sets ahead of the gearbox. It monitors received
+symbols and exports link, duplex, pause and remote-fault status through
+`sfp_port_top` to `switch_top` (`sfp_an_*` outputs).
+
+These status outputs do not gate MAC transmission or switch egress. Frames
+accepted during negotiation/restart can be discarded or truncated at the TX
+mux. Timers default to simulation-length values; idle detection, pause
+resolution and compatibility/fault handling need further development. Next
+Page is absent. The test with two PCS instances verifies default-ability
+negotiation, bidirectional frames and recovery from injected corruption using
+shared clocks and the same RTL; it is not an independent interoperability test.
+
+`gth_sfp_wrapper` instantiates the vendor IP separately from `switch_top`.
+Its configuration now selects X0Y6 and a 156.25 MHz reference, replacing the
+earlier X0Y4/125 MHz assumptions. The local schematic and SOM mapping trace
+SFP TX to R4/R3, RX to T2/T1, and reference to Y6/Y5 (P/N). Source comments
+report a Vivado channel/site check and synthesis; these were not rerun here,
+and no reproducible generation/synthesis scripts or reports are committed.
+Line rate and data width remain 1.25 Gb/s and 16 bits, for the intended
+62.5 MHz parallel user clock. Placement, reference routing, resets and the
+phase-related PCS clock still need board integration.
 
 The standalone `gth_sfp_sim_model` test checks delayed parallel loopback,
 reset/status and error injection. The PCS and full SFP-port tests instead
 connect their parallel pins directly; they do not use the GTH model or
 validate a serial link. Neither implementation provides 10G Ethernet.
-`sync_ok_o` indicates code-group synchronization, not a negotiated link.
+`sync_ok_o` indicates code-group synchronization. The new `sfp_an_link_up_o`
+reports the experimental negotiation state; neither establishes a hardware-
+validated link or enforces a transmit-admission policy.
 
 ## Port map and external integration
 
@@ -169,7 +193,8 @@ validate a serial link. Neither implementation provides 10G Ethernet.
 
 Four separate AXI master channel groups leave the top: physical ingress writes,
 physical egress reads, CPU pool writes, and CPU pool reads. The three MAC
-AXI-Lite interfaces and `default_age_i` also remain external. There is no
+AXI-Lite interfaces, negotiation status and `default_age_i` also remain external.
+The MDIO wrappers are not instantiated at this level. There is no
 CPU-accessible management register map or PS block design yet.
 
 ## Packet lifetime

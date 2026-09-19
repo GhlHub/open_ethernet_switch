@@ -35,9 +35,13 @@
 //   - the CPU port's own s_axis_*/m_axis_* AXI4-Stream boundary still
 //     needs a Vivado-configured AXI DMA IP (Scatter/Gather mode) on the
 //     other end -- see cpu_port_top.sv's header
-//   - the SFP port's GTHE4_CHANNEL transceiver primitive and Clause 37
-//     autonegotiation -- see sfp_port_top.sv's header; sync_ok_o here is
-//     PCS code-group sync only, not a negotiated link
+//   - the SFP port's GTHE4_CHANNEL transceiver primitive -- see
+//     sfp_port_top.sv's header. Clause 37 autonegotiation IS included
+//     (autoneg_1000base_x.sv, inside sfp_1000base_x_pcs.sv); its status
+//     is exposed here as sfp_an_link_up_o/sfp_an_duplex_full_o/
+//     sfp_an_pause_o/sfp_an_remote_fault_o, parallel to sfp_sync_ok_o
+//     (still PCS code-group sync only, a precondition for a negotiated
+//     link, not the link itself)
 //   - each MAC's own AXI4-Lite (register/statistics) port -- exposed
 //     separately per instance (pl_gmii0/pl_gmii1/sfp), no CPU-facing
 //     register-access architecture decided yet
@@ -217,6 +221,10 @@ module switch_top
   input  logic [1:0]  sfp_rxdisperr_i,
   input  logic [1:0]  sfp_rxnotintable_i,
   output logic        sfp_sync_ok_o,
+  output logic        sfp_an_link_up_o,
+  output logic        sfp_an_duplex_full_o,
+  output logic [1:0]  sfp_an_pause_o,
+  output logic        sfp_an_remote_fault_o,
   input  logic [17:0] sfp_s_axi_awaddr,
   input  logic         sfp_s_axi_awvalid,
   output logic         sfp_s_axi_awready,
@@ -787,6 +795,10 @@ module switch_top
     .rxdisperr_i      (sfp_rxdisperr_i),
     .rxnotintable_i   (sfp_rxnotintable_i),
     .sync_ok_o        (sfp_sync_ok_o),
+    .an_link_up_o      (sfp_an_link_up_o),
+    .an_duplex_full_o  (sfp_an_duplex_full_o),
+    .an_pause_o        (sfp_an_pause_o),
+    .an_remote_fault_o (sfp_an_remote_fault_o),
     .m_axis_tdata     (phy_s_axis_tdata[4]),
     .m_axis_tkeep     (phy_s_axis_tkeep[4]),
     .m_axis_tvalid    (phy_s_axis_tvalid[4]),

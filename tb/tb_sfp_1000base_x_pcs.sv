@@ -7,6 +7,18 @@
 //
 //   A. from reset, idle-only traffic -> sync_ok_o asserts within a
 //      reasonable number of cycles
+//   A2. Clause 37 auto-negotiation (autoneg_1000base_x.sv, self-looped
+//      the same way as everything else here -- this DUT sees its own
+//      advertised ability reflected back as if it were a partner's, and
+//      still has to converge through the full ABILITY_DETECT/
+//      ACKNOWLEDGE_DETECT/COMPLETE_ACKNOWLEDGE/IDLE_DETECT sequence) ->
+//      an_link_up_o asserts, resolved duplex/pause reflect this DUT's
+//      own advertised ability (since it's negotiating with itself).
+//      Tests B-D wait for this before sending any GMII frame: an_tx_active
+//      overrides the whole TX code-group stream (MAC data included)
+//      until negotiation reaches IDLE_DETECT/LINK_OK, so a frame sent
+//      any earlier would simply never reach the wire -- see
+//      autoneg_1000base_x.sv's header.
 //   B. one full GMII frame (standard preamble+SFD+payload) looped back
 //      -> reproduced byte-for-byte, rx_dv timing matches
 //   C. a second frame immediately after -> confirms TX/RX/sync state all
@@ -57,6 +69,10 @@ module tb_sfp_1000base_x_pcs;
   logic [1:0]  rxnotintable;
 
   logic       sync_ok;
+  logic       an_link_up;
+  logic       an_duplex_full;
+  logic [1:0] an_pause;
+  logic       an_remote_fault;
 
   // loopback, with error-injection override on the RX side for test E
   // (both byte lanes, so it reliably corrupts every cycle rather than
@@ -84,7 +100,11 @@ module tb_sfp_1000base_x_pcs;
     .rxcharisk_i     (rxcharisk),
     .rxdisperr_i     (rxdisperr),
     .rxnotintable_i  (rxnotintable),
-    .sync_ok_o       (sync_ok)
+    .sync_ok_o       (sync_ok),
+    .an_link_up_o        (an_link_up),
+    .an_duplex_full_o    (an_duplex_full),
+    .an_pause_o          (an_pause),
+    .an_remote_fault_o   (an_remote_fault)
   );
 
   int errors = 0;
@@ -153,6 +173,27 @@ module tb_sfp_1000base_x_pcs;
         errors++;
       end else begin
         $display("PASS: testA sync_ok_o asserted after %0d cycles of idle", timeout);
+      end
+    end
+    wait_cycles(10);
+
+    // ---- test A2: Clause 37 auto-negotiation completes ----
+    begin
+      int timeout;
+      timeout = 0;
+      while (!an_link_up && timeout < 500) begin
+        @(posedge clk);
+        timeout++;
+      end
+      if (!an_link_up) begin
+        $display("FAIL: testA2 an_link_up_o never asserted (timeout=%0d)", timeout);
+        errors++;
+      end else if (!an_duplex_full || an_pause != 2'b00 || an_remote_fault) begin
+        $display("FAIL: testA2 an_link_up_o asserted but resolved status wrong (duplex_full=%0b pause=%0b remote_fault=%0b)",
+                  an_duplex_full, an_pause, an_remote_fault);
+        errors++;
+      end else begin
+        $display("PASS: testA2 an_link_up_o asserted after %0d cycles, duplex_full/pause/remote_fault resolved correctly", timeout);
       end
     end
     wait_cycles(10);

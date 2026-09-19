@@ -94,9 +94,12 @@ SFP_PCS_SRCS := \
 	$(SFP_PCS_DIR)/gmii_1000base_x_tx.sv \
 	$(SFP_PCS_DIR)/sync_1000base_x.sv \
 	$(SFP_PCS_DIR)/gmii_1000base_x_rx.sv \
+	$(SFP_PCS_DIR)/autoneg_1000base_x.sv \
 	$(SFP_PCS_DIR)/sfp_1000base_x_pcs.sv
 
 SFP_PCS_TB := $(TB_DIR)/tb_sfp_1000base_x_pcs.sv
+
+AUTONEG_TB := $(TB_DIR)/tb_autoneg_1000base_x.sv
 
 ASYNC_FIFO_SRCS := $(COMMON_DIR)/async_fifo.sv
 ASYNC_FIFO_TB   := $(TB_DIR)/tb_async_fifo.sv
@@ -125,6 +128,7 @@ SFP_PORT_SRCS := \
 	$(SFP_PCS_DIR)/gmii_1000base_x_tx.sv \
 	$(SFP_PCS_DIR)/sync_1000base_x.sv \
 	$(SFP_PCS_DIR)/gmii_1000base_x_rx.sv \
+	$(SFP_PCS_DIR)/autoneg_1000base_x.sv \
 	$(SFP_PCS_DIR)/sfp_1000base_x_pcs.sv \
 	$(PL_GMII_DIR)/open_eth_mac_1g_switch.sv \
 	$(PL_GMII_DIR)/mac_rxd_to_switch_ingress.sv \
@@ -199,6 +203,7 @@ SWITCH_TOP_SRCS := \
 	$(SFP_PCS_DIR)/gmii_1000base_x_tx.sv \
 	$(SFP_PCS_DIR)/sync_1000base_x.sv \
 	$(SFP_PCS_DIR)/gmii_1000base_x_rx.sv \
+	$(SFP_PCS_DIR)/autoneg_1000base_x.sv \
 	$(SFP_PCS_DIR)/sfp_1000base_x_pcs.sv \
 	$(SFP_PCS_DIR)/sfp_port_top.sv \
 	../rtl/switch_top.sv
@@ -214,9 +219,13 @@ RGMII_SIM_TB   := $(TB_DIR)/tb_rgmii_gmii_sim_model.sv
 PL_CLKGEN_SIM_SRCS := $(PL_GMII_DIR)/pl_eth_clk_gen_sim_model.sv
 PL_CLKGEN_SIM_TB   := $(TB_DIR)/tb_pl_eth_clk_gen_sim_model.sv
 
+MDIO_DIR := ../rtl/mdio
+MDIO_SIM_SRCS := $(MDIO_DIR)/open_eth_mdio_master.sv $(MDIO_DIR)/mdio_controller_sim_model.sv
+MDIO_SIM_TB   := $(TB_DIR)/tb_mdio_controller.sv
+
 VIVADO_SETTINGS := /tools/Xilinx/2026.1/Vivado/settings64.sh
 
-.PHONY: sim lint xsim sim-mac lint-mac xsim-mac sim-bufmgr lint-bufmgr xsim-bufmgr sim-ingress lint-ingress xsim-ingress sim-ps-eth lint-ps-eth xsim-ps-eth sim-egress lint-egress xsim-egress sim-integ lint-integ xsim-integ sim-sfp-pcs lint-sfp-pcs xsim-sfp-pcs sim-async-fifo lint-async-fifo xsim-async-fifo sim-pl-gmii lint-pl-gmii sim-sfp-port lint-sfp-port sim-cpu-port lint-cpu-port sim-mac-fwd lint-mac-fwd sim-switch-top lint-switch-top sim-gth-sim lint-gth-sim xsim-gth-sim sim-rgmii-sim xsim-rgmii-sim sim-pl-clkgen-sim lint-pl-clkgen-sim xsim-pl-clkgen-sim clean
+.PHONY: sim lint xsim sim-mac lint-mac xsim-mac sim-bufmgr lint-bufmgr xsim-bufmgr sim-ingress lint-ingress xsim-ingress sim-ps-eth lint-ps-eth xsim-ps-eth sim-egress lint-egress xsim-egress sim-integ lint-integ xsim-integ sim-sfp-pcs lint-sfp-pcs xsim-sfp-pcs sim-autoneg lint-autoneg xsim-autoneg sim-async-fifo lint-async-fifo xsim-async-fifo sim-pl-gmii lint-pl-gmii sim-sfp-port lint-sfp-port sim-cpu-port lint-cpu-port sim-mac-fwd lint-mac-fwd sim-switch-top lint-switch-top sim-gth-sim lint-gth-sim xsim-gth-sim sim-rgmii-sim xsim-rgmii-sim sim-pl-clkgen-sim lint-pl-clkgen-sim xsim-pl-clkgen-sim sim-mdio lint-mdio xsim-mdio clean
 
 # default targets operate on the MAC table, for backwards compatibility
 sim: sim-mac
@@ -340,6 +349,23 @@ xsim-sfp-pcs:
 	  source $(VIVADO_SETTINGS) && \
 	  xvlog -sv $(addprefix ../,$(SFP_PCS_SRCS)) $(addprefix ../,$(SFP_PCS_TB)) && \
 	  xelab -debug typical tb_sfp_1000base_x_pcs -s tb_sim && \
+	  xsim tb_sim -runall
+
+sim-autoneg: tb_autoneg_1000base_x.vvp
+	vvp tb_autoneg_1000base_x.vvp
+
+tb_autoneg_1000base_x.vvp: $(SFP_PCS_SRCS) $(AUTONEG_TB)
+	iverilog -g2012 -o $@ $(SFP_PCS_SRCS) $(AUTONEG_TB)
+
+lint-autoneg:
+	verilator --lint-only --top-module autoneg_1000base_x $(SFP_PCS_SRCS)
+
+xsim-autoneg:
+	mkdir -p xsim_run_autoneg
+	cd xsim_run_autoneg && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv $(addprefix ../,$(SFP_PCS_SRCS)) $(addprefix ../,$(AUTONEG_TB)) && \
+	  xelab -debug typical tb_autoneg_1000base_x -s tb_sim && \
 	  xsim tb_sim -runall
 
 sim-async-fifo: tb_async_fifo.vvp
@@ -496,6 +522,23 @@ xsim-pl-clkgen-sim:
 	  xelab -debug typical tb_pl_eth_clk_gen_sim_model -s tb_sim && \
 	  xsim tb_sim -runall
 
+sim-mdio: tb_mdio_controller.vvp
+	vvp tb_mdio_controller.vvp
+
+tb_mdio_controller.vvp: $(MDIO_SIM_SRCS) $(MDIO_SIM_TB)
+	iverilog -g2012 -o $@ $(MDIO_SIM_SRCS) $(MDIO_SIM_TB)
+
+lint-mdio:
+	verilator --lint-only --timing --top-module mdio_controller_sim_model $(MDIO_SIM_SRCS)
+
+xsim-mdio:
+	mkdir -p xsim_run_mdio
+	cd xsim_run_mdio && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv $(addprefix ../,$(MDIO_SIM_SRCS)) $(addprefix ../,$(MDIO_SIM_TB)) && \
+	  xelab -debug typical tb_mdio_controller -s tb_sim && \
+	  xsim tb_sim -runall
+
 clean:
-	rm -f tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp tb_rgmii_gmii_sim_model.vvp tb_pl_eth_clk_gen_sim_model.vvp
-	rm -rf xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_async_fifo xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim xsim_run_rgmii_sim xsim_run_pl_clkgen_sim
+	rm -f tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_autoneg_1000base_x.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp tb_rgmii_gmii_sim_model.vvp tb_pl_eth_clk_gen_sim_model.vvp tb_mdio_controller.vvp
+	rm -rf xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_autoneg xsim_run_async_fifo xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim xsim_run_rgmii_sim xsim_run_pl_clkgen_sim xsim_run_mdio
