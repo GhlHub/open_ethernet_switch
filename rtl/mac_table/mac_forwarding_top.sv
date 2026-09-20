@@ -34,6 +34,10 @@ module mac_forwarding_top
   input  logic              age_tick_i,
   input  logic [AGE_W-1:0]  default_age_i,
 
+  // link-down: a one-cycle pulse on bit p expires every learned entry of port p
+  input  logic [NUM_PORTS-1:0] flush_req_i,
+  output logic                 flush_busy_o,
+
   // snooped ingress AXI4-Stream, one set per switch port (same wires
   // feeding ingress_port_wr.sv's s_axis_* for ports 0-4, and
   // cpu_port_top.sv's s_axis_* for port 5); not driven here
@@ -72,6 +76,8 @@ module mac_forwarding_top
     .rst_n                     (rst_n),
     .age_tick_i                (age_tick_i),
     .default_age_i             (default_age_i),
+    .flush_req_i               (PORTMASK_W'(flush_req_i)),
+    .flush_busy_o              (flush_busy_o),
     .learn_req_i               (learn_req),
     .learn_mac_i               (learn_mac),
     .learn_busy_o              (),

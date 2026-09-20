@@ -1,14 +1,16 @@
 // switch_egress_to_mac_txd.sv
 //
 // This switch's egress AXI4-Stream convention (16-bit, clk domain,
-// 62.5MHz) -> open_eth_mac_1g_switch's s_axis_txd (32-bit AXI4-Stream,
-// its own axis_clk domain -- 150MHz per that core's README, fixed by its
-// internal packet buffer, not reclockable). Two clock domains, mirroring
-// rtl/ps_eth/axis_to_gem_tx_r.sv's structure: a clk-side unpacker splits
-// each accepted 16-bit/tkeep word into 1-2 bytes, pushed into
-// rtl/common/async_fifo.sv; an axis_clk-side gearbox pops bytes back out
-// and assembles them into 32-bit/tkeep beats (flushing early, with a
-// partial tkeep, on the byte carrying eop).
+// 100MHz) -> open_eth_mac_1g_switch's s_axis_txd (32-bit AXI4-Stream,
+// its own axis_clk domain -- 142.86MHz here, fixed by its internal packet
+// buffer, not reclockable). Two clock domains. WORD-WIDE datapath (a
+// byte-serial version capped each port at 0.8 Gbit/s, below the wire rate): the
+// clk side writes each accepted 16-bit/tkeep word straight into
+// rtl/common/async_fifo.sv as {eop, upper-byte-valid, data16}; the axis_clk
+// side pops two words per 32-bit beat (a lone or final word makes a partial
+// beat), presenting the beat from an output register while the next one is
+// assembled. Sustained throughput: one word per cycle on the fabric side
+// (1.6 Gbit/s at 100MHz) and on the MAC side (2.3 Gbit/s at 142.86MHz).
 //
 // s_axis_txc (the separate "TX control" stream this MAC's AXI4-Stream
 // contract requires): this core doesn't actually consume s_axis_txc_
@@ -22,9 +24,9 @@
 // and-forward design means the rest reliably follows).
 
 module switch_egress_to_mac_txd #(
-  parameter int FIFO_DEPTH = 128
+  parameter int FIFO_DEPTH = 256   // 16-bit words
 ) (
-  input  logic clk,      // fabric clock (62.5 MHz)
+  input  logic clk,      // fabric clock (100 MHz)
   input  logic rst_n,
   input  logic axis_clk, // MAC's AXI4-Stream clock (its own required rate)
   input  logic axis_rst_n,
@@ -53,61 +55,13 @@ module switch_egress_to_mac_txd #(
 
   assign s_axis_txc_tlast_o = 1'b1; // always a single-beat control transfer
 
-  localparam int ENTRY_W = 8 + 1; // data + eop
+  localparam int ENTRY_W = 16 + 1 + 1; // data16, upper byte valid, eop
 
-  // ---- clk side: unpack each accepted 16-bit word into 1 or 2 FIFO
-  // pushes. Structurally identical to axis_to_gem_tx_r.sv's unpacker --
-  // see that file for the detailed reasoning. ----
-  typedef enum logic {U_IDLE, U_SECOND} un_state_t;
-  un_state_t un_state_q;
-  logic [7:0] pending_byte_q;
-  logic       pending_eop_q;
-
-  logic [ENTRY_W-1:0] fifo_wr_data;
-  logic                fifo_wr_en, fifo_full;
-
-  always_comb begin
-    fifo_wr_en      = 1'b0;
-    fifo_wr_data    = '0;
-    s_axis_tready_o = 1'b0;
-
-    unique case (un_state_q)
-      U_IDLE: begin
-        s_axis_tready_o = !fifo_full;
-        if (s_axis_tvalid_i && !fifo_full) begin
-          fifo_wr_en   = 1'b1;
-          fifo_wr_data = {s_axis_tkeep_i[1] ? 1'b0 : s_axis_tlast_i, s_axis_tdata_i[7:0]};
-        end
-      end
-      U_SECOND: begin
-        if (!fifo_full) begin
-          fifo_wr_en   = 1'b1;
-          fifo_wr_data = {pending_eop_q, pending_byte_q};
-        end
-      end
-      default: ;
-    endcase
-  end
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      un_state_q <= U_IDLE;
-    end else begin
-      unique case (un_state_q)
-        U_IDLE: begin
-          if (s_axis_tvalid_i && !fifo_full && s_axis_tkeep_i[1]) begin
-            pending_byte_q <= s_axis_tdata_i[15:8];
-            pending_eop_q  <= s_axis_tlast_i;
-            un_state_q     <= U_SECOND;
-          end
-        end
-        U_SECOND: begin
-          if (!fifo_full) un_state_q <= U_IDLE;
-        end
-        default: un_state_q <= U_IDLE;
-      endcase
-    end
-  end
+  // ---- clk side: one word per cycle straight into the FIFO ----
+  logic fifo_full;
+  assign s_axis_tready_o = !fifo_full;
+  wire   fifo_wr_en      = s_axis_tvalid_i && !fifo_full;
+  wire [ENTRY_W-1:0] fifo_wr_data = {s_axis_tlast_i, s_axis_tkeep_i[1], s_axis_tdata_i};
 
   logic [ENTRY_W-1:0] fifo_rd_data;
   logic                fifo_rd_en, fifo_empty;
@@ -125,92 +79,75 @@ module switch_egress_to_mac_txd #(
     .empty_o   (fifo_empty)
   );
 
-  // ---- axis_clk side: issue one txc beat per frame, then gearbox
-  // popped bytes into 32-bit txd beats (flushing early, partial tkeep,
-  // on the byte carrying eop). async_fifo's read side is a
-  // combinational peek-before-pop, no extra registered-read wait state
-  // needed (see the same note in the ingress-direction module). ----
-  wire       byte_eop = fifo_rd_data[8];
-  wire [7:0] byte_val = fifo_rd_data[7:0];
-
-  typedef enum logic [1:0] {S_TXC, S_ACC, S_PRESENT} tx_state_t;
+  // ---- axis_clk side: one txc beat per frame, then words -> 32-bit beats ----
+  // async_fifo's read side is a combinational peek-before-pop (first word fall
+  // through). State: S_TXC issues the frame's control beat; S_RUN assembles beats
+  // from popped words and presents them from an output register; after the
+  // frame's last word is popped nothing more is popped until the last beat has
+  // been accepted (the next frame needs its own txc beat first).
+  typedef enum logic {S_TXC, S_RUN} tx_state_t;
   tx_state_t state_q;
 
-  logic [31:0] acc_q;
-  logic [1:0]  word_idx_q;   // 0..3, next lane to fill
+  logic        hold_v_q;                 // first word of a beat is held
+  logic [15:0] hold_data_q;
+  logic        out_v_q;                  // output beat register
+  logic [31:0] out_data_q;
+  logic [3:0]  out_keep_q;
+  logic        out_last_q;
+  logic        frame_done_q;             // final word already popped
 
-  logic [31:0] beat_data_q;
-  logic [3:0]  beat_keep_q;
-  logic        beat_last_q;
+  wire [15:0] w_data = fifo_rd_data[15:0];
+  wire        w_k1   = fifo_rd_data[16];
+  wire        w_eop  = fifo_rd_data[17];
 
-  // combinational "merge this popped byte into the accumulator", case on
-  // a constant lane index -- same rationale as every other byte-
-  // accumulator in this project (see ingress_port_wr.sv).
-  logic [31:0] acc_next;
-  always_comb begin
-    acc_next = acc_q;
-    unique case (word_idx_q)
-      2'd0:    acc_next[7:0]   = byte_val;
-      2'd1:    acc_next[15:8]  = byte_val;
-      2'd2:    acc_next[23:16] = byte_val;
-      default: acc_next[31:24] = byte_val;
-    endcase
-  end
+  // the output register can take a new beat if it is empty or being taken now
+  wire out_free = !out_v_q || s_axis_txd_tready_i;
 
-  wire word_full   = (word_idx_q == 2'd3);
-  wire pop_now     = (state_q == S_ACC) && !fifo_empty;
-  wire commit_beat = pop_now && (word_full || byte_eop);
-
-  // tkeep for the beat being committed: all lanes up to and including
-  // word_idx_q are valid. A case on a constant index, not a function --
-  // this module is instantiated once per PL GMII port, and a package/
-  // module-local `function automatic` called every cycle from more than
-  // one instance of the calling module is a confirmed Icarus Verilog
-  // 12.0 corruption bug (see rtl/dma/axi_dma_pkg.sv's header note for
-  // the same rationale applied elsewhere in this project).
-  logic [3:0] keep_for_this_count;
-  always_comb begin
-    unique case (word_idx_q)
-      2'd0:    keep_for_this_count = 4'b0001;
-      2'd1:    keep_for_this_count = 4'b0011;
-      2'd2:    keep_for_this_count = 4'b0111;
-      default: keep_for_this_count = 4'b1111;
-    endcase
-  end
+  wire can_pop_w0  = (state_q == S_RUN) && !fifo_empty && !frame_done_q && !hold_v_q && (!w_eop || out_free);
+  wire can_pop_w1  = (state_q == S_RUN) && !fifo_empty && !frame_done_q &&  hold_v_q && out_free;
+  assign fifo_rd_en = can_pop_w0 || can_pop_w1;
 
   always_ff @(posedge axis_clk or negedge axis_rst_n) begin
     if (!axis_rst_n) begin
-      state_q    <= S_TXC;
-      word_idx_q <= '0;
+      state_q      <= S_TXC;
+      hold_v_q     <= 1'b0;
+      out_v_q      <= 1'b0;
+      frame_done_q <= 1'b0;
     end else begin
+      if (out_v_q && s_axis_txd_tready_i) out_v_q <= 1'b0;
+
       unique case (state_q)
         S_TXC: begin
           if (s_axis_txc_tvalid_o && s_axis_txc_tready_i) begin
-            state_q    <= S_ACC;
-            word_idx_q <= '0;
+            state_q      <= S_RUN;
+            frame_done_q <= 1'b0;
+            hold_v_q     <= 1'b0;
           end
         end
-        S_ACC: begin
-          if (pop_now) begin
-            acc_q <= acc_next;
-            if (commit_beat) begin
-              beat_data_q <= acc_next;
-              beat_keep_q <= keep_for_this_count;
-              beat_last_q <= byte_eop;
-              state_q     <= S_PRESENT;
+        S_RUN: begin
+          if (can_pop_w0) begin
+            if (w_eop) begin
+              // lone final word: partial beat
+              out_v_q      <= 1'b1;
+              out_data_q   <= {16'h0000, w_data};
+              out_keep_q   <= {2'b00, w_k1, 1'b1};
+              out_last_q   <= 1'b1;
+              frame_done_q <= 1'b1;
             end else begin
-              word_idx_q <= word_idx_q + 1'b1;
+              hold_v_q    <= 1'b1;
+              hold_data_q <= w_data;
             end
           end
-        end
-        S_PRESENT: begin
-          if (s_axis_txd_tready_i) begin
-            word_idx_q <= '0;
-            // Icarus Verilog 13.0 requires an explicit cast on an
-            // enum-typed ternary assigned to an enum-typed variable
-            // (12.0 accepted this without one).
-            state_q    <= tx_state_t'(beat_last_q ? S_TXC : S_ACC);
+          if (can_pop_w1) begin
+            out_v_q      <= 1'b1;
+            out_data_q   <= {w_data, hold_data_q};
+            out_keep_q   <= {w_k1, 3'b111};
+            out_last_q   <= w_eop;
+            hold_v_q     <= 1'b0;
+            if (w_eop) frame_done_q <= 1'b1;
           end
+          // last beat accepted by the MAC -> next frame
+          if (frame_done_q && out_v_q && s_axis_txd_tready_i && out_last_q) state_q <= S_TXC;
         end
         default: state_q <= S_TXC;
       endcase
@@ -218,14 +155,12 @@ module switch_egress_to_mac_txd #(
   end
 
   always_comb begin
-    fifo_rd_en = pop_now;
-
     s_axis_txc_tvalid_o = (state_q == S_TXC) && !fifo_empty;
 
-    s_axis_txd_tdata_o  = beat_data_q;
-    s_axis_txd_tkeep_o  = beat_keep_q;
-    s_axis_txd_tlast_o  = beat_last_q;
-    s_axis_txd_tvalid_o = (state_q == S_PRESENT);
+    s_axis_txd_tdata_o  = out_data_q;
+    s_axis_txd_tkeep_o  = out_keep_q;
+    s_axis_txd_tlast_o  = out_last_q;
+    s_axis_txd_tvalid_o = out_v_q;
   end
 
 endmodule

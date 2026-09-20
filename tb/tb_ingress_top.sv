@@ -108,7 +108,10 @@ module tb_ingress_top;
     .cpu_enqueue_bufid_i          (cpu_enqueue_bufid),
     .cpu_enqueue_length_i         (cpu_enqueue_length),
     .cpu_enqueue_destmask_i       (cpu_enqueue_destmask),
-    .cpu_enqueue_gnt_o            (cpu_enqueue_gnt)
+    .cpu_enqueue_gnt_o            (cpu_enqueue_gnt),
+    .link_up_i ({NUM_PORTS{1'b1}}),
+    .flush_req_i ('0),
+    .flush_busy_o ()
   );
 
   // Covers 16 buffers' worth of DDR (bufid 0-15). Confirmed by bisection:

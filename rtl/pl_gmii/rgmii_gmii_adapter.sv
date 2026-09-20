@@ -144,6 +144,7 @@ module rgmii_gmii_adapter #(
   input  logic       diag_rst_n_i,
   input  logic       diag_clr_overflow_i,
   input  logic       diag_clr_underrun_i,
+  output logic       idelay_rdy_o,          // raw IDELAYCTRL RDY (async; 1 if no IDELAYCTRL is used)
   output logic       rx_elastic_overflow_o,
   output logic       rx_elastic_underrun_o
 );
@@ -212,18 +213,39 @@ module rgmii_gmii_adapter #(
   wire rxc_ibuf;
   IBUF u_ibuf_rxc (.I(rgmii_rxc_i), .O(rxc_ibuf));
 
+  // IDELAYCTRL calibration status: the receive path is held in reset (below)
+  // until it is ready, and again if it ever drops (reference clock loss).
+  wire idelayctrl_rdy;
   generate
     if (RX_IDELAY_ENABLE || RX_DATA_IDELAY_ENABLE) begin : g_idelayctrl
-      wire idelayctrl_rdy;
+      // UG571 "Component Mode Reset Sequence": the IDELAYE3 resets are released
+      // first, then IDELAYCTRL's, so hold IDELAYCTRL in reset for IDELAYCTRL_RST_EXTRA
+      // more refclk cycles after idelay_rst_n_i is released (idelay_rst_n_i is
+      // already synchronous to idelay_refclk_i).
+      localparam int IDELAYCTRL_RST_EXTRA = 16;
+      logic [$clog2(IDELAYCTRL_RST_EXTRA+1)-1:0] ctrl_cnt_q;
+      logic ctrl_rst_q;
+      always_ff @(posedge idelay_refclk_i or negedge idelay_rst_n_i) begin
+        if (!idelay_rst_n_i) begin
+          ctrl_cnt_q <= '0;
+          ctrl_rst_q <= 1'b1;
+        end else begin
+          if (ctrl_cnt_q != IDELAYCTRL_RST_EXTRA) ctrl_cnt_q <= ctrl_cnt_q + 1'b1;
+          ctrl_rst_q <= (ctrl_cnt_q < IDELAYCTRL_RST_EXTRA - 1);
+        end
+      end
       IDELAYCTRL #(
         .SIM_DEVICE("ULTRASCALE_PLUS")
       ) u_idelayctrl (
         .RDY    (idelayctrl_rdy),
         .REFCLK (idelay_refclk_i),
-        .RST    (!idelay_rst_n_i)
+        .RST    (ctrl_rst_q)
       );
+    end else begin : g_no_idelayctrl
+      assign idelayctrl_rdy = 1'b1;
     end
   endgenerate
+  assign idelay_rdy_o = idelayctrl_rdy;
 
   wire rxc_delayed;
   generate
@@ -262,12 +284,45 @@ module rgmii_gmii_adapter #(
 
   // small reset synchronizer into the rxc_buf domain, for the CDC FIFO
   // below only (IDDRE1 itself is left free-running -- see header)
-  (* ASYNC_REG = "TRUE" *) logic [1:0] rxc_rst_sync_q;
+  // Receive reset. The local reset (gtx_rst_n, another clock domain) goes through a
+  // standard async-assert / sync-release synchronizer; everything else in this
+  // domain is reset from ITS output (an async reset driven straight from another
+  // domain would be a CDC hazard). IDELAYCTRL RDY (yet another domain) goes
+  // through a two-flop synchronizer, then UG571's rule -- release the application
+  // logic only after RDY plus at least 64 clock cycles -- is counted on the
+  // receive clock. rxc_rst_n is a flop, so it is glitch-free.
+  (* ASYNC_REG = "TRUE" *) logic [1:0] rxc_rst_base_sync_q;
   always_ff @(posedge rxc_buf or negedge gtx_rst_n) begin
-    if (!gtx_rst_n) rxc_rst_sync_q <= 2'b00;
-    else            rxc_rst_sync_q <= {rxc_rst_sync_q[0], 1'b1};
+    if (!gtx_rst_n) rxc_rst_base_sync_q <= 2'b00;
+    else            rxc_rst_base_sync_q <= {rxc_rst_base_sync_q[0], 1'b1};
   end
-  wire rxc_rst_n = rxc_rst_sync_q[1];
+  wire rxc_rst_base_n = rxc_rst_base_sync_q[1];
+
+  (* ASYNC_REG = "TRUE" *) logic [1:0] rdy_sync_q;
+  logic [6:0] rdy_hold_q;
+  logic       rdy_hold_done_q;
+  always_ff @(posedge rxc_buf or negedge rxc_rst_base_n) begin
+    if (!rxc_rst_base_n) begin
+      rdy_sync_q      <= '0;
+      rdy_hold_q      <= '0;
+      rdy_hold_done_q <= 1'b0;
+    end else begin
+      rdy_sync_q <= {rdy_sync_q[0], idelayctrl_rdy};
+      if (!rdy_sync_q[1]) begin
+        rdy_hold_q      <= '0;
+        rdy_hold_done_q <= 1'b0;
+      end else begin
+        if (!rdy_hold_done_q) rdy_hold_q <= rdy_hold_q + 1'b1;
+        if (rdy_hold_q == 7'd64) rdy_hold_done_q <= 1'b1;
+      end
+    end
+  end
+  logic rxc_rst_sync_q_r;
+  always_ff @(posedge rxc_buf or negedge rxc_rst_base_n) begin
+    if (!rxc_rst_base_n) rxc_rst_sync_q_r <= 1'b0;
+    else                 rxc_rst_sync_q_r <= rdy_hold_done_q;
+  end
+  wire rxc_rst_n = rxc_rst_sync_q_r;
 
   wire [3:0] rxd_q1, rxd_q2; // q1=rising(low nibble), q2=falling(high nibble)
   generate

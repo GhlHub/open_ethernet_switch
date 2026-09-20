@@ -37,12 +37,15 @@ module tb_switch_top;
   import mac_table_pkg::*;
 
   logic clk = 0;
-  always #8 clk = ~clk; // 62.5 MHz-equivalent (fabric)
+  always #5 clk = ~clk; // 100 MHz (fabric)
   logic rst_n = 0;
 
   logic axis_clk = 0;
   always #(10.0/3) axis_clk = ~axis_clk; // 150 MHz-equivalent
   logic axis_rst_n = 0;
+  logic [5:0] link_up  = 6'b111111;
+  logic [5:0] link_tog = '0;
+  wire        link_flush_busy;
 
   logic gtx_clk_pl0 = 0;
   always #4 gtx_clk_pl0 = ~gtx_clk_pl0; // 125 MHz-equivalent
@@ -326,7 +329,10 @@ module tb_switch_top;
     .m_axi_cpu_rresp   (m_axi_cpu_rresp),
     .m_axi_cpu_rlast   (m_axi_cpu_rlast),
     .m_axi_cpu_rvalid  (m_axi_cpu_rvalid),
-    .m_axi_cpu_rready  (m_axi_cpu_rready)
+    .m_axi_cpu_rready  (m_axi_cpu_rready),
+    .link_up_i (link_up),
+    .link_flush_tog_i (link_tog),
+    .link_flush_busy_o (link_flush_busy)
   );
 
   // Two independent memory models: u_mem backs ingress_top's write master
@@ -503,6 +509,48 @@ module tb_switch_top;
             errors++;
           end
         end
+      end
+    end
+
+    // ---- link-down: the CPU port stops receiving frames ----
+    begin
+      byte d2[]; byte d3[];
+      int n, base, timeout;
+      n = 12 + 30;
+      d2 = new[n]; d3 = new[n];
+      for (int i = 0; i < 6; i++) begin d2[i] = 8'hAA; d2[6+i] = 8'h00; d3[i] = 8'hAA; d3[6+i] = 8'h00; end
+      d2[5] = 8'h11; d2[11] = 8'h77;  d3[5] = 8'h12; d3[11] = 8'h78;
+      for (int i = 0; i < 30; i++) begin d2[12+i] = byte'(8'h80 + i); d3[12+i] = byte'(8'hC0 + i); end
+
+      // CPU port (5) down: same sequence the register block generates (level falls, then the toggle flips)
+      base = cap_bytes.size();
+      link_up[5] = 1'b0;
+      @(posedge axis_clk); link_tog[5] = ~link_tog[5];
+      wait_cycles(20);
+      timeout = 0;
+      while (link_flush_busy !== 1'b0 && timeout < 8000) begin @(posedge clk); timeout++; end
+      if (link_flush_busy !== 1'b0) begin $display("FAIL: flush never finished"); errors++; end
+      else $display("INFO: link-down flush (queues + MAC table) finished after ~%0d fabric cycles", timeout + 20);
+      gem0_push_frame(d2);
+      wait_cycles(4000);
+      if (cap_bytes.size() != base) begin
+        $display("FAIL: CPU port received %0d bytes while its link was down", cap_bytes.size() - base); errors++;
+      end else $display("PASS: flooded frame not delivered to the link-down CPU port");
+
+      // link back up: frames flow again (and the earlier frame was not queued behind it)
+      link_up[5] = 1'b1;
+      wait_cycles(10);
+      gem0_push_frame(d3);
+      timeout = 0;
+      while (cap_bytes.size() < base + n && timeout < 5000) begin @(posedge clk); timeout++; end
+      wait_cycles(20);
+      if (cap_bytes.size() != base + n) begin
+        $display("FAIL: after link-up CPU port received %0d bytes, expected %0d", cap_bytes.size() - base, n); errors++;
+      end else begin
+        bit ok2; ok2 = 1'b1;
+        for (int i = 0; i < n; i++) if (cap_bytes[base + i] !== d3[i]) ok2 = 1'b0;
+        if (ok2) $display("PASS: after link-up the CPU port receives only the new frame, intact");
+        else begin $display("FAIL: post link-up frame content mismatch"); errors++; end
       end
     end
 

@@ -26,6 +26,12 @@ module tb_rx_diag;
   sticky_xdomain s2 (.src_clk (rxa), .src_rst_n (rst_n), .event_i (evt2), .dst_clk (clk), .dst_rst_n (rst_n), .clear_i (clr[2]), .flag_o (flags[2]));
   sticky_xdomain s3 (.src_clk (rxb), .src_rst_n (rst_n), .event_i (evt3), .dst_clk (clk), .dst_rst_n (rst_n), .clear_i (clr[3]), .flag_o (flags[3]));
 
+  wire [5:0] link_up, link_tog;
+  logic flush_busy = 0;
+  logic [1:0] phy_link = 2'b00;
+  logic [5:0] evt_set = '0;
+  wire irq;
+
   rx_diag_regs dut (
     .clk (clk), .rst_n (rst_n),
     .s_axi_awaddr (awaddr), .s_axi_awvalid (awvalid), .s_axi_awready (awready),
@@ -33,9 +39,12 @@ module tb_rx_diag;
     .s_axi_bresp (bresp), .s_axi_bvalid (bvalid), .s_axi_bready (bready),
     .s_axi_araddr (araddr), .s_axi_arvalid (arvalid), .s_axi_arready (arready),
     .s_axi_rdata (rdata), .s_axi_rresp (rresp), .s_axi_rvalid (rvalid), .s_axi_rready (rready),
-    .flags_i (flags), .clear_o (clr),
+    .flags_i (flags), .idelay_rdy_i (2'b10), .clear_o (clr),
     .sfp_status_i (16'h0000), .sfp_force_disable_o (), .sfp_clr_fault_seen_o (),
-    .sfp_clr_removed_seen_o (), .sfp_clr_lockout_o ());
+    .sfp_clr_removed_seen_o (), .sfp_clr_lockout_o (),
+    .link_up_o (link_up), .link_flush_tog_o (link_tog), .link_flush_busy_i (flush_busy),
+    .phy_link_i (phy_link), .link_event_set_i (evt_set), .link_irq_o (irq));
+
 
   int errors = 0;
   task automatic check(input bit c, input string m); if (!c) begin errors++; $display("FAIL: %s", m); end endtask
@@ -67,7 +76,7 @@ module tb_rx_diag;
     awaddr = 0; awvalid = 0; wdata = 0; wstrb = 0; wvalid = 0; bready = 0; araddr = 0; arvalid = 0; rready = 0;
     repeat (6) @(posedge clk); rst_n = 1; repeat (10) @(posedge clk);
 
-    axi_read(8'h00, r); check(r[3:0] === 4'b0000, "clear after reset");
+    axi_read(8'h00, r); check(r[3:0] === 4'b0000, "clear after reset"); check(r[5:4] === 2'b10, "idelay ready bits read back");
 
     pulse(1); repeat (20) @(posedge clk);
     axi_read(8'h00, r); check(r[3:0] === 4'b0010, $sformatf("bit1 set after event (%b)", r[3:0]));
@@ -93,6 +102,37 @@ module tb_rx_diag;
     pulse(3); repeat (30) @(posedge clk);
     axi_read(8'h00, r); check(r[3:0] === 4'b1000, "bit3 (other domain) sets");
 
+    // ---- link registers ----
+    axi_read(8'h14, r); check(r[5:0] === 6'b100000, $sformatf("link reset state %b (only CPU port up)", r[5:0]));
+    axi_write(8'h0C, 32'h0000_0014, 4'h1);           // set ports 2 and 4
+    axi_read(8'h14, r); check(r[5:0] === 6'b110100, $sformatf("after set 2,4: %b", r[5:0]));
+    check(link_tog === 6'b000000, "set does not toggle the flush request");
+    axi_write(8'h0C, 32'h0000_0000, 4'h1);           // writing 0 sets nothing
+    axi_read(8'h14, r); check(r[5:0] === 6'b110100, "write of 0 to LINK_SET changes nothing");
+    axi_write(8'h10, 32'h0000_0004, 4'h1);           // clear port 2
+    axi_read(8'h14, r); check(r[5:0] === 6'b110000, $sformatf("after clr 2: %b", r[5:0]));
+    check(link_tog === 6'b000100, "clear toggles port 2's flush request");
+    axi_write(8'h10, 32'h0000_0004, 4'h1);           // clear again although already down
+    check(link_tog === 6'b000000, "clearing an already-down port toggles again (flush re-run)");
+    axi_write(8'h10, 32'h0000_0030, 4'h1);           // clear 4 and 5
+    axi_read(8'h14, r); check(r[5:0] === 6'b000000, "ports 4,5 cleared");
+    check(link_tog === 6'b110000, "toggles for ports 4,5");
+    axi_write(8'h0C, 32'h0000_0001, 4'h1);
+    axi_read(8'h14, r); check(r[5:0] === 6'b000001 && link_tog === 6'b110000, "set port 0 leaves other ports and toggles alone");
+    flush_busy = 1; phy_link = 2'b10; repeat (6) @(posedge clk);
+    axi_read(8'h14, r); check(r[8] === 1'b1 && r[11:10] === 2'b10, $sformatf("status shows flush busy and PHY link (%h)", r));
+    flush_busy = 0; phy_link = 2'b00;
+
+    // ---- link events and interrupt ----
+    check(irq === 1'b0, "no irq at start");
+    @(posedge clk); evt_set <= 6'b001000; @(posedge clk); evt_set <= '0;
+    axi_read(8'h18, r); check(r[5:0] === 6'b001000, "event bit 3 set");
+    check(irq === 1'b0, "event not enabled -> no irq");
+    axi_write(8'h1C, 32'h0000_0008, 4'h1);
+    axi_read(8'h1C, r); check(r[5:0] === 6'b001000, "enable readback");
+    repeat (2) @(posedge clk); check(irq === 1'b1, "enabled event raises irq");
+    axi_write(8'h18, 32'h0000_0008, 4'h1);
+    repeat (2) @(posedge clk); check(irq === 1'b0, "clearing the event drops irq");
     $display("%s: errors=%0d", errors == 0 ? "PASS" : "FAIL", errors);
     $finish;
   end

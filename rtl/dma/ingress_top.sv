@@ -57,6 +57,11 @@ module ingress_top
   input  logic [NUM_PORTS-1:0][BUF_ID_W-1:0] release_bufid_i_passthru,
   output logic [NUM_PORTS-1:0]               release_gnt_o_passthru,
 
+  // link state / link-down flush (see queue_mgr.sv)
+  input  logic [NUM_PORTS-1:0]               link_up_i,
+  input  logic [NUM_PORTS-1:0]               flush_req_i,
+  output logic                               flush_busy_o,
+
   // CPU port (index 5) alloc/enqueue -- driven BY the (not yet built) CPU
   // interface module, passed through to buf_mgr_core here
   input  logic                cpu_alloc_req_i,
@@ -97,7 +102,10 @@ module ingress_top
     .dequeue_length_o   (dequeue_length_o_passthru),
     .release_req_i      (release_req_i_passthru),
     .release_bufid_i    (release_bufid_i_passthru),
-    .release_gnt_o      (release_gnt_o_passthru)
+    .release_gnt_o      (release_gnt_o_passthru),
+    .link_up_i          (link_up_i),
+    .flush_req_i        (flush_req_i),
+    .flush_busy_o       (flush_busy_o)
   );
 
   // CPU (port 5) alloc/enqueue: driven by the external cpu_* signals,

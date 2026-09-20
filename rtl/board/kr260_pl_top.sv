@@ -10,8 +10,8 @@
 // for the block design in build/ to connect.
 //
 // Clocking (see docs/board-integration.md):
-//   - fabric clk (62.5 MHz) = PL0's pl_eth_clk_gen clk_o; PL1's copy is
-//     generated (each port needs its own 125/300 MHz) but its 62.5 MHz
+//   - fabric clk (100 MHz) = PL0's pl_eth_clk_gen clk_o; PL1's copy is
+//     generated (each port needs its own 125/300 MHz) but its 100 MHz
 //     output is unused. Every AXI master below runs on this clock, so the
 //     PS HP ports/interconnect must be clocked from fabric_clk_o.
 //   - axis_clk (150 MHz), axis_rst_n, freerun_clk (50 MHz) and ps_rst_n
@@ -32,8 +32,8 @@ module kr260_pl_top
   // ---- from the PS block design ----
   input  logic ps_rst_n,          // async, e.g. pl_resetn0
   input  logic freerun_clk,       // 50 MHz, GTH reset controller / DRP
-  (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 fabric_clk_o CLK", X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF m_axi_ing:m_axi_egr:m_axi_cpu:cpu_s_axis:cpu_m_axis, ASSOCIATED_RESET fabric_rst_n_o, FREQ_HZ 62500000" *)
-  output logic fabric_clk_o,      // 62.5 MHz: clock for every AXI master below
+  (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 fabric_clk_o CLK", X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF m_axi_ing:m_axi_egr:m_axi_cpu:cpu_s_axis:cpu_m_axis, ASSOCIATED_RESET fabric_rst_n_o, FREQ_HZ 100000000" *)
+  output logic fabric_clk_o,      // 100 MHz: clock for every AXI master below
   (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 fabric_rst_n_o RST", X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
   output logic fabric_rst_n_o,
 
@@ -73,6 +73,7 @@ module kr260_pl_top
   input  logic sfp_tx_fault,
   output logic sfp_tx_disable,
   output logic [1:0] sfp_led,     // {LED2, LED1}: link_up, sync_ok
+  output logic       link_irq,    // to PS pl_ps_irq1[1]: an enabled LINK_EVENT bit is set
 
   // ---- AXI4-Lite: MDIO controllers (axis_clk domain) ----
   input  logic [7:0]  mdio0_s_axi_awaddr,
@@ -311,7 +312,7 @@ module kr260_pl_top
 );
 
   // ---------------------------------------------------------------------
-  // PL0/PL1 clock generation (25 MHz -> 125/300/62.5 MHz each)
+  // PL0/PL1 clock generation (25 MHz -> 125/300/100 MHz each)
   // ---------------------------------------------------------------------
   logic gtx_clk_pl0, gtx_rst_n_pl0, idly_clk_pl0, idly_rst_n_pl0, fab_clk, fab_rst_n, lock_pl0;
   logic gtx_clk_pl1, gtx_rst_n_pl1, idly_clk_pl1, idly_rst_n_pl1, unused_clk_pl1, unused_rst_pl1, lock_pl1;
@@ -346,6 +347,15 @@ module kr260_pl_top
   logic pl1_gmii_rx_dv, pl1_gmii_rx_er, pl1_gmii_tx_en, pl1_gmii_tx_er;
 
   logic [3:0] diag_flags, diag_clr;
+  logic [5:0] link_up_axi, link_tog_axi, link_event_set;
+  logic [1:0] phy_link, phy_link_chg;
+  logic       link_flush_busy;
+  logic [1:0] idelay_rdy_raw;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] idelay_rdy_s1, idelay_rdy_axi;
+  always_ff @(posedge axis_clk) begin
+    idelay_rdy_s1  <= idelay_rdy_raw;
+    idelay_rdy_axi <= idelay_rdy_s1;
+  end
   logic [15:0] sfp_sb_status;
   logic        sfp_sb_force, sfp_sb_clr_fault, sfp_sb_clr_removed, sfp_sb_clr_lockout;
   rx_diag_regs u_rx_diag (
@@ -355,13 +365,18 @@ module kr260_pl_top
     .s_axi_bresp (diag_s_axi_bresp), .s_axi_bvalid (diag_s_axi_bvalid), .s_axi_bready (diag_s_axi_bready),
     .s_axi_araddr (diag_s_axi_araddr), .s_axi_arvalid (diag_s_axi_arvalid), .s_axi_arready (diag_s_axi_arready),
     .s_axi_rdata (diag_s_axi_rdata), .s_axi_rresp (diag_s_axi_rresp), .s_axi_rvalid (diag_s_axi_rvalid), .s_axi_rready (diag_s_axi_rready),
-    .flags_i (diag_flags), .clear_o (diag_clr),
+    .flags_i (diag_flags), .idelay_rdy_i (idelay_rdy_axi), .clear_o (diag_clr),
+    .link_up_o (link_up_axi), .link_flush_tog_o (link_tog_axi), .link_flush_busy_i (link_flush_busy),
+    .phy_link_i (phy_link), .link_event_set_i (link_event_set), .link_irq_o (link_irq),
     .sfp_status_i (sfp_sb_status), .sfp_force_disable_o (sfp_sb_force),
     .sfp_clr_fault_seen_o (sfp_sb_clr_fault), .sfp_clr_removed_seen_o (sfp_sb_clr_removed),
     .sfp_clr_lockout_o (sfp_sb_clr_lockout)
   );
 
-  rgmii_gmii_adapter u_rgmii0 (
+  // RX data IDELAY per port: chosen from routed setup/hold slack (PL0: 0.67/0.22 ns at 500 ps,
+  // PL1: 0.94/-0.23 ns at 500 ps) so each port's window is roughly centred; re-tune after
+  // large placement changes
+  rgmii_gmii_adapter #(.RX_DATA_IDELAY_PS(700)) u_rgmii0 (
     .gtx_clk (gtx_clk_pl0), .gtx_rst_n (gtx_rst_n_pl0),
     .idelay_refclk_i (idly_clk_pl0), .idelay_rst_n_i (idly_rst_n_pl0),
     .rgmii_txd_o (pl0_rgmii_txd), .rgmii_tx_ctl_o (pl0_rgmii_tx_ctl), .rgmii_txc_o (pl0_rgmii_txc),
@@ -370,10 +385,10 @@ module kr260_pl_top
     .gmii_rxd_o (pl0_gmii_rxd), .gmii_rx_dv_o (pl0_gmii_rx_dv), .gmii_rx_er_o (pl0_gmii_rx_er),
     .diag_clk_i (axis_clk), .diag_rst_n_i (axis_rst_n),
     .diag_clr_overflow_i (diag_clr[0]), .diag_clr_underrun_i (diag_clr[1]),
-    .rx_elastic_overflow_o (diag_flags[0]), .rx_elastic_underrun_o (diag_flags[1])
+    .idelay_rdy_o (idelay_rdy_raw[0]), .rx_elastic_overflow_o (diag_flags[0]), .rx_elastic_underrun_o (diag_flags[1])
   );
 
-  rgmii_gmii_adapter u_rgmii1 (
+  rgmii_gmii_adapter #(.RX_DATA_IDELAY_PS(1000)) u_rgmii1 (
     .gtx_clk (gtx_clk_pl1), .gtx_rst_n (gtx_rst_n_pl1),
     .idelay_refclk_i (idly_clk_pl1), .idelay_rst_n_i (idly_rst_n_pl1),
     .rgmii_txd_o (pl1_rgmii_txd), .rgmii_tx_ctl_o (pl1_rgmii_tx_ctl), .rgmii_txc_o (pl1_rgmii_txc),
@@ -382,7 +397,7 @@ module kr260_pl_top
     .gmii_rxd_o (pl1_gmii_rxd), .gmii_rx_dv_o (pl1_gmii_rx_dv), .gmii_rx_er_o (pl1_gmii_rx_er),
     .diag_clk_i (axis_clk), .diag_rst_n_i (axis_rst_n),
     .diag_clr_overflow_i (diag_clr[2]), .diag_clr_underrun_i (diag_clr[3]),
-    .rx_elastic_overflow_o (diag_flags[2]), .rx_elastic_underrun_o (diag_flags[3])
+    .idelay_rdy_o (idelay_rdy_raw[1]), .rx_elastic_overflow_o (diag_flags[2]), .rx_elastic_underrun_o (diag_flags[3])
   );
 
   // ---------------------------------------------------------------------
@@ -404,6 +419,7 @@ module kr260_pl_top
     .s_axi_araddr (mdio0_s_axi_araddr), .s_axi_arvalid (mdio0_s_axi_arvalid), .s_axi_arready (mdio0_s_axi_arready),
     .s_axi_rdata (mdio0_s_axi_rdata), .s_axi_rresp (mdio0_s_axi_rresp), .s_axi_rvalid (mdio0_s_axi_rvalid), .s_axi_rready (mdio0_s_axi_rready),
     .init_go_i (init_go0_sync[1]), .init_done_o (), .init_fail_o (),
+    .phy_link_o (phy_link[0]), .phy_link_change_o (phy_link_chg[0]),
     .mdio_io (pl0_mdio), .mdc_o (pl0_mdc)
   );
 
@@ -415,6 +431,7 @@ module kr260_pl_top
     .s_axi_araddr (mdio1_s_axi_araddr), .s_axi_arvalid (mdio1_s_axi_arvalid), .s_axi_arready (mdio1_s_axi_arready),
     .s_axi_rdata (mdio1_s_axi_rdata), .s_axi_rresp (mdio1_s_axi_rresp), .s_axi_rvalid (mdio1_s_axi_rvalid), .s_axi_rready (mdio1_s_axi_rready),
     .init_go_i (init_go1_sync[1]), .init_done_o (), .init_fail_o (),
+    .phy_link_o (phy_link[1]), .phy_link_change_o (phy_link_chg[1]),
     .mdio_io (pl1_mdio), .mdc_o (pl1_mdc)
   );
 
@@ -461,6 +478,30 @@ module kr260_pl_top
   logic [1:0] sfp_an_pause;
   assign sfp_led = {sfp_sync_ok, sfp_an_link_up};
 
+  // ---- link events for the CPU (axis_clk domain) ----
+  // PHY link changes come from the MDIO controllers' PHYSTS poll (the PHY INT pad
+  // is not wired to the FPGA). SFP sources are changes of already-debounced or
+  // synchronized status.
+  (* ASYNC_REG = "TRUE" *) logic [1:0] sfp_an_s;
+  logic sfp_an_prev_q, sfp_abs_prev_q, sfp_los_prev_q, sfp_flt_prev_q;
+  always_ff @(posedge axis_clk or negedge axis_rst_n) begin
+    if (!axis_rst_n) begin
+      sfp_an_s <= '0;
+      sfp_an_prev_q <= 1'b0; sfp_abs_prev_q <= 1'b1; sfp_los_prev_q <= 1'b0; sfp_flt_prev_q <= 1'b0;
+    end else begin
+      sfp_an_s   <= {sfp_an_s[0], sfp_an_link_up};
+      sfp_an_prev_q  <= sfp_an_s[1];
+      sfp_abs_prev_q <= sfp_sb_status[0];
+      sfp_los_prev_q <= sfp_sb_status[1];
+      sfp_flt_prev_q <= sfp_sb_status[2];
+    end
+  end
+  assign link_event_set = { !sfp_flt_prev_q && sfp_sb_status[2],
+                            sfp_los_prev_q ^ sfp_sb_status[1],
+                            sfp_abs_prev_q ^ sfp_sb_status[0],
+                            sfp_an_prev_q  ^ sfp_an_s[1],
+                            phy_link_chg[1], phy_link_chg[0] };
+
   // GEM resets: each GEM FIFO clock domain gets its own synchronized reset
   logic gem0_rx_rst_n, gem0_tx_rst_n, gem1_rx_rst_n, gem1_tx_rst_n;
   rst_sync u_gem0_rx_rst (.clk (gem0_rx_clk), .arst_n_i (ps_rst_n), .rst_n_o (gem0_rx_rst_n));
@@ -480,6 +521,7 @@ module kr260_pl_top
     .gem_rx_rst_n_ps0 (gem0_rx_rst_n), .gem_tx_rst_n_ps0 (gem0_tx_rst_n),
     .gem_rx_rst_n_ps1 (gem1_rx_rst_n), .gem_tx_rst_n_ps1 (gem1_tx_rst_n),
     .default_age_i (DEFAULT_AGE_RESET),
+    .link_up_i (link_up_axi), .link_flush_tog_i (link_tog_axi), .link_flush_busy_o (link_flush_busy),
     .pl0_gmii_rxd (pl0_gmii_rxd), .pl0_gmii_rx_dv (pl0_gmii_rx_dv), .pl0_gmii_rx_er (pl0_gmii_rx_er),
     .pl0_gmii_txd (pl0_gmii_txd), .pl0_gmii_tx_en (pl0_gmii_tx_en), .pl0_gmii_tx_er (pl0_gmii_tx_er),
     .pl1_gmii_rxd (pl1_gmii_rxd), .pl1_gmii_rx_dv (pl1_gmii_rx_dv), .pl1_gmii_rx_er (pl1_gmii_rx_er),

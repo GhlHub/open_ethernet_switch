@@ -39,12 +39,23 @@ module buf_mgr_core
   // release (NUM_PORTS requesters)
   input  logic [NUM_PORTS-1:0]               release_req_i,
   input  logic [NUM_PORTS-1:0][BUF_ID_W-1:0] release_bufid_i,
-  output logic [NUM_PORTS-1:0]               release_gnt_o
+  output logic [NUM_PORTS-1:0]               release_gnt_o,
+
+  // link state (from the CPU-maintained link register, already in this clock
+  // domain): enqueue destinations are masked with link_up_i, and a one-cycle
+  // pulse on flush_req_i[p] drains port p's queue, releasing each buffer's
+  // reference (a buffer whose count reaches 0 returns to the free list)
+  input  logic [NUM_PORTS-1:0]               link_up_i,
+  input  logic [NUM_PORTS-1:0]               flush_req_i,
+  output logic                               flush_busy_o
 );
 
   logic                 setref_req, setref_gnt;
   logic [BUF_ID_W-1:0]  setref_bufid;
   logic [REFCNT_W-1:0]  setref_count;
+
+  logic                 flush_rel_req, flush_rel_gnt;
+  logic [BUF_ID_W-1:0]  flush_rel_bufid;
 
   logic                 direct_free_req, direct_free_gnt;
   logic [BUF_ID_W-1:0]  direct_free_bufid;
@@ -58,6 +69,9 @@ module buf_mgr_core
     .release_req_i        (release_req_i),
     .release_bufid_i      (release_bufid_i),
     .release_gnt_o        (release_gnt_o),
+    .flush_release_req_i  (flush_rel_req),
+    .flush_release_bufid_i(flush_rel_bufid),
+    .flush_release_gnt_o  (flush_rel_gnt),
     .setref_req_i         (setref_req),
     .setref_bufid_i       (setref_bufid),
     .setref_count_i       (setref_count),
@@ -79,6 +93,12 @@ module buf_mgr_core
     .dequeue_valid_o      (dequeue_valid_o),
     .dequeue_bufid_o      (dequeue_bufid_o),
     .dequeue_length_o     (dequeue_length_o),
+    .link_up_i            (link_up_i),
+    .flush_req_i          (flush_req_i),
+    .flush_busy_o         (flush_busy_o),
+    .flush_rel_req_o      (flush_rel_req),
+    .flush_rel_bufid_o    (flush_rel_bufid),
+    .flush_rel_gnt_i      (flush_rel_gnt),
     .setref_req_o         (setref_req),
     .setref_bufid_o       (setref_bufid),
     .setref_count_o       (setref_count),

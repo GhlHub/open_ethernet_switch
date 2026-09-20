@@ -2,6 +2,7 @@
 ../rtl/mac_table/mac_table_pkg.sv
 ../rtl/dma/axi_dma_pkg.sv
 ../rtl/common/rr_arbiter.sv
+../rtl/common/port_link_ctrl.sv
 ../rtl/common/sync_fifo.sv
 ../rtl/common/async_fifo.sv
 ../rtl/buf_mgr/free_list_mgr.sv

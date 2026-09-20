@@ -59,10 +59,12 @@ module rgmii_gmii_sim_model (
   input  logic       diag_rst_n_i,
   input  logic       diag_clr_overflow_i,
   input  logic       diag_clr_underrun_i,
+  output logic       idelay_rdy_o,
   output logic       rx_elastic_overflow_o,
   output logic       rx_elastic_underrun_o
 );
 
+  assign idelay_rdy_o           = 1'b1;
   assign rx_elastic_overflow_o  = 1'b0;
   assign rx_elastic_underrun_o  = 1'b0;
 

@@ -31,7 +31,7 @@ module tb_egress_gem_tx_integration;
 
   logic clk = 0;
   logic rst_n = 0;
-  always #8 clk = ~clk; // 62.5 MHz-equivalent (fabric side)
+  always #5 clk = ~clk; // 100 MHz (fabric side)
 
   logic gem_clk = 0;
   logic gem_rst_n = 0;
@@ -72,7 +72,10 @@ module tb_egress_gem_tx_integration;
     .dequeue_length_o   (dequeue_length),
     .release_req_i      (release_req),
     .release_bufid_i    (release_bufid),
-    .release_gnt_o      (release_gnt)
+    .release_gnt_o      (release_gnt),
+    .link_up_i ({NUM_PORTS{1'b1}}),
+    .flush_req_i ('0),
+    .flush_busy_o ()
   );
 
   // ---- egress_top ----

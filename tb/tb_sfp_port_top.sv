@@ -24,7 +24,7 @@ module tb_sfp_port_top;
 
   logic clk = 0;
   logic rst_n = 0;
-  always #8 clk = ~clk; // 62.5 MHz-equivalent (switch fabric side)
+  always #5 clk = ~clk; // 100 MHz (switch fabric side)
 
   logic axis_clk = 0;
   logic axis_rst_n = 0;

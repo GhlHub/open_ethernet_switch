@@ -17,18 +17,21 @@ not that operation has been demonstrated on a KR260.
 flowchart TB
     subgraph board[kr260_top.sv - board assembly]
         subgraph pltop[kr260_pl_top.sv - PL assembly]
-            PHY["Two PL PHYs"] <--> RGMII["RGMII adapters x2<br/>PHY internal delays + 500 ps RX data delay<br/>2048-entry elastic FIFO"]
+            PHY["Two PL PHYs"] <--> RGMII["RGMII adapters x2<br/>PHY internal delays + per-port RX data delay<br/>2048-entry elastic FIFO"]
             OPT["SFP optical port"] <--> GT["GTH wrapper + XCI<br/>X0Y6, 1.25 Gb/s"]
             MDIO["MDIO controllers + PHY init x2"] -.-> PHY
-            DIAG["RX sticky diagnostics + SFP status/control"]
+            DIAG["RX diagnostics + SFP and link control"]
             SIDEBAND["SFP presence / fault FSM"]
             CLOCK["Two PL clock generators<br/>SFP PCS clock generator<br/>Reset synchronizers"]
             subgraph sw[switch_top.sv - digital switch]
-                PORTS["Ports 0-1: GEM FIFO bridges<br/>Ports 2-3: PL MACs<br/>Port 4: SFP MAC + PCS + experimental AN<br/>16-bit AXI-S, 62.5 MHz fabric"]
+                PORTS["Ports 0-1: GEM FIFO bridges<br/>Ports 2-3: PL MACs<br/>Port 4: SFP MAC + PCS + experimental AN<br/>16-bit AXI-S, 100 MHz fabric"]
                 INGRESS["Five ingress front ends<br/>Local frame RAM + shared write DMA"]
                 EGRESS["Five egress front ends<br/>Shared read DMA + local frame RAM"]
                 CPU["Port 5: CPU streams<br/>Dedicated pool write/read DMA"]
                 BUF["Shared buffer manager<br/>Six queues, reference-counted IDs"]
+                LINK["port_link_ctrl<br/>Link mask + delayed flush request"]
+                LINK -. mask and queue drain .-> BUF
+                LINK -. expire port entries .-> FWD
                 FWD["Six header resolvers<br/>MAC learning, lookup, aging<br/>Hit mask / miss flood"]
                 PORTS --> INGRESS
                 EGRESS --> PORTS
@@ -51,7 +54,7 @@ flowchart TB
             DMA["CPU AXI DMA SG<br/>MM2S / S2MM, 16-bit streams"]
             HP1["sc_dma: SG + MM2S + S2MM<br/>PS HP1"]
             IIC["SFP AXI IIC, 100 kHz"]
-            IRQ["Eight MAC/DMA IRQs + IIC IRQ to PS"]
+            IRQ["Eight MAC/DMA IRQs + IIC and link IRQs to PS"]
             PS --> CTL
             DMA <--> HP1
             IRQ --> PS
@@ -65,6 +68,8 @@ flowchart TB
         CTL -.-> MDIO
         CTL -.-> DMA
         CTL -.-> DIAG
+        DIAG -. state and flush toggles .-> LINK
+        DIAG -. link event IRQ .-> IRQ
         CTL -.-> IIC
         IIC <--> OPT
         IIC -.-> IRQ
@@ -83,7 +88,7 @@ flowchart TB
     classDef partial fill:#fff0cb,stroke:#a96a00,color:#473000
     classDef pending fill:#ffe4e4,stroke:#b52a2a,color:#601515,stroke-dasharray:5 3
     classDef hardware fill:#eeeeee,stroke:#666666,color:#222222
-    class CLOCK,MDIO,DIAG,SIDEBAND,IIC,INGRESS,EGRESS,CPU,BUF,CTL,HP0,DMA,HP1,IRQ present
+    class LINK,CLOCK,MDIO,DIAG,SIDEBAND,IIC,INGRESS,EGRESS,CPU,BUF,CTL,HP0,DMA,HP1,IRQ present
     class RGMII,GT,PORTS,FWD partial
     class RTOS pending
     class PHY,OPT,PS,DDR hardware
@@ -112,12 +117,13 @@ Both paths reach PS DDR, through HP0 and HP1 respectively.
 
 The control interconnect has eight targets: three MACs, two MDIO controllers,
 CPU DMA, SFP IIC and diagnostics. Eight MAC/DMA interrupts use PS IRQ0;
-IIC uses IRQ1 bit 0. `default_age_i` remains tied to its package default.
+IIC uses IRQ1 bit 0; link events use IRQ1 bit 1. `default_age_i` remains tied to its package default.
 SFP sync/negotiation status drives LEDs; sideband status and laser force-off/
 fault-lockout controls are CPU-accessible. See the [register map](board-integration.md).
 
 Each MDIO controller runs an automatic DP83867 initialization sequence after
-PHY reset release. The RGMII RX data/control pins have 500 ps IDELAYE3 delays;
+PHY reset release. The RGMII RX data/control pins have 700 ps (PL0) and 1000 ps (PL1)
+IDELAYE3 delays;
 the 300 MHz clock outputs now supply active delay calibration. PHY internal
 RX/TX delays are configured for 2.00/1.75 ns. The optional FPGA RX-clock delay
 remains disabled because its IDELAYE3-to-BUFG path cannot be implemented.
@@ -160,7 +166,8 @@ do not establish independent-peer interoperability. See the
    `mac_forwarding_top` supplies `dest_mask_i` / `dest_mask_valid_i`; ingress
    waits for a valid decision before enqueue. Learning currently precedes
    final frame validation; see the [resolver gaps](inventory.md#known-gaps-in-existing-rtl).
-4. `queue_mgr` records the length and links the buffer ID into each selected
+4. `queue_mgr` masks the forwarding decision with the CPU-maintained link-up
+   bits, then records the length and links the buffer ID into each selected
    destination queue. `free_list_mgr` tracks the number of destinations. A
    zero mask frees the allocation without forwarding.
 5. Each egress front end dequeues a buffer ID and uses its read DMA to copy
@@ -189,8 +196,150 @@ switch pool; it is not a direct zero-copy software interface to pool buffers.
 | Port mask | Six bits in the buffer manager; eight bits in MAC-table results. `mac_forwarding_top` uses bits 0–5 and disables request ports 6–7. |
 
 The GEM RX bridge packs bytes before crossing into the fabric; TX unpacks
-after crossing into the GEM clock domain. Each FIFO therefore transfers a
-16-bit word per fabric cycle. TX starts after 128 words or the frame's final
-word is buffered, using a Gray-coded permit counter. A 1518-byte line-rate
-frame passes both directions in simulation, but sustained six-port throughput,
-independent GEM clock drift and arbitrary upstream stalls remain unverified.
+after crossing into the GEM clock domain. TX starts after 128 words or the
+frame's final word is buffered. Both PL/SFP adapters now transfer one 16-bit
+word per cycle, with 256-word (512-byte payload) FIFOs. The physical ingress
+DMA takes two cycles per 128-bit beat; CPU ingress remains three. Egress
+prefetches the next RAM beat to stream without the former beat-boundary gaps.
+
+## Port state and link-down handling
+
+`rx_diag_regs` resets the six-bit link mask to CPU-only (`0x20`): **all physical
+ports are excluded as enqueue destinations until software marks them up**.
+MDIO polls report physical link, speed and duplex; SFP sources report changes.
+These events raise a maskable interrupt but do not automatically modify the
+software link mask. Firmware must evaluate status and use LINK_SET/LINK_CLR.
+
+`port_link_ctrl` synchronizes levels/toggles into the fabric and delays each
+flush pulse four cycles. `queue_mgr` masks new destinations and drains queued
+references through the free-list arbiter. The MAC-table sweep removes the
+port's bits and expires entries whose masks become empty. Already-dequeued
+frames and MAC/GEM FIFO contents are not aborted; ingress and learning are
+not disabled by this output mask. Busy is status, not a command acknowledgement.
+Rapid repeated toggles, link-up before flush completes, ongoing learning and
+in-flight traffic need further testing. The register map is in
+[board integration](board-integration.md#link-control-and-events).
+
+## Switch-fabric bandwidth limitations and areas to investigate
+
+Status: written from reading the RTL after the fabric clock moved to 100 MHz, the
+ingress write engine to 2 cycles per beat, and the per-port stream stages to one word
+per cycle. **The DDR throughput estimates below are analytical, not measured system
+performance.** A single-port MAC loopback bench measures frame integrity and
+GMII gaps; no bench exercises sustained traffic on several ports through a
+realistic shared-memory model. Figures marked "assumed" use an
+assumed 30-cycle (300 ns) latency for both an AXI read (address to first data) and
+a write response (last data to response) through SmartConnect, the PS HP0 port
+and DDR, plus about 6 cycles of state overhead per frame.
+
+### Raw capacity (128-bit AXI, 100 MHz fabric)
+
+| Path | Data-phase ceiling | Notes |
+| --- | --- | --- |
+| HP0 port, per direction | 12.8 Gbit/s (1.6 GB/s) | Shared by ingress writes, egress reads and the CPU-port master; DDR is also shared with the PS |
+| Ingress write master | 6.4 Gbit/s (800 MB/s) | 2 cycles per 16-byte beat (`S_RD_ISSUE`, `S_W`); one burst outstanding |
+| Egress read master | 12.8 Gbit/s | 1 beat per cycle; one burst outstanding |
+| Per-port egress stream out of `egress_port_rd` | 1.6 Gbit/s | One word per cycle; the next 128-bit beat is prefetched while the current one drains (it was 8 words per 10 cycles) |
+| PL/SFP port adapters, each direction | 1.6 Gbit/s | Word-wide FIFOs (`switch_egress_to_mac_txd.sv`, `mac_rxd_to_switch_ingress.sv`): one 16-bit word per fabric cycle on the fabric side and per MAC-clock cycle on the MAC side (2.3 Gbit/s). This replaced a byte-serial version that limited each port to 0.8 Gbit/s (0.5 Gbit/s at 62.5 MHz). |
+| CPU-port AXI DMA (32-bit) | 3.2 Gbit/s | Separate HP1 path |
+| `cpu_dma_wr.sv` | 4.27 Gbit/s | Still 3 cycles per beat |
+| Aggregate offered load | 5 Gbit/s | 5 physical ports at 1 Gbit/s; flooded frames multiply the egress side |
+
+### Ingress limitations
+
+0. **(Fixed) byte-serial MAC receive adapter**: `mac_rxd_to_switch_ingress.sv` used to
+   move one byte per cycle (0.8 Gbit/s per port at 100 MHz, 0.5 at 62.5 MHz) and could
+   not sustain the wire rate. It is now word-wide, and `tb_mac_adapters.sv` checks one
+   word per fabric cycle. The MAC's data path itself is 32 bits at 142.86 MHz.
+1. **Store-and-forward, one frame in flight per port** (`ingress_port_wr.sv`):
+   `s_axis_tready` is low from the end of a frame until its DMA and enqueue finish.
+   The adapter FIFO (`mac_rxd_to_switch_ingress.sv`) holds 256 16-bit words
+   (512 payload bytes, about 4.1 us at 1 Gb/s), in addition to the MAC
+   packet/descriptor storage. A minimum-size frame is 0.67 us on the wire, and the port's turnaround
+   (buffer allocation, waiting for the shared write master, the burst, the write
+   response, the enqueue) is likely several us when other ports are also waiting,
+   so back-to-back small frames or a busy master can exhaust the available
+   receive buffering. The adapter honors full by deasserting MAC-stream ready;
+   validate the MAC's whole-frame drop behavior once its own storage fills.
+2. **One shared write master** serves all five ports and holds the bus for a whole
+   frame burst; other ports wait. One burst outstanding means every frame pays the
+   write-response latency.
+3. **Beat cadence**: 2 cycles per beat caps the data phase at 800 MB/s
+   (about 670 MB/s for 1518-byte frames assumed, far less for 64-byte frames where
+   per-frame overhead dominates: about 2.3 million frames/s assumed against
+   7.4 million at five-port small-frame line rate).
+4. **Buffer pool**: `NUM_BUFFERS = 256` buffers of 2 KiB (512 KiB). The buffer test verifies all 256 slots can be allocated after flush/release
+   races. Sustained traffic through pool exhaustion and recovery remains untested.
+5. **Serialized control plane**: `queue_mgr` and `free_list_mgr` each process one
+   operation at a time (enqueue, dequeue, flush, alloc, release). My estimate is
+   about 8 cycles for a unicast enqueue plus about 3 per extra flood destination.
+   At small-frame line rate with flooding this may not keep up; unmeasured.
+6. **MAC table**: one lookup engine, one learn engine; a link-down flush sweeps all
+   four banks (about 2,950 cycles) and an aging tick arriving meanwhile is skipped.
+
+### Egress limitations
+
+0. **(Fixed) byte-serial MAC transmit adapter** (`switch_egress_to_mac_txd.sv`) and
+   two idle cycles between 128-bit beats in `egress_port_rd.sv`: both are gone. The
+   adapter is word-wide and the port streams one word per cycle with the next beat
+   prefetched (`tb_egress_top.sv` case C and `tb_mac_adapters.sv` check the rate).
+   `tb_pl_mac_linerate.sv` runs the real MAC in GMII loopback with back-to-back
+   frames at wire rate (12 x 1518 B, 24 x 64 B, 60 x 100 B): every frame arrives
+   intact and the gap between frames on the GMII pins stays at 14 clocks or less
+   (the MAC's own inter-frame gap is 12).
+1. **Store-and-forward, one frame per port** (`egress_port_rd.sv`): the next
+   frame is not fetched until the current one has been streamed out.
+2. **Transmit buffering** (PL and SFP ports): the fabric stream goes through the
+   256-word (512-byte payload) FIFO in `switch_egress_to_mac_txd.sv` and into the MAC's own
+   4 KiB transmit buffer (1024 x 32-bit, up to 8 frame descriptors), and the MAC
+   starts a frame on the wire only once the whole frame has been committed (TLAST).
+   So the MAC's buffer decouples the wire from the fetch: the next frame can be
+   fetched and streamed while the current one is on the wire, as long as the buffer
+   has room for it (about two maximum-size frames). PS GEM ports have only the
+   512-byte bridge FIFO (`axis_to_gem_tx_r.sv`) with its start-permit scheme.
+   (An earlier version of these notes predicted a gap between back-to-back large
+   frames from the 128-byte FIFO alone; that ignored the MAC's buffer and is
+   withdrawn.)
+3. **One shared read master, one burst outstanding**: each frame pays the full read
+   latency. For 64-byte frames the master could sustain about 2.6 million frames/s
+   (assumed), against 7.4 million offered at five-port small-frame line rate,
+   before any flood multiplication. About 1.18 GB/s for 1518-byte frames (assumed).
+5. **Shared HP0**: ingress, egress and the CPU-port master contend for one HP port
+   and for DDR with the rest of the PS.
+
+### Areas for investigation and improvement, roughly by expected value
+
+1. **Measure first.** Add an AXI memory model with realistic read/write latency to
+   the integration benches; run sustained five-port line-rate traffic (large, small
+   and mixed sizes, with floods); add hardware counters (ingress FIFO overrun,
+   no-buffer stalls, per-port frames and bytes, master busy cycles) readable over
+   AXI-Lite; capture with an ILA on the AXI masters.
+2. **Ingress buffering**: double-buffer the port frame RAM and/or deepen the MAC-side
+   RX FIFO so a port can receive while the previous frame drains; define and test
+   overflow behaviour (clean drop plus a counter).
+3. **Ingress write engine**: stream one beat per cycle (prefetch the next beat while
+   presenting the current one, with a skid buffer for `wready` stalls) and allow
+   several bursts in flight to hide the response latency; the same for
+   `cpu_dma_wr.sv`.
+4. **Egress read engine**: allow several outstanding reads and overlap the next
+   frame's fetch with the current stream (double-buffered frame RAM or a larger
+   transmit FIFO). Beat-boundary prefetch is already implemented.
+5. **Control plane**: pipeline `queue_mgr` and `free_list_mgr` or split enqueue and
+   dequeue engines if the counters show them saturating; check flood cost.
+6. **Memory system**: consider a second HP port for egress (HP0 is shared by three
+   masters), larger bursts across frames, cache/DDR-controller QoS settings, and the
+   pool location relative to other PS traffic.
+7. **Clock**: the board fabric is now 100 MHz. Review per-domain timing and
+   resource use before any further increase; global routed slack is dominated
+   by other paths and does not establish performance headroom.
+
+### Bug found while building the wire-rate test
+
+`open_eth_mac_1g_switch.sv` (the MAC fork) computed "descriptor ring full" as
+`(wr_bin - rd_bin) == DEPTH` for both the transmit ring (depth 8) and the receive
+ring (depth 16). That expression is evaluated in 32 bits, so once the write pointer
+had wrapped past the read pointer the difference went negative and "full" was never
+detected: an unsent transmit descriptor could be overwritten (frames on the wire
+carried a later frame's data). It only appears with the ring nearly full after
+16 descriptors, i.e. sustained bursts of small frames. Both compares now use the
+pointer width. The frames-at-wire-rate bench exposes it and passes after the fix.

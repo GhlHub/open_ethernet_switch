@@ -118,7 +118,7 @@ module ingress_dma_wr
     end
   end
 
-  typedef enum logic [2:0] {S_IDLE, S_GRANT, S_AW, S_RD_ISSUE, S_RD_WAIT, S_W, S_BRESP, S_DONE} state_t;
+  typedef enum logic [2:0] {S_IDLE, S_GRANT, S_AW, S_RD_ISSUE, S_W, S_BRESP, S_DONE} state_t;
   state_t state_q, state_d;
 
   always_ff @(posedge clk or negedge rst_n) begin
@@ -181,10 +181,9 @@ module ingress_dma_wr
         if (m_axi_awready) state_d = S_RD_ISSUE;
       end
       S_RD_ISSUE: begin
+        // the frame RAM's registered output is valid the cycle after this read,
+        // i.e. in S_W: one issue cycle + one write cycle = 2 cycles per beat
         frame_rd_en_o = NUM_PHYS_PORTS'(1) << active_port_q;
-        state_d = S_RD_WAIT;
-      end
-      S_RD_WAIT: begin
         state_d = S_W;
       end
       S_W: begin

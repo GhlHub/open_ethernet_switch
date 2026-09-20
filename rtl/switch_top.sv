@@ -55,11 +55,11 @@ module switch_top
   import mac_table_pkg::*;
 #(
   // age_tick's clock divider (see below); overridable so a testbench can
-  // use a small value instead of the real ~4Hz-at-62.5MHz divide count,
+  // use a small value instead of the real ~4Hz-at-100MHz divide count,
   // which is far too slow to usefully simulate
-  parameter int AGE_TICK_DIVIDE_COUNT = 62_500_000 / 4
+  parameter int AGE_TICK_DIVIDE_COUNT = 100_000_000 / 4
 ) (
-  input  logic clk,      // fabric clock (62.5 MHz) -- shared by everything
+  input  logic clk,      // fabric clock (100 MHz) -- shared by everything
   input  logic rst_n,
 
   // MAC AXI4-Stream + AXI4-Lite clock (150 MHz), shared by all 3 PL
@@ -103,6 +103,15 @@ module switch_top
   // MAC address table: aging schedule input, still software-configurable
   // (see header note); age_tick_i itself is generated internally below
   input  logic [AGE_W-1:0] default_age_i,
+
+  // CPU-maintained per-port link state (asynchronous to `clk`: driven from the
+  // AXI-Lite clock domain). Port order: 0 PS GEM0, 1 PS GEM1, 2 PL0, 3 PL1,
+  // 4 SFP, 5 CPU. link_up_i is a level; link_flush_tog_i flips on every
+  // link-down write. A port that is down receives no new frames, its queued
+  // frames are drained (buffers released) and its learned MAC entries expire.
+  input  logic [NUM_PORTS-1:0] link_up_i,
+  input  logic [NUM_PORTS-1:0] link_flush_tog_i,
+  output logic                 link_flush_busy_o,
 
   // ---------------------------------------------------------------------
   // PS GEM0 FIFO interface (gem_rx_clk_ps0/gem_tx_clk_ps0 domains)
@@ -334,7 +343,7 @@ module switch_top
 
   // =========================================================================
   // age_tick: free-running clock divider off the fabric clock (clk,
-  // 62.5 MHz by default), pulsing age_tick for exactly 1 cycle every
+  // 100 MHz by default), pulsing age_tick for exactly 1 cycle every
   // AGE_TICK_DIVIDE_COUNT cycles (~1/4 second at the default count) --
   // mac_addr_table_top.sv synchronizes/edge-detects this itself (it need
   // not already be clean in this clock domain, though it already is), so
@@ -436,6 +445,23 @@ module switch_top
   assign fwd_s_axis_tready[5] = cpu_s_axis_tready;
 
   // =========================================================================
+  // link state: synchronize into this clock domain, generate flush pulses
+  // =========================================================================
+  logic [NUM_PORTS-1:0] link_up_sync, link_flush_req;
+  logic                 qm_flush_busy, mac_flush_busy;
+  port_link_ctrl #(.NUM_PORTS(NUM_PORTS)) u_port_link_ctrl (
+    .clk (clk), .rst_n (rst_n),
+    .link_up_async_i (link_up_i), .flush_tog_async_i (link_flush_tog_i),
+    .link_up_o (link_up_sync), .flush_req_o (link_flush_req)
+  );
+  // registered before leaving the domain (the consumer synchronizes it into the
+  // AXI-Lite clock; a gate in front of the synchronizer would be a CDC hazard)
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) link_flush_busy_o <= 1'b0;
+    else        link_flush_busy_o <= qm_flush_busy | mac_flush_busy;
+  end
+
+  // =========================================================================
   // ingress_top.sv (owns buf_mgr_core)
   // =========================================================================
   ingress_top u_ingress_top (
@@ -472,6 +498,9 @@ module switch_top
     .release_req_i_passthru      (release_req),
     .release_bufid_i_passthru    (release_bufid),
     .release_gnt_o_passthru      (release_gnt),
+    .link_up_i                   (link_up_sync),
+    .flush_req_i                 (link_flush_req),
+    .flush_busy_o                (qm_flush_busy),
     .cpu_alloc_req_i              (cpu_alloc_req),
     .cpu_alloc_gnt_o              (cpu_alloc_gnt),
     .cpu_alloc_bufid_o            (cpu_alloc_bufid),
@@ -594,6 +623,8 @@ module switch_top
     .rst_n             (rst_n),
     .age_tick_i        (age_tick),
     .default_age_i     (default_age_i),
+    .flush_req_i       (link_flush_req),
+    .flush_busy_o      (mac_flush_busy),
     .s_axis_tdata_i    (fwd_s_axis_tdata),
     .s_axis_tkeep_i    (fwd_s_axis_tkeep),
     .s_axis_tvalid_i   (fwd_s_axis_tvalid),

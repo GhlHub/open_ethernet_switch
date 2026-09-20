@@ -17,6 +17,17 @@
 //     shared link/length memories if more than one consumer wants to
 //     dequeue the same cycle).
 //
+// Link-down flush: a one-cycle pulse on flush_req_i[p] marks port p pending.
+// The engine (flush has priority over enqueue/dequeue when idle) then drains
+// that port's queue one entry at a time -- read the head and its next pointer,
+// pop it like a dequeue, and release the buffer's reference through
+// free_list_mgr's flush_release path (freeing the buffer when its refcount
+// reaches 0) -- until the queue is empty. Dequeue requests from a pending port
+// are held off while it drains. Enqueue destinations are always masked with
+// link_up_i at capture time, so once a port's link bit is low nothing new is
+// queued to it; since the engine is serialized, an enqueue that captured the
+// old mask completes before the flush starts and is drained by it.
+//
 // Per-port queues are singly-linked lists threaded through a per-(port,
 // buffer) link table (link_mem), NOT a single next-pointer per buffer --
 // a flooded/multicast buffer sits in several ports' queues at once, each
@@ -47,6 +58,14 @@ module queue_mgr
   output logic [NUM_PORTS-1:0]                dequeue_valid_o, // one-hot pulse
   output logic [NUM_PORTS-1:0][BUF_ID_W-1:0]  dequeue_bufid_o,
   output logic [NUM_PORTS-1:0][LENGTH_W-1:0]  dequeue_length_o,
+
+  // link state / flush
+  input  logic [NUM_PORTS-1:0] link_up_i,
+  input  logic [NUM_PORTS-1:0] flush_req_i,
+  output logic                 flush_busy_o,
+  output logic                 flush_rel_req_o,
+  output logic [BUF_ID_W-1:0]  flush_rel_bufid_o,
+  input  logic                 flush_rel_gnt_i,
 
   // to free_list_mgr
   output logic                 setref_req_o,
@@ -101,6 +120,21 @@ module queue_mgr
   wire [NUM_PORTS-1:0] queue_empty_vec =
     {queue_empty[5], queue_empty[4], queue_empty[3], queue_empty[2], queue_empty[1], queue_empty[0]};
 
+  // ---- link-down flush bookkeeping ----
+  logic [NUM_PORTS-1:0] flush_pend_q;
+  logic                 fl_valid;
+  logic [PORT_ID_W-1:0] fl_port;
+  always_comb begin
+    fl_valid = 1'b0;
+    fl_port  = '0;
+    for (int p = 0; p < NUM_PORTS; p++) begin
+      if (!fl_valid && flush_pend_q[p] && !queue_empty_vec[p]) begin
+        fl_valid = 1'b1;
+        fl_port  = PORT_ID_W'(p);
+      end
+    end
+  end
+
   // ---- port arbiters (padded to ARB_N; upper bits tied 0) ----
   logic [ARB_N-1:0] enq_grant_p, deq_grant_p;
   logic             enq_valid, deq_valid;
@@ -116,7 +150,7 @@ module queue_mgr
   rr_arbiter #(.N(ARB_N)) u_deq_arb (
     .clk     (clk),
     .rst_n   (rst_n),
-    .req_i   ({{(ARB_N-NUM_PORTS){1'b0}}, (dequeue_req_i & ~queue_empty_vec)}),
+    .req_i   ({{(ARB_N-NUM_PORTS){1'b0}}, (dequeue_req_i & ~queue_empty_vec & ~flush_pend_q)}),
     .grant_o (deq_grant_p),
     .valid_o (deq_valid)
   );
@@ -167,7 +201,10 @@ module queue_mgr
     S_ENQ_LINK_NEW,
     S_ENQ_ACK,
     S_DEQ_READ,
-    S_DEQ_COMPLETE
+    S_DEQ_COMPLETE,
+    S_FL_READ,
+    S_FL_COMPLETE,
+    S_FL_REL
   } qm_state_t;
   qm_state_t state_q, state_d;
 
@@ -181,6 +218,9 @@ module queue_mgr
 
   logic [PORT_ID_W-1:0]  deq_port_q;
   logic [NUM_PORTS-1:0]  deq_grant_q;
+
+  logic [PORT_ID_W-1:0]  fl_port_q;
+  logic [BUF_ID_W-1:0]   fl_buf_q;
 
   // find the next set destmask bit at/after port_idx_q -- conditional
   // whole-scalar overwrite in a for loop (verified safe under Icarus
@@ -204,15 +244,23 @@ module queue_mgr
     if (!rst_n) begin
       state_q        <= QM_S_IDLE;
       last_was_deq_q <= 1'b0;
+      flush_pend_q   <= '0;
       for (int p = 0; p < NUM_PORTS; p++) queue_empty[p] <= 1'b1;
     end else begin
       state_q <= state_d;
 
+      // pending ports whose queue is already empty are done (whole-vector
+      // update only, see the note above on per-bit writes in loops)
+      flush_pend_q <= (flush_pend_q & ~(queue_empty_vec & {NUM_PORTS{state_q == QM_S_IDLE}}))
+                      | flush_req_i;
+
       if (state_q == QM_S_IDLE) begin
-        if (enq_valid && (!deq_valid || last_was_deq_q)) begin
+        if (fl_valid) begin
+          fl_port_q <= fl_port;
+        end else if (enq_valid && (!deq_valid || last_was_deq_q)) begin
           bufid_q        <= enq_bufid_muxed;
           length_q       <= enq_length_muxed;
-          destmask_q     <= enq_destmask_muxed;
+          destmask_q     <= enq_destmask_muxed & link_up_i;
           enq_grant_q    <= enq_grant;
           port_idx_q     <= '0;
           last_was_deq_q <= 1'b0;
@@ -247,6 +295,19 @@ module queue_mgr
           default:        begin if (queue_empty[5]) head_ptr[5] <= bufid_q; tail_ptr[5] <= bufid_q; queue_empty[5] <= 1'b0; end
         endcase
         port_idx_q <= port_idx_q + 1'b1; // resume scan past this port next time
+      end
+
+      if (state_q == S_FL_READ) fl_buf_q <= head_ptr[fl_port_q];
+
+      if (state_q == S_FL_COMPLETE) begin
+        unique case (fl_port_q)
+          PORT_ID_W'(0): if (lnk_rdata_q[BUF_ID_W]) head_ptr[0] <= lnk_rdata_q[BUF_ID_W-1:0]; else queue_empty[0] <= 1'b1;
+          PORT_ID_W'(1): if (lnk_rdata_q[BUF_ID_W]) head_ptr[1] <= lnk_rdata_q[BUF_ID_W-1:0]; else queue_empty[1] <= 1'b1;
+          PORT_ID_W'(2): if (lnk_rdata_q[BUF_ID_W]) head_ptr[2] <= lnk_rdata_q[BUF_ID_W-1:0]; else queue_empty[2] <= 1'b1;
+          PORT_ID_W'(3): if (lnk_rdata_q[BUF_ID_W]) head_ptr[3] <= lnk_rdata_q[BUF_ID_W-1:0]; else queue_empty[3] <= 1'b1;
+          PORT_ID_W'(4): if (lnk_rdata_q[BUF_ID_W]) head_ptr[4] <= lnk_rdata_q[BUF_ID_W-1:0]; else queue_empty[4] <= 1'b1;
+          default:        if (lnk_rdata_q[BUF_ID_W]) head_ptr[5] <= lnk_rdata_q[BUF_ID_W-1:0]; else queue_empty[5] <= 1'b1;
+        endcase
       end
 
       if (state_q == S_DEQ_COMPLETE) begin
@@ -293,6 +354,11 @@ module queue_mgr
 
   assign enqueue_gnt_o = enq_ack_win ? enq_grant_q : '0;
 
+  assign flush_rel_req_o   = (state_q == S_FL_REL);
+  assign flush_rel_bufid_o = fl_buf_q;
+  assign flush_busy_o      = (|flush_pend_q) || (state_q == S_FL_READ) ||
+                             (state_q == S_FL_COMPLETE) || (state_q == S_FL_REL);
+
   assign dequeue_valid_o = deq_complete_win ? (NUM_PORTS'(1) << deq_port_q) : '0;
 
   always_comb begin
@@ -321,7 +387,8 @@ module queue_mgr
 
     unique case (state_q)
       QM_S_IDLE: begin
-        if (enq_valid && (!deq_valid || last_was_deq_q)) state_d = S_ENQ_LEN;
+        if (fl_valid)                                       state_d = S_FL_READ;
+        else if (enq_valid && (!deq_valid || last_was_deq_q)) state_d = S_ENQ_LEN;
         else if (deq_valid)                                state_d = S_DEQ_READ;
       end
 
@@ -384,6 +451,20 @@ module queue_mgr
       end
       S_DEQ_COMPLETE: begin
         state_d = QM_S_IDLE;
+      end
+
+      // ---- link-down flush of one queue entry ----
+      S_FL_READ: begin
+        lnk_en   = 1'b1;
+        lnk_we   = 1'b0;
+        lnk_addr = {fl_port_q, head_ptr[fl_port_q]};
+        state_d  = S_FL_COMPLETE;
+      end
+      S_FL_COMPLETE: begin
+        state_d = S_FL_REL;
+      end
+      S_FL_REL: begin
+        if (flush_rel_gnt_i) state_d = QM_S_IDLE;
       end
 
       default: state_d = QM_S_IDLE;

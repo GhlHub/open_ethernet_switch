@@ -30,6 +30,12 @@
 // clock domain one word per clock so the synchronized Gray code changes one
 // bit at a time -- see the "data read pointers published one word per clock"
 // block at the end of the module.
+//
+// Fourth change (bug fix): the transmit and receive descriptor-ring "full"
+// tests now compute the occupancy at the pointer width instead of comparing a
+// 32-bit-evaluated difference with the ring depth, which missed "full" once the
+// write pointer had wrapped and let unsent descriptors be overwritten -- see
+// tx_desc_used / rx_desc_used.
 `timescale 1ns/1ps
 // 1 Gb/s full-duplex, GMII-only replacement for the packet-MAC portion of
 // Xilinx AXI Ethernet.  The AXI stream/control contract and the software-visible
@@ -401,7 +407,12 @@ wire [TX_ADDR_BITS:0] tx_data_used_words =
 wire tx_data_has_space = tx_data_used_words < TX_WORDS;
 wire [TX_DESC_BITS:0] tx_desc_rd_bin_axis =
     tx_desc_gray_to_binary(tx_desc_rd_gray_sync2);
-wire tx_desc_full = (tx_desc_wr_bin - tx_desc_rd_bin_axis) == TX_DESC_DEPTH;
+// Occupancy is computed at the pointer width (mod 2*DEPTH). Comparing the raw
+// difference with the integer DEPTH evaluated it in 32 bits, where a wrapped
+// write pointer (wr < rd numerically) went negative and "full" was missed, so
+// an unsent descriptor could be overwritten once the pointers had wrapped.
+wire [TX_DESC_BITS:0] tx_desc_used = tx_desc_wr_bin - tx_desc_rd_bin_axis;
+wire tx_desc_full = (tx_desc_used == TX_DESC_DEPTH);
 assign s_axis_txc_tready = axis_txc_resetn && !tx_control_ready && !tx_desc_full;
 assign s_axis_txd_tready = axis_txd_resetn && tx_control_ready &&
     (tx_drop || tx_data_has_space || tx_frame_words >= TX_WORDS);
@@ -697,8 +708,9 @@ wire [31:0] rx_word_with_byte =
     ({24'd0, gmii_rxd} << (rx_byte_lane*8));
 wire [RX_DESC_BITS:0] rx_desc_rd_bin_gmii =
     rx_desc_gray_to_binary(rx_desc_rd_gray_sync2);
-wire rx_desc_full =
-    (rx_desc_wr_bin - rx_desc_rd_bin_gmii) == RX_DESC_DEPTH;
+// (occupancy at pointer width -- see tx_desc_full above)
+wire [RX_DESC_BITS:0] rx_desc_used = rx_desc_wr_bin - rx_desc_rd_bin_gmii;
+wire rx_desc_full = (rx_desc_used == RX_DESC_DEPTH);
 wire [RX_ADDR_BITS:0] rx_data_rd_bin_gmii =
     rx_gray_to_binary(rx_data_rd_gray_sync2);
 wire [RX_ADDR_BITS:0] rx_data_used_words =

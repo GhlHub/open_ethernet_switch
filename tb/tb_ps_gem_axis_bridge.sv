@@ -42,7 +42,7 @@ module tb_ps_gem_axis_bridge;
 
   logic clk = 0;
   logic rst_n = 0;
-  always #8 clk = ~clk; // 62.5 MHz-equivalent (fabric side)
+  always #5 clk = ~clk; // 100 MHz (fabric side)
 
   logic gem_clk = 0;
   logic gem_rst_n = 0;

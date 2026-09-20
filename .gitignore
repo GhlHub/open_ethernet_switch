@@ -27,3 +27,12 @@ build/reports_*.txt
 
 # Local TI PHY reference; provenance and download link are in board integration
 /docs/dp83867cs.pdf
+
+# Local desktop metadata
+.DS_Store
+._*
+
+# Local AMD timing / board reference downloads
+/docs/ds925-zynq-ultrascale-plus.pdf
+/docs/ug571-ultrascale-selectio.pdf
+/docs/ug583-ultrascale-pcb-design.pdf

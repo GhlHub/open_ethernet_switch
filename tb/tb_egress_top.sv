@@ -16,6 +16,10 @@
 //      streams it out over AXI4-Stream with the right bytes/tlast, under
 //      random downstream (MAC-side) backpressure -> confirm a fresh
 //      alloc afterward returns the same bufid (release round-tripped)
+//   C. multi-beat frames (lengths straddling 16-byte beat boundaries, so the
+//      per-beat prefetch is exercised) under random backpressure, then a
+//      1518-byte frame with the MAC side always ready: the port must stream it
+//      at about one 16-bit word per cycle (no idle cycles between beats)
 //   B. two frames enqueued concurrently to two different physical egress
 //      ports -> confirm the shared AXI4 read engine's arbitration serves
 //      both correctly with no data mixing between them
@@ -65,7 +69,10 @@ module tb_egress_top;
     .dequeue_length_o   (dequeue_length),
     .release_req_i      (release_req),
     .release_bufid_i    (release_bufid),
-    .release_gnt_o      (release_gnt)
+    .release_gnt_o      (release_gnt),
+    .link_up_i ({NUM_PORTS{1'b1}}),
+    .flush_req_i ('0),
+    .flush_busy_o ()
   );
 
   // ---- egress_top ----
@@ -170,6 +177,14 @@ module tb_egress_top;
   );
 
   int errors = 0;
+  int cyc_count = 0;
+  always @(posedge clk) cyc_count <= cyc_count + 1;
+  int p2_first = -1, p2_last = -1, p2_words = 0;
+  always @(posedge clk) if (m_axis_tvalid[2] && m_axis_tready[2]) begin
+    if (p2_words == 0) p2_first = cyc_count;
+    p2_words = p2_words + 1;
+    if (m_axis_tlast[2]) p2_last = cyc_count;
+  end
 
   task automatic wait_cycles(input int n);
     repeat (n) @(posedge clk);
@@ -377,6 +392,55 @@ module tb_egress_top;
       end
     end
     bp_mode[2] = 0;
+
+    // ---- test C: multi-beat frames and streaming rate on port 2 ----
+    begin
+      int lens[$];
+      lens.push_back(1); lens.push_back(16); lens.push_back(17); lens.push_back(32);
+      lens.push_back(33); lens.push_back(100); lens.push_back(129);
+      bp_mode[2] = 1;
+      foreach (lens[j]) begin
+        logic [BUF_ID_W-1:0] bufid;
+        byte data[];
+        int L, t;
+        L = lens[j];
+        data = new[L];
+        for (int i = 0; i < L; i++) data[i] = byte'(i * 3 + L);
+        cap_reset(2);
+        do_alloc(0, bufid);
+        write_ddr_frame(bufid, data);
+        do_enqueue(0, bufid, LENGTH_W'(L), NUM_PORTS'(1) << 2);
+        t = 0;
+        while (cap_tlast_idx_2 < 0 && t < 3000) begin @(posedge clk); t++; end
+        wait_cycles(3);
+        check_frame(2, data, $sformatf("testC len%0d", L));
+      end
+      bp_mode[2] = 2;
+      begin
+        logic [BUF_ID_W-1:0] bufid;
+        byte data[];
+        int t, cyc, words;
+        data = new[1518];
+        for (int i = 0; i < 1518; i++) data[i] = byte'(i * 5 + 1);
+        words = 759;
+        cap_reset(2);
+        p2_words = 0; p2_first = -1; p2_last = -1;
+        do_alloc(0, bufid);
+        write_ddr_frame(bufid, data);
+        do_enqueue(0, bufid, LENGTH_W'(1518), NUM_PORTS'(1) << 2);
+        t = 0;
+        while (cap_tlast_idx_2 < 0 && t < 6000) begin @(posedge clk); t++; end
+        wait_cycles(3);
+        check_frame(2, data, "testC rate");
+        cyc = p2_last - p2_first + 1;
+        $display("INFO: testC 1518 B streamed as %0d words in %0d cycles (%0d words per 100 cycles)", p2_words, cyc, (p2_words * 100) / cyc);
+        if (cyc > words + words / 50 + 6) begin
+          $display("FAIL: testC egress stream too slow: %0d cycles for %0d words (idle cycles between beats?)", cyc, words);
+          errors++;
+        end else $display("PASS: testC egress port streams ~1 word per cycle");
+      end
+      bp_mode[2] = 0;
+    end
 
     // ---- test B: two concurrent frames, ports 1 and 3 ----
     cap_reset(1);

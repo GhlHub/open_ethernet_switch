@@ -3,7 +3,7 @@
 [`rtl/pl_gmii/open_eth_mac_1g_switch.sv`](../rtl/pl_gmii/open_eth_mac_1g_switch.sv)
 identifies its origin as `open_eth_mac_1g` from
 [GhlHub/open-ethernet-cores](https://github.com/GhlHub/open-ethernet-cores).
-Its existing `GPL-3.0-or-later` SPDX identifier and modification notice are
+Its existing `GPL-3.0-or-later` SPDX identifier and modification notice (now four changes, the newest a descriptor-ring "full" width bug fix) are
 preserved. The notice describes the module rename, permanently enabled
 destination acceptance for switch operation, and two clock-domain-crossing changes
 (the reset inputs are reclocked into each clock domain, and the data read
@@ -55,3 +55,13 @@ and excluded from Git, including its PDF, ZIP and vendor readme. The readme
 identifies the material as proprietary and does not itself grant redistribution
 rights. [Board integration notes](board-integration.md) record the exact
 schematic revision/hash, source download, and the facts used by this design.
+
+## FreeRTOS-LTS dependency
+
+[`third_party/FreeRTOS-LTS`](../third_party/FreeRTOS-LTS) is a Git submodule of
+[FreeRTOS/FreeRTOS-LTS](https://github.com/FreeRTOS/FreeRTOS-LTS), tracking
+`202604-LTS` and pinned to `0b25dc50bae4cb971c7a459b109e52ab2f01a6b8`.
+Upstream component licenses/notices remain in that checkout; no vendor sources
+are copied into the project RTL. See [dependency setup](../third_party/README.md)
+for initialization. The reference does not provide a KR260 BSP, application,
+network driver or boot image.

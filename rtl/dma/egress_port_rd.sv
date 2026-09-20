@@ -6,7 +6,9 @@
 // frame from DDR into a local 128-bit-wide frame buffer, releases the
 // DDR buffer as soon as that local copy is complete (the shared buffer
 // pool entry isn't needed past that point), then drains the local copy
-// out one 16-bit word at a time (62.5 MHz core clock domain -- widened
+// out one 16-bit word per cycle, with the next 128-bit beat prefetched from the
+// frame RAM while the current one drains so there are no idle cycles between
+// beats (100 MHz core clock domain -- widened
 // from an earlier 8-bit/125 MHz convention specifically to ease timing
 // closure on the fabric) to the MAC (or a ps_gem_axis_bridge's s_axis_*
 // slave, for a PS GEM port).
@@ -85,6 +87,10 @@ module egress_port_rd
   logic [BEAT_IDX_W:0]   beat_idx_q;   // beat currently loaded/being drained
   logic [2:0]            word_pos_q;   // 0..7, next lane to send
   logic [AXI_DATA_W-1:0] cur_beat_q;   // latched copy of fram_rdata_q for this beat
+  logic [AXI_DATA_W-1:0] next_beat_q;  // prefetched next beat
+  logic                  pref_issued_q; // the next beat's RAM read was issued
+  logic                  pref_wait_q;   // ... and its data is in fram_rdata_q this cycle
+  logic                  next_valid_q;  // next_beat_q holds the next beat
 
   // index (0-7) of the last valid word in the final beat, and whether
   // that word is partial (only its lower byte real) -- both derived from
@@ -102,6 +108,11 @@ module egress_port_rd
   state_t state_q, state_d;
 
   wire word_sent = (state_q == S_STREAM) && m_axis_tvalid && m_axis_tready;
+
+  // issue the next beat's read once, when lane 5 of the current (non-final) beat is
+  // reached: its data is registered the next cycle and copied to next_beat_q the
+  // cycle after, well before lane 7 (two more words must still be sent)
+  wire pref_issue = (state_q == S_STREAM) && !last_beat && (word_pos_q == 3'd5) && !pref_issued_q;
 
   // current word, read via a case on a constant lane index (0-7) rather
   // than a variable/register-indexed part-select -- see the note in
@@ -139,6 +150,15 @@ module egress_port_rd
       if (state_q == S_RELEASE_WAIT && release_gnt_i) begin
         beat_idx_q <= '0;
         word_pos_q <= '0;
+        pref_issued_q <= 1'b0;
+        next_valid_q  <= 1'b0;
+      end
+
+      pref_wait_q <= pref_issue;
+      if (pref_issue) pref_issued_q <= 1'b1;
+      if (pref_wait_q) begin
+        next_beat_q  <= fram_rdata_q;
+        next_valid_q <= 1'b1;
       end
 
       if (state_q == S_RD_WAIT) begin
@@ -149,6 +169,9 @@ module egress_port_rd
         if (last_lane_this_beat) begin
           word_pos_q <= '0;
           beat_idx_q <= beat_idx_q + 1'b1;
+          cur_beat_q    <= next_beat_q;   // no idle cycle between beats
+          pref_issued_q <= 1'b0;
+          next_valid_q  <= 1'b0;
         end else begin
           word_pos_q <= word_pos_q + 1'b1;
         end
@@ -216,13 +239,12 @@ module egress_port_rd
       S_STREAM: begin
         m_axis_tvalid = 1'b1;
         m_axis_tlast  = last_beat && last_lane_this_beat;
-        if (word_sent) begin
-          if (m_axis_tlast) begin
-            state_d = S_DEQ_WAIT;
-          end else if (last_lane_this_beat) begin
-            state_d = S_RD_ISSUE;
-          end
+        if (pref_issue) begin
+          fram_en   = 1'b1;
+          fram_we   = 1'b0;
+          fram_addr = beat_idx_q[BEAT_IDX_W-1:0] + 1'b1;
         end
+        if (word_sent && m_axis_tlast) state_d = S_DEQ_WAIT;
       end
       default: state_d = S_DEQ_WAIT;
     endcase

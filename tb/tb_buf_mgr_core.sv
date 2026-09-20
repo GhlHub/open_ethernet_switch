@@ -13,6 +13,11 @@
 //      (refcount hit 0)
 //   4. enqueue with an all-zero dest_mask (drop) -> confirm the buffer
 //      comes straight back on the free list with no dequeue anywhere
+//   6. link state: enqueue destinations are masked with link_up_i; a flush
+//      pulse drains a port's queue and releases each buffer's reference
+//      (freeing buffers whose count reaches 0), holds off that port's
+//      dequeues, leaves other ports' copies of flooded buffers intact, and
+//      leaves no buffer leaked
 //   5. exercise concurrent alloc requests from several ports at once
 //      (round-robin arbiter fairness, not correctness-critical but good
 //      to exercise)
@@ -43,6 +48,10 @@ module tb_buf_mgr_core;
   logic [NUM_PORTS-1:0]               release_req_i;
   logic [NUM_PORTS-1:0][BUF_ID_W-1:0] release_bufid_i;
   logic [NUM_PORTS-1:0]               release_gnt_o;
+
+  logic [NUM_PORTS-1:0] link_up_i = '1;
+  logic [NUM_PORTS-1:0] flush_req_i = '0;
+  logic                 flush_busy_o;
 
   buf_mgr_core dut (.*);
 
@@ -172,6 +181,10 @@ module tb_buf_mgr_core;
   logic [BUF_ID_W-1:0] bufid_a, bufid_b, bufid_c;
   logic [LENGTH_W-1:0] length_a;
 
+  task automatic show_free(input string tag);
+    $display("INFO: free buffers %0d at %s", dut.u_free_list_mgr.u_free_fifo.count_q, tag);
+  endtask
+
   initial begin
     alloc_req_i         = '0;
     enqueue_req_i        = '0;
@@ -187,6 +200,7 @@ module tb_buf_mgr_core;
     // free_list_mgr's S_FILL sweep needs NUM_BUFFERS cycles
     wait_cycles(NUM_BUFFERS + 20);
 
+    show_free("start");
     // ---- 1: simple unicast round trip ----
     do_alloc(0, bufid_a);
     do_enqueue(0, bufid_a, LENGTH_W'(100), NUM_PORTS'(1) << 2); // dest = port 2 only
@@ -209,7 +223,9 @@ module tb_buf_mgr_core;
     end else begin
       $display("PASS: alloc succeeded after release (free list round-trip)");
     end
-    do_release(0, bufid_c);
+    // (a buffer that was never enqueued has no refcount, so it is returned
+    // through the drop path, not release)
+    do_enqueue(0, bufid_c, LENGTH_W'(64), NUM_PORTS'(0));
 
     // ---- 2: flood to 3 ports, shared buffer, refcount ----
     do_alloc(0, bufid_a);
@@ -267,6 +283,141 @@ module tb_buf_mgr_core;
       errors++;
     end else begin
       $display("PASS: dropped buffer freed immediately, no destination ever saw it");
+    end
+
+    show_free("after4");
+    // ---- 5: link state masking and link-down flush ----
+    begin
+      logic [BUF_ID_W-1:0] ba, bb, bc, bd, rb;
+      logic [LENGTH_W-1:0] rl;
+      int deq_seen;
+
+      // 5a: link-down port never receives new frames: flood to {1,2,3} with port 2 down
+      link_up_i = '1; link_up_i[2] = 1'b0;
+      wait_cycles(4);
+      do_alloc(0, ba);
+      do_enqueue(0, ba, LENGTH_W'(90), (NUM_PORTS'(1)<<1) | (NUM_PORTS'(1)<<2) | (NUM_PORTS'(1)<<3));
+      if (dut.u_free_list_mgr.refcount_mem[ba] !== 3'd2) begin
+        $display("FAIL: 5a refcount=%0d, expected 2 (port 2 down)", dut.u_free_list_mgr.refcount_mem[ba]); errors++;
+      end else $display("PASS: 5a flood to a link-down port is masked (refcount 2, not 3)");
+      confirm_no_dequeue(2, 20);
+      do_dequeue(1, rb, rl); do_release(1, rb);
+      do_dequeue(3, rb, rl); do_release(3, rb);
+      if (dut.u_free_list_mgr.refcount_mem[ba] !== 3'd0) begin $display("FAIL: 5a buffer not freed"); errors++; end
+
+      // 5a': unicast to a down port is a drop: buffer freed straight back
+      do_alloc(0, ba);
+      do_enqueue(0, ba, LENGTH_W'(70), NUM_PORTS'(1) << 2);
+      confirm_no_dequeue(2, 20);
+      if (dut.u_free_list_mgr.refcount_mem[ba] !== 3'd0) begin $display("FAIL: 5a' unicast to down port not dropped"); errors++; end
+      else $display("PASS: 5a' unicast to a link-down port is dropped, buffer freed");
+
+    show_free("5a");
+      // 5b: drain: port 2 up, queue A->{2}, B->{2,3}, C->{2}; then link down + flush
+      link_up_i = '1; wait_cycles(4);
+      do_alloc(0, ba); do_alloc(0, bb); do_alloc(0, bc);
+      do_enqueue(0, ba, LENGTH_W'(101), NUM_PORTS'(1) << 2);
+      do_enqueue(0, bb, LENGTH_W'(102), (NUM_PORTS'(1)<<2) | (NUM_PORTS'(1)<<3));
+      do_enqueue(0, bc, LENGTH_W'(103), NUM_PORTS'(1) << 2);
+      if (dut.u_free_list_mgr.refcount_mem[ba] !== 3'd1 || dut.u_free_list_mgr.refcount_mem[bb] !== 3'd2 ||
+          dut.u_free_list_mgr.refcount_mem[bc] !== 3'd1) begin
+        $display("FAIL: 5b setup refcounts %0d/%0d/%0d", dut.u_free_list_mgr.refcount_mem[ba],
+                 dut.u_free_list_mgr.refcount_mem[bb], dut.u_free_list_mgr.refcount_mem[bc]); errors++;
+      end
+      // the flush must also hold off port 2's own dequeue requests (a
+      // dequeue already in flight before the flush pulse belongs to the
+      // egress reader, so the request rises only after the pulse here)
+      deq_seen = 0;
+      link_up_i[2] = 1'b0;
+      @(posedge clk); flush_req_i[2] = 1'b1; @(posedge clk); flush_req_i[2] = 1'b0; dequeue_req_i[2] = 1'b1;
+      fork
+        begin : mon
+          repeat (400) begin @(posedge clk); if (dequeue_valid_o[2]) deq_seen++; end
+        end
+      join
+      dequeue_req_i[2] = 1'b0;
+      if (flush_busy_o !== 1'b0) begin $display("FAIL: 5b flush still busy after 400 cycles"); errors++; end
+      if (deq_seen != 0) begin $display("FAIL: 5b port 2 dequeued %0d entries while flushing", deq_seen); errors++; end
+      if (dut.u_queue_mgr.queue_empty[2] !== 1'b1) begin $display("FAIL: 5b port 2 queue not empty after flush"); errors++; end
+      if (dut.u_free_list_mgr.refcount_mem[ba] !== 3'd0 || dut.u_free_list_mgr.refcount_mem[bc] !== 3'd0 ||
+          dut.u_free_list_mgr.refcount_mem[bb] !== 3'd1) begin
+        $display("FAIL: 5b post-flush refcounts A=%0d B=%0d C=%0d (exp 0/1/0)", dut.u_free_list_mgr.refcount_mem[ba],
+                 dut.u_free_list_mgr.refcount_mem[bb], dut.u_free_list_mgr.refcount_mem[bc]); errors++;
+      end else $display("PASS: 5b flush released port 2's references (A,C freed, flooded B kept for port 3)");
+      do_dequeue(3, rb, rl);
+      if (rb !== bb || rl !== LENGTH_W'(102)) begin $display("FAIL: 5b port 3 lost its copy of B"); errors++; end
+      else $display("PASS: 5b port 3 still delivers its copy of the flooded frame");
+      do_release(3, bb);
+      if (dut.u_free_list_mgr.refcount_mem[bb] !== 3'd0) begin $display("FAIL: 5b B not freed"); errors++; end
+
+    show_free("5b");
+      // 5c: flush of an already-empty queue completes; port works again after link-up
+      @(posedge clk); flush_req_i[2] = 1'b1; @(posedge clk); flush_req_i[2] = 1'b0;
+      wait_cycles(20);
+      if (flush_busy_o !== 1'b0) begin $display("FAIL: 5c empty flush stuck busy"); errors++; end
+      link_up_i = '1; wait_cycles(4);
+      do_alloc(0, bd);
+      do_enqueue(0, bd, LENGTH_W'(111), NUM_PORTS'(1) << 2);
+      do_dequeue(2, rb, rl);
+      if (rb !== bd || rl !== LENGTH_W'(111)) begin $display("FAIL: 5c port 2 not usable after link-up"); errors++; end
+      else $display("PASS: 5c port 2 receives frames again after link-up");
+      do_release(2, rb);
+
+    show_free("5c");
+      // 5d: two ports flushed in back-to-back cycles
+      do_alloc(0, ba); do_alloc(0, bb);
+      do_enqueue(0, ba, LENGTH_W'(60), (NUM_PORTS'(1)<<1) | (NUM_PORTS'(1)<<4));
+      do_enqueue(0, bb, LENGTH_W'(61), (NUM_PORTS'(1)<<1) | (NUM_PORTS'(1)<<4));
+      link_up_i[1] = 1'b0; link_up_i[4] = 1'b0;
+      @(posedge clk); flush_req_i[1] = 1'b1; @(posedge clk); flush_req_i[1] = 1'b0; flush_req_i[4] = 1'b1;
+      @(posedge clk); flush_req_i[4] = 1'b0;
+      wait_cycles(400);
+      if (flush_busy_o !== 1'b0 || dut.u_queue_mgr.queue_empty[1] !== 1'b1 || dut.u_queue_mgr.queue_empty[4] !== 1'b1 ||
+          dut.u_free_list_mgr.refcount_mem[ba] !== 3'd0 || dut.u_free_list_mgr.refcount_mem[bb] !== 3'd0) begin
+        $display("FAIL: 5d back-to-back flushes"); errors++;
+      end else $display("PASS: 5d back-to-back flushes of two ports freed both shared buffers");
+      link_up_i = '1;
+
+    show_free("5d");
+      // 5f: flush racing another port's releases for the same flooded buffers
+      begin
+        logic [BUF_ID_W-1:0] fb [20];
+        for (int i = 0; i < 20; i++) begin
+          do_alloc(0, fb[i]);
+          do_enqueue(0, fb[i], LENGTH_W'(80 + i), (NUM_PORTS'(1)<<2) | (NUM_PORTS'(1)<<3));
+        end
+        link_up_i[2] = 1'b0;
+        @(posedge clk); flush_req_i[2] = 1'b1; @(posedge clk); flush_req_i[2] = 1'b0;
+        fork
+          begin
+            for (int i = 0; i < 20; i++) begin
+              logic [BUF_ID_W-1:0] rb2; logic [LENGTH_W-1:0] rl2;
+              do_dequeue(3, rb2, rl2);
+              do_release(3, rb2);
+            end
+          end
+        join
+        wait_cycles(400);
+        if (dut.u_free_list_mgr.u_free_fifo.count_q !== 9'd256 || flush_busy_o !== 1'b0) begin
+          $display("FAIL: 5f free buffers=%0d (exp 256) busy=%b: flush/release race leaked buffers",
+                   dut.u_free_list_mgr.u_free_fifo.count_q, flush_busy_o); errors++;
+        end else $display("PASS: 5f flush racing port 3's releases: all 20 shared buffers freed exactly once");
+        link_up_i = '1;
+      end
+
+      // 5e: nothing leaked: every buffer can still be allocated
+      begin
+        logic [BUF_ID_W-1:0] ids [NUM_BUFFERS];
+        int okc;
+        okc = 0;
+        for (int i = 0; i < NUM_BUFFERS; i++) begin
+          do_alloc(0, ids[i]);
+          if (alloc_gnt_o !== 1'bx && ids[i] !== 'x) okc++;
+        end
+        if (okc != NUM_BUFFERS) begin $display("FAIL: 5e only %0d of %0d buffers allocatable (leak)", okc, NUM_BUFFERS); errors++; end
+        else $display("PASS: 5e all %0d buffers still allocatable (no leak)", NUM_BUFFERS);
+        for (int i = 0; i < NUM_BUFFERS; i++) do_enqueue(0, ids[i], LENGTH_W'(64), NUM_PORTS'(0)); // drop path frees them
+      end
     end
 
     // ---- 4: concurrent allocs from multiple ports ----

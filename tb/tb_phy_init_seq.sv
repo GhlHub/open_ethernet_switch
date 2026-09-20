@@ -42,7 +42,8 @@ module mdio_phy_model #(
   endfunction
 
   wire is_rd = (n >= 36) && (op == 2'b10) && (phyad == ADDR);
-  wire [15:0] rv = rd_val(regad);
+  logic [15:0] rv;
+  always @(negedge mdc) rv = rd_val(regad);   // re-evaluated every half clock (array writes by the bench must be seen)
   wire drive = is_rd && (n >= 47);
   wire dbit  = (n == 47) ? 1'b0 : rv[63 - n];
   assign mdio = drive ? dbit : 1'bz;
@@ -109,10 +110,12 @@ module tb_phy_init_seq;
   pullup (mdio1);
   wire mdc0, mdc1;
   logic go0 = 0, go1 = 0, strap = 0;
-  wire done0, fail0, done1, fail1;
+  wire done0, fail0, done1, fail1, link0, chg0;
+  int chg_count = 0;
+  always @(posedge clk) if (chg0) chg_count++;
   logic [31:0] st;
 
-  mdio_controller_sim_model #(.INIT_PHY_ADDR(5'd2), .INIT_WAIT_CYCLES(20)) dut (
+  mdio_controller_sim_model #(.INIT_PHY_ADDR(5'd2), .INIT_WAIT_CYCLES(20), .INIT_POLL_CYCLES(3000)) dut (
     .s_axi_lite_clk (clk), .s_axi_lite_resetn (rst_n),
     .s_axi_awaddr (awaddr), .s_axi_awvalid (awvalid), .s_axi_awready (awready),
     .s_axi_wdata (wdata), .s_axi_wstrb (wstrb), .s_axi_wvalid (wvalid), .s_axi_wready (wready),
@@ -120,6 +123,7 @@ module tb_phy_init_seq;
     .s_axi_araddr (araddr), .s_axi_arvalid (arvalid), .s_axi_arready (arready),
     .s_axi_rdata (rdata), .s_axi_rresp (rresp), .s_axi_rvalid (rvalid), .s_axi_rready (rready),
     .init_go_i (go0), .init_done_o (done0), .init_fail_o (fail0),
+    .phy_link_o (link0), .phy_link_change_o (chg0),
     .mdio_io (mdio0), .mdc_o (mdc0));
 
   mdio_phy_model #(.ADDR(5'd2)) phy0 (.busy_i (dut.busy), .mdc (mdc0), .mdio (mdio0),
@@ -134,6 +138,7 @@ module tb_phy_init_seq;
     .s_axi_araddr ('0), .s_axi_arvalid (1'b0), .s_axi_arready (),
     .s_axi_rdata (), .s_axi_rresp (), .s_axi_rvalid (), .s_axi_rready (1'b0),
     .init_go_i (go1), .init_done_o (done1), .init_fail_o (fail1),
+    .phy_link_o (), .phy_link_change_o (),
     .mdio_io (mdio1), .mdc_o (mdc1));
 
   mdio_phy_model #(.ADDR(5'd3)) phy1 (.busy_i (dut1.busy), .mdc (mdc1), .mdio (mdio1),
@@ -150,6 +155,7 @@ module tb_phy_init_seq;
     .s_axi_araddr ('0), .s_axi_arvalid (1'b0), .s_axi_arready (),
     .s_axi_rdata (), .s_axi_rresp (), .s_axi_rvalid (), .s_axi_rready (1'b0),
     .init_go_i (go2), .init_done_o (done2), .init_fail_o (fail2),
+    .phy_link_o (), .phy_link_change_o (),
     .mdio_io (mdio2), .mdc_o (mdc2));
 
   int errors = 0;
@@ -212,7 +218,46 @@ module tb_phy_init_seq;
     check(phy0.bad_writes == 0, "A: unexpected PHY register writes");
     check(phy0.nwrites == 4, $sformatf("A: %0d PHY writes, expected 4", phy0.nwrites));
     axi_read(8'h10, st);
-    check(st[2:0] === 3'b000, $sformatf("C: STATUS=%b after init (START ignored, no stray DONE/ERROR)", st[2:0]));
+    check(st[2:1] === 2'b00, $sformatf("C: STATUS=%b after init (no stray DONE/ERROR)", st[2:0]));
+
+    // ---- link polling: PHYSTS bit 10 link, 15:14 speed, 13 duplex ----
+    begin
+      int c0;
+      c0 = chg_count;
+      repeat (8000) @(posedge clk);
+      check(chg_count == c0 && link0 === 1'b0, "poll: link down reported, no change pulse");
+      phy0.regs[5'h11] = 16'hA400;                 // link up, 1000M, full duplex
+      repeat (8000) @(posedge clk);
+      check(link0 === 1'b1 && chg_count == c0 + 1, $sformatf("poll: link-up seen (link=%b, %0d pulses)", link0, chg_count - c0));
+      axi_read(8'h10, st);
+      check(st[5] === 1'b1 && st[7:6] === 2'b10 && st[8] === 1'b1 && st[9] === 1'b1, $sformatf("poll: STATUS link/speed/duplex/valid = %b", st[9:5]));
+      // CPU MDIO transactions colliding with polls must still execute (START is remembered)
+      for (int k = 0; k < 12; k++) begin
+        int t;
+        logic [31:0] rd;
+        axi_write(8'h00, 32'h0000_0302, 4'b0111);   // PHY 2, reg 3, read
+        axi_write(8'h10, 32'h0000_0006, 4'b0001);   // clear DONE/ERROR
+        wait (dut.init_active === 1'b1);            // land the START inside a running poll
+        axi_write(8'h0C, 32'h0000_0001, 4'b0001);   // START
+        check(dut.start_pending_q === 1'b1 || dut.init_active === 1'b0, "START during a poll is remembered");
+        t = 0;
+        st = 0;
+        while (!st[1] && t < 4000) begin axi_read(8'h10, st); t++; end
+        axi_read(8'h08, rd);
+        check(st[1] === 1'b1 && rd[15:0] === 16'hA231, $sformatf("CPU read %0d during polling: done=%b data=%h", k, st[1], rd[15:0]));
+      end
+      phy0.regs[5'h11] = 16'h0000;                 // link lost
+      repeat (8000) @(posedge clk);
+      check(link0 === 1'b0 && chg_count == c0 + 2, $sformatf("poll: link-down seen (%0d pulses)", chg_count - c0));
+      phy0.regs[5'h11] = 16'hA400;
+      repeat (8000) @(posedge clk);
+      c0 = chg_count;
+      go0 = 0;                                     // PHY reset asserted while link is up: treated as link down
+      repeat (20) @(posedge clk);
+      check(link0 === 1'b0 && chg_count == c0 + 1, "PHY reset: link cleared with a change pulse");
+      go0 = 1; repeat (10) @(posedge clk);
+      wait_finish(3_000_000);
+    end
 
     // ---- B: re-run with STRAP_STS1[11] set ----
     go0 = 0; repeat (10) @(posedge clk);

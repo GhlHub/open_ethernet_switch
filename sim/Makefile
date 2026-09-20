@@ -167,6 +167,7 @@ MAC_FWD_SRCS := \
 MAC_FWD_TB := $(TB_DIR)/tb_mac_forwarding_top.sv
 
 SWITCH_TOP_SRCS := \
+	$(COMMON_DIR)/port_link_ctrl.sv \
 	$(BUFMGR_DIR)/buf_mgr_pkg.sv \
 	$(MAC_DIR)/mac_table_pkg.sv \
 	$(DMA_DIR)/axi_dma_pkg.sv \
@@ -548,6 +549,24 @@ xsim-gth-sim:
 RX_ELASTIC_SRCS := $(COMMON_DIR)/fifo36_async_2kx18.sv $(PL_GMII_DIR)/rgmii_rx_elastic.sv
 RX_ELASTIC_TB   := $(TB_DIR)/tb_rgmii_rx_elastic.sv
 
+.PHONY: xsim-rgmii-idelay-gate
+xsim-rgmii-idelay-gate:
+	mkdir -p xsim_run_idelay_gate
+	cd xsim_run_idelay_gate && \
+	  source $(VIVADO_SETTINGS) && \
+	  xvlog -sv -d SYNTHESIS ../../rtl/common/fifo36_async_2kx18.sv ../../rtl/common/sticky_xdomain.sv ../../rtl/pl_gmii/rgmii_rx_elastic.sv ../../rtl/pl_gmii/rgmii_gmii_adapter.sv ../../tb/tb_rgmii_idelay_gate.sv && \
+	  xvlog $$XILINX_VIVADO/data/verilog/src/glbl.v && \
+	  xelab -debug typical -L unisims_ver tb_rgmii_idelay_gate glbl -s tb_sim && \
+	  xsim tb_sim -runall
+
+.PHONY: sim-mac-adapters
+sim-mac-adapters: $(COMMON_DIR)/async_fifo.sv $(PL_GMII_DIR)/mac_rxd_to_switch_ingress.sv $(PL_GMII_DIR)/switch_egress_to_mac_txd.sv $(TB_DIR)/tb_mac_adapters.sv
+	iverilog -g2012 -o tb_mac_adapters.vvp $^ && vvp tb_mac_adapters.vvp | grep "PASS\|FAIL\|INFO"
+
+.PHONY: sim-pl-linerate
+sim-pl-linerate: $(PL_GMII_SRCS) $(TB_DIR)/tb_pl_mac_linerate.sv
+	iverilog -g2012 -o tb_pl_mac_linerate.vvp $^ && vvp tb_pl_mac_linerate.vvp | grep "PASS\|FAIL\|INFO"
+
 .PHONY: sim-rx-diag
 sim-rx-diag: ../rtl/common/sticky_xdomain.sv ../rtl/board/rx_diag_regs.sv $(TB_DIR)/tb_rx_diag.sv ../rtl/sfp_pcs/sfp_sideband.sv $(TB_DIR)/tb_sfp_sideband.sv
 	iverilog -g2012 -s tb_rx_diag -o tb_rx_diag.vvp ../rtl/common/sticky_xdomain.sv ../rtl/board/rx_diag_regs.sv $(TB_DIR)/tb_rx_diag.sv && vvp tb_rx_diag.vvp | grep "PASS\|FAIL"
@@ -627,4 +646,4 @@ xsim-mdio:
 
 clean:
 	rm -f tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_autoneg_1000base_x.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp tb_rgmii_gmii_sim_model.vvp tb_pl_eth_clk_gen_sim_model.vvp tb_mdio_controller.vvp tb_phy_init_seq.vvp tb_mac_reset_reclock.vvp
-	rm -rf xsim_run_rx_elastic tb_rgmii_rx_elastic.vvp xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_autoneg xsim_run_async_fifo xsim_run_async_fifo_xpm xsim_run_ps_eth_xpm xsim_run_integ_xpm xsim_run_pl_gmii_xpm xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim xsim_run_rgmii_sim xsim_run_pl_clkgen_sim xsim_run_mdio
+	rm -rf xsim_run_idelay_gate xsim_run_rx_elastic tb_rgmii_rx_elastic.vvp xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_autoneg xsim_run_async_fifo xsim_run_async_fifo_xpm xsim_run_ps_eth_xpm xsim_run_integ_xpm xsim_run_pl_gmii_xpm xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim xsim_run_rgmii_sim xsim_run_pl_clkgen_sim xsim_run_mdio

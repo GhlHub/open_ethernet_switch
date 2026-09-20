@@ -5,7 +5,7 @@ board build (every severity, 890 rows), by tracing each crossing to its RTL and
 reading the protocol. Vivado cannot prove a crossing correct; this records what
 each one is, why it is (or was not) safe, and what evidence exists.
 
-The latest inspected report (2026-09-19 13:42) has zero critical and 13 warning
+The latest inspected report (2026-09-19 20:42) has zero critical and 13 warning
 clock-pair groups. It supersedes earlier summary counts, but does not make the
 review below a complete sign-off of new circuitry. RGMII now uses FIFO36E2,
 not the earlier generic FIFO. Vendor recognition and simulation are evidence,
@@ -16,10 +16,10 @@ not blanket waivers.
 | Clock | Source | Nominal |
 | --- | --- | --- |
 | `clk_pl_0` | PS `pl_clk0` | ~142.9 MHz (MAC stream + AXI-Lite) |
-| `clk_out3_pl_eth_clk_gen_ip` | PL0 MMCM | 62.5 MHz (switch fabric, all AXI masters) |
+| `clk_out3_pl_eth_clk_gen_ip` | PL0 MMCM | 100 MHz (switch fabric, all AXI masters) |
 | `clk_out1_pl_eth_clk_gen_ip[_1]`, `clk_out1_sfp_pcs_clk_gen_ip` | MMCMs | 125 MHz (GMII, PCS) |
 | `clk_gem{0,1}_{rx,tx}_0` | PS | 125 MHz (GEM FIFO interface, independent RX and TX) |
-| `plN_rgmii_rxc` | PHY | 125 MHz (RGMII receive) |
+| `plN_rgmii_rxc` | PHY | 125 MHz (RGMII receive; also the write clock of the elastic buffer) |
 | `clk_pl_1`, GT clocks | PS / GTH | 50 MHz freerun, 62.5 MHz user clocks |
 
 ## Findings
@@ -36,6 +36,10 @@ not blanket waivers.
 | 8 | Reset synchronizers in the board wrapper and RGMII adapter | CDC-9 | Safe: async-assert/sync-release with `ASYNC_REG`. |
 | 9 | SmartConnect AXI clock converter to the DMA control port; AXI DMA register module | CDC-3, CDC-6 | Vendor IP, waivable. |
 | 10 | GTH wizard calibration/monitor logic (freerun clock vs GT clocks) | CDC-3, CDC-9, CDC-15 | Vendor IP, waivable. |
+| 11 | RGMII receive elastic buffer (`rgmii_rx_elastic.sv`): hard `FIFO36E2` (2048 x 18) between `plN_rgmii_rxc` and the 125 MHz GMII clock, x2 | none reported (the crossing is internal to the primitive) | Safe by construction of the hard FIFO (its own Gray pointers); its use is the risk, not the crossing. The design uses the FIFO's per-side counts (`EXTENDED_DATACOUNT`) to add/drop idle only between frames and to hold a 64-word cushion before a frame; overflow/underrun raise events. The write side reads the write-domain count and the read side the read-domain count, never the other side's. |
+| 12 | Sticky diagnostics (`sticky_xdomain.sv`): overflow set in the receive-clock domain, underrun in the 125 MHz domain, read and cleared from `clk_pl_0` | CDC-3 (1 endpoint per pair) | Safe: the flag is a single sticky bit crossing by a 2-flop `ASYNC_REG` synchronizer; the clear is a toggle synchronized the other way, with edge detection in the source domain. Events in the few source cycles before the clear arrives are lost, and a clear waits while the source clock is stopped: documented behavior, not a hazard. Needed new `set_max_delay` pairs (receive clock <-> `clk_pl_0`); without them the first build failed timing by 0.86 ns. |
+| 13 | SFP sideband (`sfp_sideband.sv`) | Info (input port clock) | The three input pins go through 2-flop `ASYNC_REG` synchronizers and ms-scale debouncing; TX_DISABLE is a registered static level; the pins carry `set_false_path`. Safe for slow signals. |
+| 14 | SFP PCS gearbox (125 MHz <-> 62.5 MHz) | "Safely Timed" | Not an asynchronous crossing: both clocks come from the same MMCM and the width converter relies on their phase relationship. Static timing checks it; nothing checks that the phase assumption holds on hardware. |
 
 ## Evidence
 
@@ -51,6 +55,18 @@ not blanket waivers.
 - **Finding 4** is exercised in xsim by the `xsim-*-xpm` targets; in Icarus and
   Verilator the FIFO is a behavioral model.
 - The MAC reset reclocking has its own bench (`tb_mac_reset_reclock.sv`).
+- **Finding 11**: `tb_rgmii_rx_elastic.sv` offsets the two clocks by 0, +-500 and
+  +-3000 ppm with 250 random back-to-back frames each; every frame is identical
+  in order, the output gap never drops below 8, idle status data is preserved and
+  no flag is raised (Icarus with the behavioral model; xsim with the real
+  `FIFO36E2` model at +500, +3000 and -3000 ppm). A mutation that removes the
+  read cushion truncates frames and raises underrun. Place-and-route DRC also
+  rejected one configuration (`SIMPLE_DATACOUNT` with independent clocks) that
+  simulation had accepted.
+- **Finding 12**: `tb_rx_diag.sv` uses unrelated clocks: set, hold across reads,
+  clear of one bit only, write of 0 ignored, re-set after clear.
+- **Finding 13**: `tb_sfp_sideband.sv` (scaled timers); a mutation that never
+  gates the laser fails 8 checks.
 
 ## What this review does not establish
 
@@ -61,7 +77,11 @@ not blanket waivers.
   being met; if `kr260_clocks.xdc` is dropped or a clock is renamed, those
   paths become unchecked again.
 - The RGMII receive path and the PS/GT clocks were reviewed only at the level
-  above; no measurements exist.
+  above; no measurements exist, and the elastic buffer has not been run against
+  real PHY clocks (simulated offsets reach +-3000 ppm, real crystals differ by
+  tens of ppm).
+- The hard FIFO's crossing does not appear in `report_cdc`, so it has no
+  independent tool check here.
 - I did not review the AXI SmartConnect, AXI DMA or GTH wizard internals; they
   are vendor-owned and are treated as such.
 
@@ -79,5 +99,24 @@ not blanket waivers.
   False-path constraints on slow pins do not validate debounce or fault timing.
 - `async_fifo` ignores read-side reset in its synthesis branch. Audit every
   instantiation against the write-side-reset contract, including clock loss.
-- IDELAYCTRL RDY is not part of the RGMII receive reset condition. Review
-  startup capture while calibration is incomplete.
+- IDELAYCTRL RDY now crosses through two flops and a receive-clock hold counter
+  before RX reset release. A primitive-model bench verifies release order,
+  at least 64 clocks of hold and re-reset. Stopped clocks, bank replicas and
+  board behavior remain unverified.
+
+## Port-link control and polling additions
+
+`port_link_ctrl` synchronizes software levels and flush toggles into the
+100 MHz fabric. A four-cycle delay separates link masking from the flush
+pulse. Queue and MAC-table engines merge pending masks, and their combined
+busy status is registered before synchronization back to AXI-Lite. Tests cover
+queue/refcount release races, multiple flushes, learned-entry expiry and a
+switch CPU-port down/up sequence.
+
+There is no per-command acknowledgement: rapid repeated toggles can coalesce,
+and busy is initially low while a request crosses domains. Re-enabling a port
+before a flush finishes and continued source learning need explicit policy.
+The MDIO poller and link-event register share the control clock, while SFP
+negotiation link passes through a two-flop synchronizer before event detection.
+The new clock plan and constraints require review of all physical skew/reset
+assumptions; fixed-ratio simulation does not prove metastability safety.

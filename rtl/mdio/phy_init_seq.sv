@@ -27,6 +27,14 @@
 // (address function, devad 0x1F), ADDAR (reg 0x0E) <- register address,
 // REGCR <- 0x401F (data, no post-increment), ADDAR <- / -> data.
 //
+// Link polling: the DP83867's INT/PWDN pad is NOT wired to the FPGA on the
+// KR260 carrier (schematic sheets 20/21: the net has no other node), so after the
+// sequence completes this module reads PHYSTS (reg 0x11) every POLL_CYCLES and
+// reports link (bit 10), speed (15:14) and duplex (13) plus a one-cycle
+// link_change_o pulse whenever the link bit changes (including going invalid when
+// the PHY is reset again). Each poll is one MDIO read (~0.1 ms of a 10 ms period)
+// during which active_o holds the master.
+//
 // Not done here (the driver does them, they are not needed for RGMII-ID
 // operation): SW reset (the PHY has just come out of hardware reset) and
 // restarting auto-negotiation (it is enabled by default).
@@ -42,6 +50,7 @@ module phy_init_seq #(
   parameter logic [3:0] RX_DELAY    = 4'h7,
   parameter logic [3:0] TX_DELAY    = 4'h6,
   parameter logic [1:0] FIFO_DEPTH  = 2'd1,
+  parameter int         POLL_CYCLES = 1_430_000,
   parameter bit         RXCTRL_STRAP_QUIRK = 1'b1
 ) (
   input  logic        clk,
@@ -60,12 +69,18 @@ module phy_init_seq #(
 
   output logic        active_o,    // sequencer owns the MDIO master
   output logic        done_o,      // sequence finished OK (level)
-  output logic        fail_o       // absent/wrong PHY or MDIO error (level)
+  output logic        fail_o,      // absent/wrong PHY or MDIO error (level)
+
+  output logic        link_o,          // PHYSTS.LINK_STATUS from the last good poll (0 until valid)
+  output logic [1:0]  link_speed_o,    // 00 10M, 01 100M, 10 1000M
+  output logic        link_full_o,
+  output logic        link_valid_o,    // at least one poll completed since init
+  output logic        link_change_o    // one-cycle pulse when link_o changes
 );
 
   localparam int NSTEPS = 9;
 
-  typedef enum logic [2:0] {S_IDLE, S_WAIT, S_ISSUE, S_RUN, S_NEXT, S_DONE, S_FAIL} state_t;
+  typedef enum logic [3:0] {S_IDLE, S_WAIT, S_ISSUE, S_RUN, S_NEXT, S_DONE, S_FAIL, S_POLL_WAIT} state_t;
   typedef enum logic [1:0] {K_C22_RD, K_C22_WR, K_MMD_RD, K_MMD_WR} kind_t;
 
   state_t      state_q;
@@ -101,6 +116,7 @@ module phy_init_seq #(
       4'd6: begin kind = K_MMD_RD; st_reg = 16'h0032; end
       4'd7: begin kind = K_MMD_WR; st_reg = 16'h0032; st_mask = 16'h0003; st_set = 16'h0003; end
       4'd8: begin kind = K_MMD_WR; st_reg = 16'h0086; st_mask = 16'hFFFF; st_set = {8'h00, TX_DELAY, RX_DELAY}; end
+      4'd13: begin kind = K_C22_RD; st_reg = 16'h0011; end   // link poll (PHYSTS)
       default: ;
     endcase
   end
@@ -126,8 +142,9 @@ module phy_init_seq #(
   end
 
   assign m_start_o = (state_q == S_ISSUE);
-  assign active_o  = (state_q != S_IDLE) && (state_q != S_DONE) && (state_q != S_FAIL);
-  assign done_o    = (state_q == S_DONE);
+  assign active_o  = (state_q != S_IDLE) && (state_q != S_DONE) && (state_q != S_FAIL) && (state_q != S_POLL_WAIT);
+  assign done_o    = (state_q == S_DONE) || (state_q == S_POLL_WAIT) ||
+                     ((state_q == S_ISSUE || state_q == S_RUN) && step_q == 4'd13);
   assign fail_o    = (state_q == S_FAIL);
 
   always_ff @(posedge clk or negedge rstn) begin
@@ -138,10 +155,13 @@ module phy_init_seq #(
       wait_q    <= '0;
       go_q      <= 1'b0;
       err_q     <= 1'b0;
+      link_o    <= 1'b0; link_speed_o <= '0; link_full_o <= 1'b0; link_valid_o <= 1'b0;
+      link_change_o <= 1'b0;
       strap11_q <= 1'b0;
       rd_q      <= '0;
     end else begin
       go_q <= go_i;
+      link_change_o <= 1'b0;
       if (m_error_i) err_q <= 1'b1;
 
       case (state_q)
@@ -152,6 +172,16 @@ module phy_init_seq #(
             step_q  <= '0;
             err_q   <= 1'b0;
           end
+          if (link_valid_o || link_o) begin
+            link_valid_o <= 1'b0; link_o <= 1'b0;
+            if (link_o) link_change_o <= 1'b1;
+          end
+        end
+        S_POLL_WAIT: begin
+          if (!go_i) state_q <= S_IDLE;
+          else if (wait_q == 0) begin
+            state_q <= S_ISSUE; step_q <= 4'd13; sub_q <= 2'd3;
+          end else wait_q <= wait_q - 1'b1;
         end
         S_WAIT: begin
           if (!go_i) state_q <= S_IDLE;
@@ -166,7 +196,18 @@ module phy_init_seq #(
         end
         S_RUN: begin
           if (m_done_i) begin
-            if (err_q) state_q <= S_FAIL;
+            if (step_q == 4'd13) begin
+              // link poll finished: a failed read keeps the last state
+              if (!err_q) begin
+                link_valid_o <= 1'b1;
+                link_o       <= m_rdata_i[10];
+                link_speed_o <= m_rdata_i[15:14];
+                link_full_o  <= m_rdata_i[13];
+                if (m_rdata_i[10] != link_o) link_change_o <= 1'b1;
+              end
+              state_q <= S_POLL_WAIT;
+              wait_q  <= POLL_CYCLES;
+            end else if (err_q) state_q <= S_FAIL;
             else if (sub_q != 2'd3) begin
               sub_q   <= sub_q + 1'b1;
               state_q <= S_ISSUE;
@@ -179,7 +220,7 @@ module phy_init_seq #(
           end
         end
         S_NEXT: begin
-          if (step_q == NSTEPS - 1) state_q <= S_DONE;
+          if (step_q == NSTEPS - 1) begin state_q <= S_POLL_WAIT; wait_q <= 32'd1000; end
           else begin
             step_q  <= step_q + 1'b1;
             state_q <= S_WAIT;

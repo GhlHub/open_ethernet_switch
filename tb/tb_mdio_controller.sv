@@ -62,6 +62,8 @@ module tb_mdio_controller;
     .init_go_i         (1'b0),
     .init_done_o       (),
     .init_fail_o       (),
+    .phy_link_o        (),
+    .phy_link_change_o (),
     .mdio_io           (mdio_io),
     .mdc_o             (mdc)
   );

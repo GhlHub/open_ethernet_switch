@@ -23,12 +23,15 @@
 //   0x0C CONTROL     byte0[0]=START (write-1 pulses a transaction using
 //                     the current CONFIG/WRITE_DATA; ignored while BUSY)
 //   0x10 STATUS      byte0[0]=BUSY, byte0[1]=DONE (W1C), byte0[2]=ERROR (W1C)
-//                     byte0[3]=INIT_DONE, byte0[4]=INIT_FAIL (read-only: DP83867
+//                     byte0[3]=INIT_DONE, byte0[4]=INIT_FAIL, bit5 LINK, bits7:6 SPEED
+//                     (00 10M, 01 100M, 10 1000M), bit8 FULL duplex, bit9 link
+//                     status valid (read-only: DP83867
 //                     start-up sequencer, see phy_init_seq.sv; BUSY reads 1 while it runs)
 //   0x14 CLK_DIVIDER [15:0] (byte0/byte1), see open_eth_mdio_master.sv --
-//                     default 100 (750kHz MDC at a 150MHz s_axi_lite_clk,
-//                     comfortably under Clause 22's 2.5MHz ceiling;
-//                     software-adjustable)
+//                     default 35: MDC toggles every 36 clocks, i.e. about 1.98MHz at the
+//                     ~142.86MHz s_axi_lite_clk (period 72 clocks), chosen to be close
+//                     to the PS GEM MDC (~2.08MHz with the usual /48 of the 100MHz
+//                     LPD_LSBUS_CLK) and under Clause 22's 2.5MHz; software-adjustable
 //
 // Typical software sequence: write CONFIG, (for a write transaction)
 // write WRITE_DATA, write CONTROL with START=1, poll STATUS.BUSY (or
@@ -37,7 +40,8 @@
 module mdio_controller #(
   parameter int AXI_ADDR_WIDTH = 8,
   parameter logic [4:0] INIT_PHY_ADDR = 5'd2,
-  parameter int INIT_WAIT_CYCLES = 2_000_000
+  parameter int INIT_WAIT_CYCLES = 2_000_000,
+  parameter int INIT_POLL_CYCLES = 1_430_000
 ) (
   input  logic s_axi_lite_clk,
   input  logic s_axi_lite_resetn,
@@ -66,6 +70,8 @@ module mdio_controller #(
   input  logic init_go_i,
   output logic init_done_o,
   output logic init_fail_o,
+  output logic phy_link_o,          // PHYSTS link bit from the poller (0 until valid)
+  output logic phy_link_change_o,   // one-cycle pulse on a change
 
   inout  wire mdio_io, // real bidirectional pin, -> IOBUF
   output logic mdc_o    // push-pull, no tristate needed (Clause 22)
@@ -83,15 +89,19 @@ module mdio_controller #(
   logic        mdio_i, mdio_o, mdio_t;
 
   logic        init_active, seq_start, seq_write;
+  logic [1:0]  phy_speed;
+  logic        phy_full, phy_valid;
   logic [4:0]  seq_phy, seq_reg;
   logic [15:0] seq_wdata;
 
-  phy_init_seq #(.PHY_ADDR(INIT_PHY_ADDR), .WAIT_CYCLES(INIT_WAIT_CYCLES)) u_init (
+  phy_init_seq #(.PHY_ADDR(INIT_PHY_ADDR), .WAIT_CYCLES(INIT_WAIT_CYCLES), .POLL_CYCLES(INIT_POLL_CYCLES)) u_init (
     .clk (s_axi_lite_clk), .rstn (s_axi_lite_resetn), .go_i (init_go_i),
     .m_start_o (seq_start), .m_write_o (seq_write), .m_phy_o (seq_phy),
     .m_reg_o (seq_reg), .m_wdata_o (seq_wdata),
     .m_busy_i (busy), .m_done_i (done), .m_error_i (error), .m_rdata_i (read_data),
-    .active_o (init_active), .done_o (init_done_o), .fail_o (init_fail_o)
+    .active_o (init_active), .done_o (init_done_o), .fail_o (init_fail_o),
+    .link_o (phy_link_o), .link_speed_o (phy_speed), .link_full_o (phy_full),
+    .link_valid_o (phy_valid), .link_change_o (phy_link_change_o)
   );
 
   open_eth_mdio_master u_master (
@@ -148,8 +158,12 @@ module mdio_controller #(
 
   logic done_sticky_q, error_sticky_q;
 
-  assign start_pulse = write_fire && (aw_hold == 8'h0C) && wstrb_hold[0]
-                        && w_hold[0] && !busy && !init_active;
+  // A START written while the master is busy with the PHY start-up/poll sequencer
+  // is remembered and issued as soon as the master is free (a START written
+  // while a CPU transaction is running is still ignored, as documented).
+  logic start_pending_q;
+  wire  cpu_start_req = write_fire && (aw_hold == 8'h0C) && wstrb_hold[0] && w_hold[0];
+  assign start_pulse = (cpu_start_req || start_pending_q) && !busy && !init_active;
 
   always_ff @(posedge s_axi_lite_clk or negedge s_axi_lite_resetn) begin
     if (!s_axi_lite_resetn) begin
@@ -160,10 +174,13 @@ module mdio_controller #(
       phy_addr_q       <= '0;
       reg_addr_q       <= '0;
       write_data_q     <= '0;
-      clk_divider_q    <= 16'd100;
+      clk_divider_q    <= 16'd35;
       done_sticky_q    <= 1'b0;
       error_sticky_q   <= 1'b0;
+      start_pending_q  <= 1'b0;
     end else begin
+      if (start_pulse) start_pending_q <= 1'b0;
+      else if (cpu_start_req && (busy || init_active)) start_pending_q <= init_active;
       if (s_axi_awready && s_axi_awvalid) begin
         aw_hold       <= s_axi_awaddr;
         aw_hold_valid <= 1'b1;
@@ -234,7 +251,7 @@ module mdio_controller #(
           8'h04:   s_axi_rdata <= {16'd0, write_data_q};
           8'h08:   s_axi_rdata <= {16'd0, read_data};
           8'h0C:   s_axi_rdata <= 32'd0; // START always reads back 0
-          8'h10:   s_axi_rdata <= {27'd0, init_fail_o, init_done_o, error_sticky_q, done_sticky_q, busy | init_active};
+          8'h10:   s_axi_rdata <= {22'd0, phy_valid, phy_full, phy_speed, phy_link_o, init_fail_o, init_done_o, error_sticky_q, done_sticky_q, busy | init_active};
           8'h14:   s_axi_rdata <= {16'd0, clk_divider_q};
           default: s_axi_rdata <= 32'd0;
         endcase

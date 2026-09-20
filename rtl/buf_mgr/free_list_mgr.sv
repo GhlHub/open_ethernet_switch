@@ -39,6 +39,13 @@ module free_list_mgr
   input  logic [NUM_PORTS-1:0][BUF_ID_W-1:0] release_bufid_i,
   output logic [NUM_PORTS-1:0]               release_gnt_o, // one-hot pulse
 
+  // flush release (single caller: queue_mgr, link-down drain): decrements a
+  // buffer's refcount exactly like a port release, using the arbiter's first
+  // spare request slot
+  input  logic                 flush_release_req_i,
+  input  logic [BUF_ID_W-1:0]  flush_release_bufid_i,
+  output logic                 flush_release_gnt_o,
+
   // setref (single caller: queue_mgr)
   input  logic                 setref_req_i,
   input  logic [BUF_ID_W-1:0]  setref_bufid_i,
@@ -99,13 +106,14 @@ module free_list_mgr
   rr_arbiter #(.N(ARB_N)) u_release_arb (
     .clk     (clk),
     .rst_n   (rst_n),
-    .req_i   ({{(ARB_N-NUM_PORTS){1'b0}}, release_req_i}),
+    .req_i   ({{(ARB_N-NUM_PORTS-1){1'b0}}, flush_release_req_i, release_req_i}),
     .grant_o (release_grant_p),
     .valid_o (release_valid)
   );
 
   wire [NUM_PORTS-1:0] alloc_grant   = alloc_grant_p[NUM_PORTS-1:0];
   wire [NUM_PORTS-1:0] release_grant = release_grant_p[NUM_PORTS-1:0];
+  wire                 flush_grant   = release_grant_p[NUM_PORTS];
 
   logic [BUF_ID_W-1:0] release_bufid_muxed;
   always_comb begin
@@ -113,6 +121,7 @@ module free_list_mgr
     for (int p = 0; p < NUM_PORTS; p++) begin
       if (release_grant[p]) release_bufid_muxed = release_bufid_i[p];
     end
+    if (flush_grant) release_bufid_muxed = flush_release_bufid_i;
   end
 
   // ---- sequencer ----
@@ -122,6 +131,7 @@ module free_list_mgr
   logic [BUF_ID_W-1:0]  fill_cnt_q;
   logic [BUF_ID_W-1:0]  release_bufid_q;
   logic [NUM_PORTS-1:0] release_grant_q;
+  logic                 flush_grant_q;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -137,6 +147,7 @@ module free_list_mgr
     if (state_q == S_IDLE && !setref_req_i && !direct_free_req_i && release_valid) begin
       release_bufid_q <= release_bufid_muxed;
       release_grant_q <= release_grant;
+      flush_grant_q   <= flush_grant;
     end
   end
 
@@ -167,6 +178,7 @@ module free_list_mgr
   assign alloc_gnt_o       = alloc_win ? alloc_grant : '0;
   assign alloc_bufid_o     = fifo_rd_data;
   assign release_gnt_o     = (state_q == S_RELEASE_WRITE) ? release_grant_q : '0;
+  assign flush_release_gnt_o = (state_q == S_RELEASE_WRITE) && flush_grant_q;
 
   always_comb begin
     state_d      = state_q;

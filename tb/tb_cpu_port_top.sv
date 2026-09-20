@@ -68,7 +68,10 @@ module tb_cpu_port_top;
     .dequeue_length_o   (dequeue_length),
     .release_req_i      (release_req),
     .release_bufid_i    (release_bufid),
-    .release_gnt_o      (release_gnt)
+    .release_gnt_o      (release_gnt),
+    .link_up_i ({NUM_PORTS{1'b1}}),
+    .flush_req_i ('0),
+    .flush_busy_o ()
   );
 
   // ---- cpu_port_top ----

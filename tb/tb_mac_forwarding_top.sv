@@ -59,7 +59,9 @@ module tb_mac_forwarding_top;
     .s_axis_tlast_i     (s_axis_tlast),
     .s_axis_tready_i    (s_axis_tready),
     .dest_mask_o        (dest_mask),
-    .dest_mask_valid_o  (dest_mask_valid)
+    .dest_mask_valid_o  (dest_mask_valid),
+    .flush_req_i ('0),
+    .flush_busy_o ()
   );
 
   int errors = 0;

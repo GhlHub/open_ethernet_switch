@@ -5,7 +5,9 @@
 // AXI4-Lite slave, 32-bit registers:
 //   0x00 STATUS  bit0 PL0 overflow, bit1 PL0 underrun, bit2 PL1 overflow,
 //                bit3 PL1 underrun. Sticky; write 1 to a bit to clear it
-//                (a write of 0 does nothing). A set flag means a receive word
+//                (a write of 0 does nothing); bits 5:4 are live read-only IDELAYCTRL
+//                ready for PL1/PL0 (1 = calibrated; receive is held in reset while 0).
+//                A set flag means a receive word
 //                was lost (overflow) or a frame was truncated because the FIFO
 //                ran dry (underrun) since the last clear.
 //   0x04 SFP_STATUS (read-only; sticky bits cleared by writing 1 to the bit)
@@ -15,6 +17,26 @@
 //                bits15:8 consecutive TX_FAULT count.
 //   0x08 SFP_CONTROL  bit0 force TX_DISABLE (laser off; reset 0), bit1 write 1
 //                to leave fault lockout (reads 0).
+//   0x0C LINK_SET     write 1 to bit p: mark port p link-up (write-1-to-set, so
+//                the CPU never read-modify-writes the link state). p: 0 PS GEM0,
+//                1 PS GEM1, 2 PL0, 3 PL1, 4 SFP, 5 CPU. Reads 0.
+//   0x10 LINK_CLR     write 1 to bit p: mark port p link-down. The switch then
+//                stops queueing frames to p, drains p's queued frames (releasing
+//                their buffers) and expires p's learned MAC entries. Also acts
+//                when the port was already down. Reads 0.
+//   0x14 LINK_STATUS  read-only: bits5:0 stored link state (reset: only the CPU
+//                port, bit 5, is up), bit8 = a link-down flush is still running
+//                in the switch, bits11:10 = PL1/PL0 PHY link (from the MDIO
+//                PHYSTS poll, see phy_init_seq.sv).
+//   0x18 LINK_EVENT   sticky, write 1 to clear: bit0 PL0 PHY link changed, bit1 PL1
+//                PHY link changed (the PHY's INT pin is not wired to the FPGA, so
+//                a hardware poller reads PHYSTS every ~10 ms and raises this on a
+//                link change; read the MDIO STATUS/PHYSTS for the new state), bit2 SFP
+//                link (autonegotiation) changed, bit3 SFP module inserted/removed,
+//                bit4 SFP LOS changed, bit5 SFP TX_FAULT seen.
+//   0x1C LINK_EVENT_EN  bit p enables LINK_EVENT bit p to raise link_irq_o
+//                (level: high while any enabled event bit is set).
+// (The PS GEM0/GEM1 PHYs are not covered: their link is the PS's own concern.)
 // Flags come from sticky_xdomain (sourced in the RGMII clock domains).
 
 module rx_diag_regs (
@@ -40,13 +62,23 @@ module rx_diag_regs (
   input  logic        s_axi_rready,
 
   input  logic [3:0]  flags_i,   // {pl1_und, pl1_ovf, pl0_und, pl0_ovf}
+  input  logic [1:0]  idelay_rdy_i, // {PL1, PL0} IDELAYCTRL ready, already in clk domain
   output logic [3:0]  clear_o,   // one-cycle pulses
 
   input  logic [15:0] sfp_status_i,
   output logic        sfp_force_disable_o,
   output logic        sfp_clr_fault_seen_o,
   output logic        sfp_clr_removed_seen_o,
-  output logic        sfp_clr_lockout_o
+  output logic        sfp_clr_lockout_o,
+
+  // link control (axis clk domain; consumed asynchronously by switch_top's
+  // port_link_ctrl)
+  output logic [5:0]  link_up_o,
+  output logic [5:0]  link_flush_tog_o,
+  input  logic        link_flush_busy_i,     // fabric domain, synchronized here
+  input  logic [1:0]  phy_link_i,        // {PL1, PL0} PHY link, axis domain
+  input  logic [5:0]  link_event_set_i,      // axis domain: sets the sticky event bit
+  output logic        link_irq_o
 );
 
   logic [7:0]  aw_hold;
@@ -66,6 +98,34 @@ module rx_diag_regs (
   assign sfp_clr_lockout_o      = sfp_ctl_wr && w_hold[1];
   logic force_q;
   assign sfp_force_disable_o = force_q;
+
+  wire link_set_wr = write_fire && aw_hold == 8'h0C && wstrb_hold[0];
+  wire link_clr_wr = write_fire && aw_hold == 8'h10 && wstrb_hold[0];
+  wire evt_clr_wr  = write_fire && aw_hold == 8'h18 && wstrb_hold[0];
+  wire evt_en_wr   = write_fire && aw_hold == 8'h1C && wstrb_hold[0];
+  logic [5:0] event_q, event_en_q;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] flush_busy_s;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      link_up_o        <= 6'b100000;
+      link_flush_tog_o <= '0;
+      event_q          <= '0;
+      event_en_q       <= '0;
+      flush_busy_s     <= '0;
+    end else begin
+      flush_busy_s <= {flush_busy_s[0], link_flush_busy_i};
+      if (link_set_wr) link_up_o <= link_up_o | w_hold[5:0];
+      if (link_clr_wr) begin
+        link_up_o        <= link_up_o & ~w_hold[5:0];
+        link_flush_tog_o <= link_flush_tog_o ^ w_hold[5:0];
+      end
+      // set has priority over a same-cycle clear
+      event_q <= (event_q & ~(evt_clr_wr ? w_hold[5:0] : 6'b0)) | link_event_set_i;
+      if (evt_en_wr) event_en_q <= w_hold[5:0];
+    end
+  end
+  assign link_irq_o = |(event_q & event_en_q);
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) force_q <= 1'b0;
     else if (sfp_ctl_wr) force_q <= w_hold[0];
@@ -104,9 +164,12 @@ module rx_diag_regs (
         ar_valid_q   <= 1'b0;
         s_axi_rvalid <= 1'b1;
         case (ar_hold)
-          8'h00:   s_axi_rdata <= {28'd0, flags_i};
+          8'h00:   s_axi_rdata <= {26'd0, idelay_rdy_i, flags_i};
           8'h04:   s_axi_rdata <= {16'd0, sfp_status_i};
           8'h08:   s_axi_rdata <= {31'd0, force_q};
+          8'h14:   s_axi_rdata <= {20'd0, phy_link_i, 1'b0, flush_busy_s[1], 2'b00, link_up_o};
+          8'h18:   s_axi_rdata <= {26'd0, event_q};
+          8'h1C:   s_axi_rdata <= {26'd0, event_en_q};
           default: s_axi_rdata <= 32'd0;
         endcase
       end

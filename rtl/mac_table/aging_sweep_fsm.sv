@@ -27,6 +27,14 @@
 // A tick arriving while a quadrant sweep is still in progress is ignored
 // (should not happen given the above, but avoids re-entrancy if it ever
 // did).
+//
+// Port flush (link-down): a one-cycle flush_start_i while idle (it takes
+// priority over a same-cycle tick) walks the WHOLE bank instead, using the
+// same per-entry bus handshake. Every non-empty entry whose port mask has
+// any bit in flush_mask_i loses those bits; if none remain the age is set to 0,
+// i.e. the entry is expired (age 0 = empty slot). busy_o is high from
+// the start request until a sweep finishes. A tick that arrives during a
+// flush is ignored, so aging lags by at most that one tick.
 
 module aging_sweep_fsm
   import mac_table_pkg::*;
@@ -35,6 +43,10 @@ module aging_sweep_fsm
   input  logic rst_n,
 
   input  logic tick_i,
+
+  input  logic                    flush_start_i,
+  input  logic [PORTMASK_W-1:0]   flush_mask_i,
+  output logic                    busy_o,   // any sweep (aging quadrant or flush) in progress
 
   // shared bank-A bus arbitration (see bank_arbiter; learn has priority)
   output logic bus_req_o,
@@ -52,9 +64,13 @@ module aging_sweep_fsm
 
   logic [BANK_ADDR_W-1:0]     addr_q;
   logic [AGE_QUAD_SEL_W-1:0]  quadrant_q;
+  logic                       flush_mode_q;
+  logic [PORTMASK_W-1:0]      flush_mask_q;
 
   // true when addr_q is the last row of the quadrant currently being swept
-  wire quad_last = (addr_q[AGE_QUAD_ADDR_W-1:0] == {AGE_QUAD_ADDR_W{1'b1}});
+  wire quad_last_q = (addr_q[AGE_QUAD_ADDR_W-1:0] == {AGE_QUAD_ADDR_W{1'b1}});
+  wire bank_last   = (addr_q == {BANK_ADDR_W{1'b1}});
+  wire quad_last   = flush_mode_q ? bank_last : quad_last_q;
 
   // Entry field access is inlined (rather than calling the mac_table_pkg
   // entry_age/entry_mac/entry_port_mask/make_entry functions) because this
@@ -65,22 +81,32 @@ module aging_sweep_fsm
   // appears with >=2 instances and a real non-zero write; inlining the
   // exact same bit-slicing makes it disappear). Plain part-selects have no
   // such issue and are exactly as synthesizable.
-  wire [AGE_W-1:0] rd_age = a_rdata_i[AGE_W-1:0];
+  wire [AGE_W-1:0]      rd_age  = a_rdata_i[AGE_W-1:0];
+  wire [PORTMASK_W-1:0] rd_pmask = a_rdata_i[AGE_W +: PORTMASK_W];
+  wire                  flush_hit = (rd_age != '0) && ((rd_pmask & flush_mask_q) != '0);
+  wire [PORTMASK_W-1:0] flush_new_mask = rd_pmask & ~flush_mask_q;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       state_q    <= S_IDLE;
       addr_q     <= '0;
       quadrant_q <= '0;
+      flush_mode_q <= 1'b0;
+      flush_mask_q <= '0;
     end else begin
       state_q <= state_d;
-      if (state_q == S_IDLE && tick_i) begin
+      if (state_q == S_IDLE && flush_start_i) begin
+        flush_mode_q <= 1'b1;
+        flush_mask_q <= flush_mask_i;
+        addr_q       <= '0;
+      end else if (state_q == S_IDLE && tick_i) begin
         // start of a new quadrant sweep: quadrant_q in the high bits,
         // in-quadrant offset reset to 0
+        flush_mode_q <= 1'b0;
         addr_q <= {quadrant_q, {AGE_QUAD_ADDR_W{1'b0}}};
       end else if (state_q == S_WRITE) begin
         addr_q <= addr_q + 1'b1;
-        if (quad_last) quadrant_q <= quadrant_q + 1'b1; // wraps mod AGE_TICKS_PER_SWEEP
+        if (quad_last && !flush_mode_q) quadrant_q <= quadrant_q + 1'b1; // wraps mod AGE_TICKS_PER_SWEEP
       end
     end
   end
@@ -91,11 +117,16 @@ module aging_sweep_fsm
     a_en_o    = 1'b0;
     a_we_o    = 1'b0;
     a_addr_o  = addr_q;
-    a_wdata_o = {a_rdata_i[ENTRY_W-1:AGE_W], rd_age - 1'b1};
+    if (flush_mode_q)
+      a_wdata_o = {a_rdata_i[ENTRY_W-1:AGE_W+PORTMASK_W], flush_new_mask,
+                   (flush_new_mask == '0) ? {AGE_W{1'b0}} : rd_age};
+    else
+      a_wdata_o = {a_rdata_i[ENTRY_W-1:AGE_W], rd_age - 1'b1};
+    busy_o = (state_q != S_IDLE);
 
     unique case (state_q)
       S_IDLE: begin
-        if (tick_i) state_d = S_REQ;
+        if (flush_start_i || tick_i) state_d = S_REQ;
       end
       S_REQ: begin
         if (bus_gnt_i) state_d = S_READ;
@@ -106,7 +137,7 @@ module aging_sweep_fsm
         state_d = S_WRITE;
       end
       S_WRITE: begin
-        if (rd_age != '0) begin
+        if (flush_mode_q ? flush_hit : (rd_age != '0)) begin
           a_en_o = 1'b1;
           a_we_o = 1'b1;
         end

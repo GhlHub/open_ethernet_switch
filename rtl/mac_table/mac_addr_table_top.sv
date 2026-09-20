@@ -49,6 +49,11 @@ module mac_addr_table_top
 
   input  logic [AGE_W-1:0] default_age_i,
 
+  // Port flush (link-down): a one-cycle pulse on bit p expires every learned
+  // entry for port p (age -> 0). Requests are merged while a sweep is running.
+  input  logic [PORTMASK_W-1:0] flush_req_i,
+  output logic                  flush_busy_o,   // a flush is pending or sweeping
+
   // learning ports
   input  logic [NUM_LEARN_PORTS-1:0]            learn_req_i,
   input  logic [NUM_LEARN_PORTS-1:0][MAC_W-1:0] learn_mac_i,
@@ -81,6 +86,33 @@ module mac_addr_table_top
     end
   end
   wire age_tick_pulse = tick_sync_q & ~tick_sync_q2;
+
+  // -----------------------------------------------------------------
+  // Port flush orchestration: merge requests, wait until every bank's sweep
+  // FSM is idle (an aging quadrant may be running), start all banks together
+  // with the pending port mask, wait for them to finish.
+  // -----------------------------------------------------------------
+  logic [NUM_BANKS-1:0] bank_busy;
+  logic [PORTMASK_W-1:0] flush_pend_q;
+  typedef enum logic [1:0] {F_IDLE, F_RUN_WAIT, F_RUN} fstate_t;
+  fstate_t fstate_q;
+  wire flush_start = (fstate_q == F_IDLE) && (|flush_pend_q) && !(|bank_busy);
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      flush_pend_q <= '0;
+      fstate_q     <= F_IDLE;
+    end else begin
+      flush_pend_q <= (flush_start ? '0 : flush_pend_q) | flush_req_i;
+      unique case (fstate_q)
+        F_IDLE:     if (flush_start) fstate_q <= F_RUN_WAIT;
+        F_RUN_WAIT: if (|bank_busy)  fstate_q <= F_RUN;      // sweeps have begun
+        F_RUN:      if (!(|bank_busy)) fstate_q <= F_IDLE;
+        default:    fstate_q <= F_IDLE;
+      endcase
+    end
+  end
+  assign flush_busy_o = (fstate_q != F_IDLE) || (|flush_pend_q);
 
   // -----------------------------------------------------------------
   // Learn side: ports -> round-robin arbiter -> FIFO -> learn_engine_fsm
@@ -311,6 +343,9 @@ module mac_addr_table_top
         .clk       (clk),
         .rst_n     (rst_n),
         .tick_i    (age_tick_pulse),
+        .flush_start_i (flush_start),
+        .flush_mask_i  (flush_pend_q),
+        .busy_o        (bank_busy[gi]),
         .bus_req_o (aging_bus_req),
         .bus_gnt_i (aging_gnt),
         .a_en_o    (aging_a_en),

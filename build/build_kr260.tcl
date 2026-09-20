@@ -107,7 +107,7 @@ create_bd_port -dir O -type clk axis_clk
 create_bd_port -dir O -type rst axis_rst_n
 create_bd_port -dir O -type clk freerun_clk
 create_bd_port -dir O -type rst ps_rst_n
-create_bd_port -dir I -type clk -freq_hz 62500000 fabric_clk_o
+create_bd_port -dir I -type clk -freq_hz 100000000 fabric_clk_o
 create_bd_port -dir I -type rst fabric_rst_n_o
 connect_bd_net [get_bd_pins ps/pl_clk0] [get_bd_ports axis_clk] [get_bd_pins ps/maxihpm0_lpd_aclk] \
   [get_bd_pins rst150/slowest_sync_clk] [get_bd_pins sc_ctl/aclk]
@@ -144,8 +144,10 @@ connect_bd_net [get_bd_pins ps/pl_clk0] [get_bd_pins sfp_iic/s_axi_aclk]
 connect_bd_net [get_bd_pins rst150/peripheral_aresetn] [get_bd_pins sfp_iic/s_axi_aresetn]
 make_bd_intf_pins_external -name sfp_iic [get_bd_intf_pins sfp_iic/IIC]
 set irq1 [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat irq1]
-set_property CONFIG.NUM_PORTS {1} $irq1
+set_property CONFIG.NUM_PORTS {2} $irq1
 connect_bd_net [get_bd_pins sfp_iic/iic2intc_irpt] [get_bd_pins irq1/In0]
+create_bd_port -dir I link_irq
+connect_bd_net [get_bd_ports link_irq] [get_bd_pins irq1/In1]
 connect_bd_net [get_bd_pins irq1/dout] [get_bd_pins ps/pl_ps_irq1]
 
 # DDR: switch masters -> HP0, DMA masters -> HP1

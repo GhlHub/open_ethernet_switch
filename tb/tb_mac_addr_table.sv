@@ -20,6 +20,8 @@ module tb_mac_addr_table;
   logic rst_n = 0;
   logic age_tick_i = 0;
   logic [AGE_W-1:0] default_age_i = 9'd3;
+  logic [PORTMASK_W-1:0] flush_req_i = '0;
+  wire                   flush_busy_o;
 
   logic [NUM_LEARN_PORTS-1:0]            learn_req_i;
   logic [NUM_LEARN_PORTS-1:0][MAC_W-1:0] learn_mac_i;
@@ -39,6 +41,8 @@ module tb_mac_addr_table;
     .rst_n                      (rst_n),
     .age_tick_i                 (age_tick_i),
     .default_age_i              (default_age_i),
+    .flush_req_i                (flush_req_i),
+    .flush_busy_o               (flush_busy_o),
     .learn_req_i                (learn_req_i),
     .learn_mac_i                (learn_mac_i),
     .learn_busy_o               (learn_busy_o),
@@ -223,6 +227,57 @@ module tb_mac_addr_table;
       errors++;
     end else begin
       $display("PASS: MAC_B aged out as expected");
+    end
+
+    // ---- port flush (link-down): expires exactly that port's entries ----
+    begin
+      localparam logic [47:0] MAC_C = 48'h02_00_00_00_00_C3;
+      localparam logic [47:0] MAC_D = 48'h02_00_00_00_00_D5;
+      logic [PORTMASK_W-1:0] m2;
+      @(posedge clk);
+      learn_req_i[0] <= 1'b1; learn_mac_i[0] <= MAC_A;
+      learn_req_i[3] <= 1'b1; learn_mac_i[3] <= MAC_B;
+      @(posedge clk); learn_req_i[0] <= 1'b0; learn_req_i[3] <= 1'b0;
+      wait_cycles(100);
+      @(posedge clk); learn_req_i[3] <= 1'b1; learn_mac_i[3] <= MAC_C;
+      @(posedge clk); learn_req_i[3] <= 1'b0;
+      wait_cycles(100);
+      @(posedge clk); learn_req_i[4] <= 1'b1; learn_mac_i[4] <= MAC_D;
+      @(posedge clk); learn_req_i[4] <= 1'b0;
+      wait_cycles(100);
+      do_lookup(2, MAC_B, hit, mask); if (hit !== 1'b1) begin $display("FAIL: pre-flush MAC_B should hit"); errors++; end
+
+      // flush port 3 while an aging quadrant sweep is running (must wait for it)
+      @(posedge clk); age_tick_i <= 1'b1; @(posedge clk); age_tick_i <= 1'b0;
+      wait_cycles(20);
+      @(posedge clk); flush_req_i[3] <= 1'b1; @(posedge clk); flush_req_i[3] <= 1'b0;
+      wait_cycles(2);
+      if (flush_busy_o !== 1'b1) begin $display("FAIL: flush_busy_o not asserted after request"); errors++; end
+      wait (flush_busy_o === 1'b0);
+      wait_cycles(10);
+
+      do_lookup(2, MAC_B, hit, mask); if (hit !== 1'b0) begin $display("FAIL: MAC_B (port 3) survived flush of port 3"); errors++; end
+      else $display("PASS: MAC_B expired by flush of port 3");
+      do_lookup(2, MAC_C, hit, mask); if (hit !== 1'b0) begin $display("FAIL: MAC_C (port 3) survived flush of port 3"); errors++; end
+      else $display("PASS: MAC_C expired by flush of port 3");
+      do_lookup(2, MAC_A, hit, mask); if (hit !== 1'b1 || mask !== 8'b0000_0001) begin $display("FAIL: MAC_A (port 0) damaged by flush of port 3"); errors++; end
+      else $display("PASS: MAC_A (port 0) untouched by flush of port 3");
+      do_lookup(2, MAC_D, hit, mask); if (hit !== 1'b1 || mask !== 8'b0001_0000) begin $display("FAIL: MAC_D (port 4) damaged by flush of port 3"); errors++; end
+      else $display("PASS: MAC_D (port 4) untouched by flush of port 3");
+
+      // two ports at once, requests in different cycles (merged/sequenced)
+      @(posedge clk); flush_req_i[0] <= 1'b1; @(posedge clk); flush_req_i[0] <= 1'b0;
+      @(posedge clk); flush_req_i[4] <= 1'b1; @(posedge clk); flush_req_i[4] <= 1'b0;
+      wait_cycles(4); wait (flush_busy_o === 1'b0); wait_cycles(10);
+      do_lookup(2, MAC_A, hit, mask); if (hit !== 1'b0) begin $display("FAIL: MAC_A survived flush of port 0"); errors++; end
+      do_lookup(2, MAC_D, hit, mask); if (hit !== 1'b0) begin $display("FAIL: MAC_D survived flush of port 4"); errors++; end
+      else $display("PASS: back-to-back flushes of ports 0 and 4 both took effect");
+
+      // a learn after the flush works normally
+      @(posedge clk); learn_req_i[3] <= 1'b1; learn_mac_i[3] <= MAC_B;
+      @(posedge clk); learn_req_i[3] <= 1'b0; wait_cycles(100);
+      do_lookup(2, MAC_B, hit, mask); if (hit !== 1'b1 || mask !== 8'b0000_1000) begin $display("FAIL: re-learn after flush"); errors++; end
+      else $display("PASS: address re-learned after flush");
     end
 
     if (errors == 0) $display("=== ALL TESTS PASSED ===");

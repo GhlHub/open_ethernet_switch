@@ -3,13 +3,15 @@
 // open_eth_mac_1g_switch's m_axis_rxd (32-bit AXI4-Stream, its own
 // axis_clk domain -- 150MHz per that core's README, fixed by its
 // internal packet buffer/descriptor logic, not reclockable) -> this
-// switch's ingress AXI4-Stream convention (16-bit, clk domain, 62.5MHz).
-// Two clock domains, same rationale/pattern as rtl/ps_eth/
-// gem_rx_w_to_axis.sv: an axis_clk-side unpacker decomposes each
-// accepted 32-bit/tkeep beat into up to 4 individual bytes, pushed one
-// per cycle into rtl/common/async_fifo.sv; a clk-side packer (identical
-// in spirit to gem_rx_w_to_axis.sv's, just without an err bit -- see
-// below) recombines pairs of bytes into 16-bit/tkeep words.
+// switch's ingress AXI4-Stream convention (16-bit, clk domain, 100MHz).
+// Two clock domains. WORD-WIDE datapath (a byte-serial version capped each
+// port at 0.8 Gbit/s, below the wire rate): an axis_clk-side splitter turns
+// each accepted 32-bit/tkeep beat into one or two 16-bit words
+// {eop, upper-byte-valid, data16}, pushed one per cycle into
+// rtl/common/async_fifo.sv; the clk side simply presents the FIFO head as the
+// 16-bit AXI4-Stream, one word per cycle. Sustained throughput is one word
+// per cycle on both sides: 1.6 Gbit/s on the fabric side at 100MHz, 2.3 Gbit/s
+// on the MAC side at 142.86MHz.
 //
 // m_axis_tuser (the switch ingress bad-frame flag) is tied permanently
 // low: open_eth_mac_1g_switch already does full internal store-and-
@@ -25,11 +27,11 @@
 // non-1111 on the tlast beat, and contiguous valid bytes from bit 0.
 
 module mac_rxd_to_switch_ingress #(
-  parameter int FIFO_DEPTH = 128
+  parameter int FIFO_DEPTH = 256   // 16-bit words
 ) (
   input  logic axis_clk,   // MAC's AXI4-Stream clock (its own required rate)
   input  logic axis_rst_n,
-  input  logic clk,        // fabric clock (62.5 MHz)
+  input  logic clk,        // fabric clock (100 MHz)
   input  logic rst_n,
 
   // open_eth_mac_1g_switch's m_axis_rxd, axis_clk domain
@@ -51,66 +53,52 @@ module mac_rxd_to_switch_ingress #(
 
   assign s_axis_tuser_o = 1'b0; // see header note: nothing bad ever reaches m_axis_rxd
 
-  localparam int ENTRY_W = 8 + 1; // data + eop
+  localparam int ENTRY_W = 16 + 1 + 1; // data16, upper byte valid, eop
 
-  // ---- axis_clk side: latch one accepted 32-bit beat, drain its 1-4
-  // valid bytes into the async FIFO one per cycle ----
-  logic [31:0] beat_data_q;
-  logic [2:0]  valid_bytes_q; // 1..4
-  logic        beat_last_q;
-  logic [1:0]  byte_idx_q;    // 0..valid_bytes_q-1, next lane to push
-  logic        draining_q;
+  // ---- axis_clk side: split a 32-bit beat into 1 or 2 words ----
+  // tkeep is contiguous from bit 0 (AXI4-Stream standard: only the tlast
+  // beat is partial). A second word is needed iff byte 2 is valid.
+  wire needs_second = m_axis_rxd_tkeep_i[2];
+  wire [ENTRY_W-1:0] word0 = {m_axis_rxd_tlast_i && !needs_second, m_axis_rxd_tkeep_i[1], m_axis_rxd_tdata_i[15:0]};
+  wire [ENTRY_W-1:0] word1 = {m_axis_rxd_tlast_i, m_axis_rxd_tkeep_i[3], m_axis_rxd_tdata_i[31:16]};
 
-  wire [2:0] valid_bytes_next = {2'd0, m_axis_rxd_tkeep_i[0]} + {2'd0, m_axis_rxd_tkeep_i[1]} +
-                                 {2'd0, m_axis_rxd_tkeep_i[2]} + {2'd0, m_axis_rxd_tkeep_i[3]};
-
-  assign m_axis_rxd_tready_o = !draining_q;
-
-  logic [7:0] cur_byte;
-  always_comb begin
-    unique case (byte_idx_q)
-      2'd0:    cur_byte = beat_data_q[7:0];
-      2'd1:    cur_byte = beat_data_q[15:8];
-      2'd2:    cur_byte = beat_data_q[23:16];
-      default: cur_byte = beat_data_q[31:24];
-    endcase
-  end
-
-  logic [ENTRY_W-1:0] fifo_wr_data;
+  logic                pend_v_q;   // the beat's second word is waiting to be pushed
+  logic [ENTRY_W-1:0]  pend_q;
   logic                fifo_wr_en, fifo_full;
+  logic [ENTRY_W-1:0]  fifo_wr_data;
 
-  // subtract in the full 3-bit width first (valid_bytes_q ranges 1..4),
-  // then truncate to 2 bits for the compare -- doing it the other way
-  // round (truncate then subtract) breaks the valid_bytes_q==4 case:
-  // 4[1:0]=0, 0-1 wraps to 3'b11 3, matching nothing.
-  wire [2:0] valid_bytes_m1 = valid_bytes_q - 3'd1;
-  wire cur_is_last_byte = (byte_idx_q == valid_bytes_m1[1:0]);
+  // one word per cycle: a beat's second word takes the next cycle, during which
+  // the MAC is held off (tready low); single-word beats are accepted every cycle
+  assign m_axis_rxd_tready_o = !pend_v_q && !fifo_full;
+  wire   accept = m_axis_rxd_tvalid_i && m_axis_rxd_tready_o;
 
-  assign fifo_wr_en   = draining_q && !fifo_full;
-  assign fifo_wr_data = {beat_last_q && cur_is_last_byte, cur_byte};
+  always_comb begin
+    fifo_wr_en   = 1'b0;
+    fifo_wr_data = '0;
+    if (pend_v_q) begin
+      fifo_wr_en   = !fifo_full;
+      fifo_wr_data = pend_q;
+    end else if (accept) begin
+      fifo_wr_en   = 1'b1;
+      fifo_wr_data = word0;
+    end
+  end
 
   always_ff @(posedge axis_clk or negedge axis_rst_n) begin
     if (!axis_rst_n) begin
-      draining_q <= 1'b0;
-      byte_idx_q <= '0;
-    end else if (!draining_q) begin
-      if (m_axis_rxd_tvalid_i) begin
-        beat_data_q   <= m_axis_rxd_tdata_i;
-        valid_bytes_q <= valid_bytes_next;
-        beat_last_q   <= m_axis_rxd_tlast_i;
-        byte_idx_q    <= '0;
-        draining_q    <= 1'b1;
-      end
+      pend_v_q <= 1'b0;
     end else begin
-      if (!fifo_full) begin
-        if (cur_is_last_byte) draining_q <= 1'b0;
-        else                  byte_idx_q <= byte_idx_q + 1'b1;
+      if (pend_v_q) begin
+        if (!fifo_full) pend_v_q <= 1'b0;
+      end else if (accept && needs_second) begin
+        pend_v_q <= 1'b1;
+        pend_q   <= word1;
       end
     end
   end
 
   logic [ENTRY_W-1:0] fifo_rd_data;
-  logic                fifo_rd_en, fifo_empty;
+  logic                fifo_empty;
 
   async_fifo #(.WIDTH(ENTRY_W), .DEPTH(FIFO_DEPTH)) u_fifo (
     .wr_clk    (axis_clk),
@@ -120,75 +108,15 @@ module mac_rxd_to_switch_ingress #(
     .full_o    (fifo_full),
     .rd_clk    (clk),
     .rd_rst_n  (rst_n),
-    .rd_en_i   (fifo_rd_en),
+    .rd_en_i   (s_axis_tvalid_o && s_axis_tready_i),
     .rd_data_o (fifo_rd_data),
     .empty_o   (fifo_empty)
   );
 
-  // ---- clk side: pack pairs of popped bytes into 16-bit words. Same
-  // structure as gem_rx_w_to_axis.sv's packer (see that file for the
-  // detailed reasoning), minus the err bit -- async_fifo's read side is
-  // a combinational peek-before-pop, no extra registered-read wait
-  // state needed. ----
-  typedef enum logic {S_FIRST, S_SECOND} pk_state_t;
-  pk_state_t pk_state_q;
-
-  logic [7:0] first_byte_q;
-
-  wire first_eop = fifo_rd_data[8];
-  wire [7:0] this_byte = fifo_rd_data[7:0];
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      pk_state_q <= S_FIRST;
-    end else begin
-      unique case (pk_state_q)
-        S_FIRST: begin
-          if (!fifo_empty && !first_eop) begin
-            first_byte_q <= this_byte;
-            pk_state_q   <= S_SECOND;
-          end
-        end
-        S_SECOND: begin
-          if (!fifo_empty && s_axis_tready_i) pk_state_q <= S_FIRST;
-        end
-        default: pk_state_q <= S_FIRST;
-      endcase
-    end
-  end
-
-  always_comb begin
-    fifo_rd_en      = 1'b0;
-    s_axis_tdata_o  = {this_byte, first_byte_q};
-    s_axis_tkeep_o  = 2'b11;
-    s_axis_tvalid_o = 1'b0;
-    s_axis_tlast_o  = 1'b0;
-
-    unique case (pk_state_q)
-      S_FIRST: begin
-        if (!fifo_empty) begin
-          if (first_eop) begin
-            s_axis_tdata_o  = {8'h00, this_byte};
-            s_axis_tkeep_o  = 2'b01;
-            s_axis_tvalid_o = 1'b1;
-            s_axis_tlast_o  = 1'b1;
-            fifo_rd_en      = s_axis_tready_i;
-          end else begin
-            fifo_rd_en = 1'b1;
-          end
-        end
-      end
-      S_SECOND: begin
-        if (!fifo_empty) begin
-          s_axis_tdata_o  = {this_byte, first_byte_q};
-          s_axis_tkeep_o  = 2'b11;
-          s_axis_tlast_o  = first_eop; // this is the *second* byte's eop here
-          s_axis_tvalid_o = 1'b1;
-          fifo_rd_en      = s_axis_tready_i;
-        end
-      end
-      default: ;
-    endcase
-  end
+  // ---- clk side: the FIFO head IS the stream (first-word-fall-through) ----
+  assign s_axis_tvalid_o = !fifo_empty;
+  assign s_axis_tdata_o  = fifo_rd_data[15:0];
+  assign s_axis_tkeep_o  = {fifo_rd_data[16], 1'b1};
+  assign s_axis_tlast_o  = fifo_rd_data[17];
 
 endmodule

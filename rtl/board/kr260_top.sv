@@ -53,6 +53,7 @@ module kr260_top (
   inout  wire sfp_iic_sda_io
 );
 
+  wire link_irq;
   wire ps_rst_n;
   wire freerun_clk;
   wire fabric_clk_o;
@@ -275,6 +276,7 @@ module kr260_top (
   wire m_axi_cpu_rready;
 
   system_wrapper u_bd (
+    .link_irq (link_irq),
     .sfp_iic_scl_io (sfp_iic_scl_io),
     .sfp_iic_sda_io (sfp_iic_sda_io),
     .axis_clk (axis_clk),
@@ -575,6 +577,7 @@ module kr260_top (
     .sfp_tx_fault (sfp_tx_fault),
     .sfp_tx_disable (sfp_tx_disable),
     .sfp_led (sfp_led),
+    .link_irq (link_irq),
     .mdio0_s_axi_awaddr (mdio0_s_axi_awaddr[7:0]),
     .mdio0_s_axi_awvalid (mdio0_s_axi_awvalid),
     .mdio0_s_axi_awready (mdio0_s_axi_awready),
