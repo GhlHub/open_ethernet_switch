@@ -374,7 +374,7 @@ module kr260_pl_top
   );
 
   // RX data IDELAY per port: chosen from routed setup/hold slack (PL0: 0.67/0.22 ns at 500 ps,
-  // PL1: 0.94/-0.23 ns at 500 ps) so each port's window is roughly centred; re-tune after
+  // PL1: 0.94/-0.23 ns at 500 ps, then 0.21/0.70 at 1000 ps -> 750 ps) so each port window is roughly centred; re-tune after
   // large placement changes
   rgmii_gmii_adapter #(.RX_DATA_IDELAY_PS(700)) u_rgmii0 (
     .gtx_clk (gtx_clk_pl0), .gtx_rst_n (gtx_rst_n_pl0),
@@ -388,7 +388,7 @@ module kr260_pl_top
     .idelay_rdy_o (idelay_rdy_raw[0]), .rx_elastic_overflow_o (diag_flags[0]), .rx_elastic_underrun_o (diag_flags[1])
   );
 
-  rgmii_gmii_adapter #(.RX_DATA_IDELAY_PS(1000)) u_rgmii1 (
+  rgmii_gmii_adapter #(.RX_DATA_IDELAY_PS(750)) u_rgmii1 (
     .gtx_clk (gtx_clk_pl1), .gtx_rst_n (gtx_rst_n_pl1),
     .idelay_refclk_i (idly_clk_pl1), .idelay_rst_n_i (idly_rst_n_pl1),
     .rgmii_txd_o (pl1_rgmii_txd), .rgmii_tx_ctl_o (pl1_rgmii_tx_ctl), .rgmii_txc_o (pl1_rgmii_txc),

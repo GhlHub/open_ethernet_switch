@@ -5,7 +5,7 @@ board build (every severity, 890 rows), by tracing each crossing to its RTL and
 reading the protocol. Vivado cannot prove a crossing correct; this records what
 each one is, why it is (or was not) safe, and what evidence exists.
 
-The latest inspected report (2026-09-19 20:42) has zero critical and 13 warning
+The latest inspected report (2026-09-20 04:18) has zero critical and 13 warning
 clock-pair groups. It supersedes earlier summary counts, but does not make the
 review below a complete sign-off of new circuitry. RGMII now uses FIFO36E2,
 not the earlier generic FIFO. Vendor recognition and simulation are evidence,

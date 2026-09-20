@@ -1,6 +1,6 @@
 # Overall architecture
 
-Inventory baseline: 2026-09-19. The design is a store-and-forward switch
+Inventory baseline: 2026-09-20. The design is a store-and-forward switch
 using a shared PS DDR packet pool. PS GEM traffic enters PL through the GEM
 external FIFO interface, bypassing the GEM's built-in DMA. The switch's own
 PL DMA engines then store packets in DDR.
@@ -17,7 +17,7 @@ not that operation has been demonstrated on a KR260.
 flowchart TB
     subgraph board[kr260_top.sv - board assembly]
         subgraph pltop[kr260_pl_top.sv - PL assembly]
-            PHY["Two PL PHYs"] <--> RGMII["RGMII adapters x2<br/>PHY internal delays + per-port RX data delay<br/>2048-entry elastic FIFO"]
+            PHY["Two PL PHYs"] <--> RGMII["RGMII adapters x2<br/>PHY internal delays + RX data delay 700/750 ps<br/>2048-entry elastic FIFO"]
             OPT["SFP optical port"] <--> GT["GTH wrapper + XCI<br/>X0Y6, 1.25 Gb/s"]
             MDIO["MDIO controllers + PHY init x2"] -.-> PHY
             DIAG["RX diagnostics + SFP and link control"]
@@ -122,7 +122,7 @@ SFP sync/negotiation status drives LEDs; sideband status and laser force-off/
 fault-lockout controls are CPU-accessible. See the [register map](board-integration.md).
 
 Each MDIO controller runs an automatic DP83867 initialization sequence after
-PHY reset release. The RGMII RX data/control pins have 700 ps (PL0) and 1000 ps (PL1)
+PHY reset release. The RGMII RX data/control pins have 700 ps (PL0) and 750 ps (PL1)
 IDELAYE3 delays;
 the 300 MHz clock outputs now supply active delay calibration. PHY internal
 RX/TX delays are configured for 2.00/1.75 ns. The optional FPGA RX-clock delay

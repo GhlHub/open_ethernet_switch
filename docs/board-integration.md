@@ -1,6 +1,6 @@
 # KR260 board integration status
 
-Inventory: 2026-09-19. The board assembly includes automatic PL PHY setup,
+Inventory: 2026-09-20. The board assembly includes automatic PL PHY setup,
 RGMII elastic receive buffers and I/O delays, SFP IIC/sideband control, and
 CPU-readable diagnostics. Existing local routed reports show WNS +0.018 ns,
 WHS +0.010 ns and zero critical CDC clock-pair rows, with warnings remaining.
@@ -194,7 +194,7 @@ DRE on both channels and 16-beat bursts. It copies between software buffers
 and the CPU switch port; the switch's dedicated CPU DMA engines separately
 copy between that stream and the shared switch pool.
 
-The local routed reports dated 2026-09-19 20:42 show WNS **+0.018 ns**,
+The local routed reports dated 2026-09-20 04:18 show WNS **+0.018 ns**,
 WHS **+0.010 ns**, 25,500 LUTs (21.77%), 33,940 registers (14.49%), 51.5 BRAM
 tiles and 3/4 MMCMs. A bitstream is present. CDC summary: zero critical,
 13 warning and 18 informational clock-pair rows. DRC retains two RAM collision
@@ -275,11 +275,14 @@ max 2.8 / min 1.2 ns both edges; TX output delay max 3.25 / min 0.85 ns both
 edges (derived from the 1.75 ns PHY TX delay). Consequence found in
 implementation: with the RX clock on a BUFG the data hold failed by 0.26 ns, so
 the RX data/ctl pins now go through `IDELAYE3` (board overrides: PL0 700 ps,
-PL1 1000 ps; reusable adapter default 500 ps; one IDELAYCTRL instance per port,
+PL1 750 ps; reusable adapter default 500 ps; one IDELAYCTRL instance per port,
 IODELAY_GROUP set in the XDC because the attribute cannot take a parameter);
 the clock itself is not delayed (IDELAYE3 cannot drive a BUFG). Latest report
 figures are recorded above. Delay choices were tuned during development and
-need re-evaluation after placement changes. **Margin is thin**; PHY delay
+need re-evaluation after placement changes. The 2026-09-20 source update reduces
+PL1 from 1000 ps to 750 ps; PL0 remains 700 ps. The source comment records
+earlier PL1 setup/hold observations of 0.21/0.70 ns at 1000 ps as the tuning
+rationale, not as the current routed result. **Margin is thin**; PHY delay
 variation and carrier trace skew still need confirmation on hardware.
 
 ## SFP module I2C

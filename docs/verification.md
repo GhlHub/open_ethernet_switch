@@ -1,9 +1,10 @@
 # Design inventory verification
 
-Date: 2026-09-19. This inventory rebuilt **25 portable testbenches through 23 Icarus
+Inventory date: 2026-09-20. The full regression on 2026-09-19 rebuilt **25 portable testbenches through 23 Icarus
 targets**, reran 16 distinct lint targets and ran six XSim targets. The new
 IDELAY primitive bench brings the total to 26 distinct testbenches.
-Incoming RTL, constraints, IP, build scripts and benches were preserved.
+Those full-regression results are retained below; they were not rerun for the
+board-only delay change. Incoming source is preserved.
 Local implementation artifacts were inspected separately; no synthesis or
 implementation build was launched for this inventory.
 
@@ -13,7 +14,25 @@ implementation build was launched for this inventory.
 | Verilator | 5.020 |
 | Vivado / XSim | 2026.1 |
 
-## Simulation results
+## Checks for the 2026-09-20 update
+
+The sole RTL change since `166c765` sets PL1 RX data/control IDELAY to 750 ps
+(previously 1000 ps); PL0 remains 700 ps. Counts remain 63 RTL SystemVerilog
+files, 59 logical modules, four packages, 26 benches, three XCI configurations
+and four XDC files. The FreeRTOS-LTS pin is unchanged.
+
+A temporary copy of `tb_rgmii_idelay_gate.sv` was run with the DUT override
+`RX_DATA_IDELAY_PS=750`, using the same XSim/UNISIM flow as
+`xsim-rgmii-idelay-gate`. It passed with `PASS: errors=0`, checking reset order,
+RDY gating, the 64-cycle hold and re-reset. The checked-in bench continues to
+use the adapter default of 500 ps. This check exercises the new delay setting
+but does not validate board skew, electrical margins or the complete board top.
+
+Documentation links/diagrams, source counts, XCI JSON, Tcl completeness and
+synthesis-list parity were checked. The local routed reports below were
+refreshed; no implementation run was launched for this inventory.
+
+## Simulation results (2026-09-19)
 
 All portable targets returned zero and all subtests printed their final pass
 markers, with no runtime failure markers. `sim-mdio` runs two benches;
@@ -64,7 +83,7 @@ pending. Plain `make sim` still runs only the MAC-table bench.
 
 ## Vendor primitive simulations
 
-The following six XSim targets were freshly run and passed:
+The following six XSim targets were run on 2026-09-19 and passed:
 
 | Target | Hardware path tested |
 | --- | --- |
@@ -130,9 +149,10 @@ simulation compilation is not a substitute for such checks.
 
 ## Local Vivado implementation evidence
 
-The inspected reports are dated 2026-09-19 20:42, from Vivado 2026.1 for
+The inspected reports are dated 2026-09-20 04:18, from Vivado 2026.1 for
 `kr260_top`, `xck26-sfvc784-2LV-c`. A routed checkpoint and bitstream exist.
-These figures supersede the earlier +0.019/+0.011 ns snapshots. The inventory
+These figures match the previous +0.018/+0.010 ns overall slack and resource
+counts; report timestamps and fingerprints have changed. The inventory
 did not independently reproduce a clean build or establish exact source-to-
 artifact identity; the fingerprints below identify the artifacts inspected.
 
@@ -156,16 +176,16 @@ Reports remain ignored under `build/reports/`:
 | File | SHA-256 |
 | --- | --- |
 | `address_map.txt` | `2344952b30464d761d68927d8d4f1f5d976c502578e1314c10189dd31ce392ac` |
-| `impl_cdc_summary.rpt` | `f29eac023b3dcc8019c2c963f8fe0e807255cdfd8c670ed4ced5fd6e4a435e0c` |
-| `impl_drc.rpt` | `f92f7938199d17159b95b4fe8023b95dc75b9997c46361a642f9d3015bc893f0` |
-| `impl_methodology.rpt` | `e4f0ad26e6292ffc4b4cecd95f1d7594f86f52fa6b7e7d0fb24d11c4c868b91f` |
-| `impl_timing_summary.rpt` | `5fc018b310697e2353bedc357ec306e54ef65cc7ea3c98503815439bdb8cabae` |
-| `impl_utilization.rpt` | `da10ac2e12f85a310c517c84f0ca5864c5adbe0a963c2b203a7ad478f5635012` |
+| `impl_cdc_summary.rpt` | `af1ca62fdeb85fa6e08c16566128688fa38b432aa27bc1e31ea2e6f55529ee0e` |
+| `impl_drc.rpt` | `189ec66bdadea8948f559a7dab6bfbcd3931bf51470f4538127d0e03efd17ad5` |
+| `impl_methodology.rpt` | `2a2302cd13f8adbe890255c3658921253eef1f67340c78b9702f1503278091de` |
+| `impl_timing_summary.rpt` | `56ecbf276d50c6e8032d2025e40fd22513caf7001efab53878511ca178d479f3` |
+| `impl_utilization.rpt` | `33fe251bc3caecdd71ca3403b0d91e9e4b631819157c63420bc9ae732efb1ba3` |
 
 Bitstream SHA-256 (`build/vivado_kr260/kr260_switch.runs/impl_1/kr260_top.bit`):
 
 ```text
-eb52ae9958c3c7fc60050149e118111489cb865ff99784b963d13e1217d37428
+fe719dbfe3c2ce498995b48d6a1081c1c4c25717ba14821d88ae5bc27dc0fc20
 ```
 
 Documentation checks cover source counts and links, Mermaid parsing, XCI JSON,
