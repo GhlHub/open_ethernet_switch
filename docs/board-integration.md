@@ -109,7 +109,7 @@ master with a 32-bit AXI-Lite slave and a physical IOBUF. Its separate
 the pin stage with tristate logic. The board assembly uses one controller per
 PL MDIO bus; the source records PHY addresses 2 and 3 for PL0 and PL1.
 Both controllers are instantiated in `kr260_pl_top`, with registers mapped
-through `sc_ctl`; a FreeRTOS driver remains pending.
+through `sc_ctl`; the initial R5 link service reads their hardware-polled status.
 
 | Offset | Register | Current behavior |
 | --- | --- | --- |
@@ -128,7 +128,8 @@ and inspect ERROR before consuming data. The master clears READ_DATA on every
 START, including writes; it is not a separately retained last-successful-read
 register. Keep the divider stable while a transaction is running. There is no
 interrupt output or native Clause 45 transaction engine. The automatic PL PHY setup uses Clause 22 indirect extended-register access;
-software management and PS PHY setup remain pending.
+initial software management and PS PHY setup are in `software/r5/src/links.c`;
+board validation remains pending.
 
 ## SFP negotiation and transceiver integration
 
@@ -175,8 +176,8 @@ validate run status after every `wait_on_run`, so inspect run status, logs,
 reports and the bitstream rather than relying only on the batch exit code.
 The bitstream path is
 `build/vivado_kr260/kr260_switch.runs/impl_1/kr260_top.bit`.
-Reports and generated IP/project products are ignored by Git. There is no
-XSA export, FreeRTOS application or boot-image packaging flow yet.
+Reports and generated IP/project products are ignored by Git. An [R5 application and XSA/BSP export flow](../software/r5/README.md) now exist;
+boot-image packaging and hardware validation remain pending.
 
 The static [`kr260_top`](../rtl/board/kr260_top.sv) joins generated
 `system_wrapper` ports to [`kr260_pl_top`](../rtl/board/kr260_pl_top.sv).
@@ -327,6 +328,7 @@ The diagnostics slave at `0x80100000` now exposes calibration and link control:
 | `0x14` | LINK_STATUS | Bits 5:0 stored port state; bit 8 synchronized queue/MAC flush busy; bits 10/11 PL0/PL1 polled PHY link |
 | `0x18` | LINK_EVENT | Sticky W1C: bits 0/1 PL0/PL1 link change, bit 2 SFP negotiation-link change, bit 3 module presence change, bit 4 LOS change, bit 5 TX_FAULT rising |
 | `0x1C` | LINK_EVENT_EN | Enables event bits to assert the level interrupt on PS IRQ1 bit 1; reset zero |
+| `0x20` | PCS_STATUS | Read-only synchronized SFP state: bit 0 sync, bit 1 negotiation link, bit 2 full duplex, bit 3 remote fault |
 
 LINK_SET/CLR/STATUS use port order GEM0, GEM1, PL0, PL1, SFP, CPU. The reset
 mask is **0x20 (CPU only)**. PHY link and SFP events are informational until
@@ -336,8 +338,7 @@ can report lower negotiated speeds.
 
 After initialization, `phy_init_seq` polls PHYSTS about every 10 ms
 (`POLL_CYCLES=1430000` at 142.857 MHz), with the first poll after 1000 clocks.
-It reports link/speed/duplex and pulses on a link-bit change. Poll errors retain
-the prior state; PS PHYs are not covered by these controllers. CPU START during
+It reports link/speed/duplex and pulses on a link-bit change. Poll errors now invalidate the cached state and clear link-up; PS PHYs are not covered by these controllers. CPU START during
 sequencer ownership is a single pending bit, using the current CONFIG/data
 when eventually issued. Poll/CPU ownership arbitration, overlapping requests,
 reset during a transaction and stale-status recovery still need review.
@@ -392,7 +393,8 @@ against real PHY clocks.
 ## Remaining implementation and verification
 
 - Validate automatic PHY setup and reset sequencing on the fitted board;
-  add firmware polling/recovery for INIT_FAIL and PS PHY/GEM initialization.
+  validate firmware polling and PS PHY/GEM initialization; PL INIT_FAIL still
+  requires hardware reset/reinitialization.
 - Measure RGMII timing margins, account for board skew and PHY delay variation,
   and review remaining unconstrained ports. The new RDY gating and reset-release order have a primitive-model test;
   verify all bank controller replicas and reference/receive-clock loss on hardware.
@@ -402,7 +404,7 @@ against real PHY clocks.
   existing CDC analysis. Validate reset sequencing for XPM's single-reset contract.
 - Check SFP module IIC, sideband timings and fitted U87 reference on hardware;
   sideband timing parameters are implementation choices, not conformance proof.
-- Harden PCS negotiation and frame admission, then implement FreeRTOS DMA,
+- Harden PCS negotiation and frame admission, then validate the initial FreeRTOS DMA,
   cache/descriptor ownership, interrupts and boot packaging.
 - Exercise all ports, shared DDR contention and sustained traffic on hardware.
 
@@ -423,3 +425,21 @@ the local PDFs):
 | `ds925-zynq-ultrascale-plus.pdf` | DS925 v1.30, July 9 2026 — DC/AC switching characteristics | `774d99f03d768358a2b9fa83eea8cfbc24bfe95e431a80d5221993cef2879c4a` |
 | `ug571-ultrascale-selectio.pdf` | UG571 v1.16, January 14 2025 — SelectIO resources | `ea1aa08b568305719f2a4ff30e820afcbc7fdd1ce02b3bf40f9317326c241dc2` |
 | `ug583-ultrascale-pcb-design.pdf` | UG583 v1.29, December 23 2025 — PCB design | `747b040adbe047588fb05def81d6647e35106a3fc9c099eac20c9aeb0748cef9` |
+
+## R5 UART console
+
+The regenerated PS design enables UART1 on MIO36/MIO37, at `0xff010000`,
+for the carrier FTDI console. The R5 platform selects it for stdin/stdout,
+and firmware initializes 115200 baud, 8N1, without RTS/CTS. Log output is
+mirrored in RAM. See the [R5 build instructions](../software/r5/README.md)
+for regenerating the XSA/BSP and the matching boot prerequisites.
+
+
+### Copper connector hardware check (2026-09-20)
+
+Sequential cable moves confirmed the user's connector orientation: right lower
+is GEM1, right upper is GEM0, left lower is PL1, and left upper is PL0. All four
+negotiated 1 Gb/s full duplex and passed ping at the R5's DHCP-assigned address
+`10.0.1.214`. See [test counts and limits](verification.md#four-copper-ports-passing-dhcp-address-ping-2026-09-20).
+The tested ILA image uses 900 ps PL0 RX input delays; the normal board RTL
+retains 700 ps and needs independent implementation/hardware validation.

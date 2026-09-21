@@ -120,3 +120,12 @@ The MDIO poller and link-event register share the control clock, while SFP
 negotiation link passes through a two-flop synchronizer before event detection.
 The new clock plan and constraints require review of all physical skew/reset
 assumptions; fixed-ratio simulation does not prove metastability safety.
+
+## Initial R5 status interface
+
+`PCS_STATUS` at diagnostics offset `0x20` adds two-stage ASYNC_REG crossings
+for SFP sync, negotiation link, duplex and remote fault into `axis_clk`. These
+are independent sampled levels, not an atomic snapshot. Firmware requires all
+healthy conditions and module sideband status before admission. Updated routed
+CDC/timing analysis is still required after this RTL change. PHY poll errors
+now invalidate link state rather than retaining stale link-up.

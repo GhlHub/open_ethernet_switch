@@ -16,8 +16,7 @@
 //
 // Two clock domains, same rationale as gem_rx_w_to_axis.sv: the GEM side
 // (gem_clk = the GEM's tx_clk) pulls one byte per ~8 ns (1 Gb/s at 8-bit
-// width); the fabric side (clk) is the switch's 62.5 MHz / 16-bit
-// convention, which is also 1 Gb/s. The crossing carries whole 16-bit words
+// width); the KR260 fabric side (clk) runs at 100 MHz / 16 bits. The crossing carries whole 16-bit words
 // -- each accepted AXI4-Stream word is written into rtl/common/async_fifo.sv
 // as one entry {eop, keep_hi, data[15:0]}, one write per fabric cycle -- and
 // the 16-to-8 unpack happens on the GEM side, after the crossing. (An
@@ -31,13 +30,10 @@
 // returned during the same cycle as the tx_r_rd request" or an arbitrary
 // number of cycles later. tx_r_data_rdy_o gates the whole exchange.
 //
-// tx_r_data_rdy_o start policy: the GEM pulls at full rate once started, but
-// egress_port_rd.sv delivers a frame with a one-cycle gap every 16 bytes, so
-// filling is slightly slower than draining and a GEM that started on the
-// first byte would run the FIFO dry mid-frame. So a frame is released to
-// the GEM only when START_WORDS of it are buffered, or its last word has
-// been written (a short frame), whichever comes first -- START_WORDS covers
-// the accumulated gap deficit of a maximum-size frame (about 1 word per 8).
+// tx_r_data_rdy_o start policy: release a frame only when START_WORDS
+// are buffered, or its last word has arrived (a short frame). This absorbs
+// upstream stalls before allowing the GEM to pull at line rate. The current
+// egress prefetch path supplies continuous words at the fabric clock rate.
 // The fabric side counts words per frame and issues ONE "permit" per frame,
 // as a Gray-coded event counter synchronized into gem_clk like the FIFO
 // pointers; the GEM side counts frames it has finished; data_rdy is high
@@ -64,7 +60,7 @@ module axis_to_gem_tx_r #(
   parameter int FIFO_DEPTH  = 256, // in 16-bit words; power of 2
   parameter int START_WORDS = 128  // words of a frame buffered before the GEM may start it
 ) (
-  input  logic clk,      // fabric clock (62.5 MHz)
+  input  logic clk,      // fabric clock (100 MHz in KR260)
   input  logic rst_n,
   input  logic gem_clk,
   input  logic gem_rst_n,
@@ -184,15 +180,15 @@ module axis_to_gem_tx_r #(
 
   // Underflow / flush (UG1085 Ch.34 Table 34-1 and text): once the GEM starts
   // a read (tx_r_rd) it must be answered with tx_r_valid OR tx_r_underflow.
-  // If the FIFO is empty when the GEM reads (a frame's later words have not
-  // arrived yet), tx_r_underflow_o answers it in the same cycle. The GEM then
+  // If the FIFO is empty during a frame (later words have not arrived yet),
+  // tx_r_underflow_o answers it in the same cycle. The GEM then
   // waits for tx_r_flushed, so this module:
   //   T_DRAIN     data_rdy low; discard the rest of the frame as it arrives
-  //               (up to and including its eop) -- only if the underflow hit
-  //               mid-frame; an underflow before any byte was sent skips this
+  //               (up to and including its eop)
   //   T_FLUSH     tx_r_flushed_o high for one cycle, then low -- the falling
   //               edge is what tells the GEM the flush is complete
   //   T_RUN       normal; data_rdy is raised again only after the flush
+  // Between frames an outstanding read instead waits for the next permit.
   // The manual's other flush cases (tx_r_err, half-duplex collisions) are not
   // produced by anything here.
   wire [15:0] word_data = fifo_rd_data[15:0];
@@ -204,6 +200,7 @@ module axis_to_gem_tx_r #(
 
   logic sop_q;
   logic hi_pending_q; // low byte of the head entry sent; high byte is next
+  logic read_pending_q;
 
   wire [7:0] byte_val = hi_pending_q ? word_data[15:8] : word_data[7:0];
   wire       byte_eop = word_eop && (hi_pending_q || !word_keep_hi);
@@ -211,11 +208,16 @@ module axis_to_gem_tx_r #(
   wire       entry_last_byte = hi_pending_q || !word_keep_hi;
 
   assign tx_r_data_rdy_o  = (tx_state_q == T_RUN) && !fifo_empty && frame_released;
-  assign tx_r_underflow_o = (tx_state_q == T_RUN) && tx_r_rd_i && fifo_empty;
+  // The physical GEM can issue a trailing read on the cycle after EOP.
+  // Empty BETWEEN frames is not a transmit underrun. Remember that request
+  // and answer it when the next permitted frame is available. Once SOP has
+  // been sent, an empty FIFO really does mean a truncated frame.
+  wire read_request = tx_r_rd_i || read_pending_q;
+  assign tx_r_underflow_o = (tx_state_q == T_RUN) && read_request && fifo_empty && !sop_q;
   assign tx_r_flushed_o   = (tx_state_q == T_FLUSH);
 
   wire drain_pop = (tx_state_q == T_DRAIN) && !fifo_empty;
-  wire run_read  = (tx_state_q == T_RUN) && tx_r_rd_i && !fifo_empty;
+  wire run_read  = (tx_state_q == T_RUN) && read_request && !fifo_empty && frame_released;
 
   assign fifo_rd_en   = drain_pop || (run_read && entry_last_byte);
   assign tx_r_valid_o = run_read;
@@ -227,9 +229,12 @@ module axis_to_gem_tx_r #(
     if (!gem_rst_n) begin
       sop_q        <= 1'b1;
       hi_pending_q <= 1'b0;
+      read_pending_q <= 1'b0;
       tx_state_q   <= T_RUN;
       done_q       <= '0;
     end else begin
+      read_pending_q <= (tx_state_q == T_RUN) && read_request &&
+                        !run_read && !tx_r_underflow_o;
       if (tx_r_valid_o) begin
         sop_q        <= byte_eop;
         hi_pending_q <= word_keep_hi && !hi_pending_q;

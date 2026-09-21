@@ -65,3 +65,8 @@ Upstream component licenses/notices remain in that checkout; no vendor sources
 are copied into the project RTL. See [dependency setup](../third_party/README.md)
 for initialization. The reference does not provide a KR260 BSP, application,
 network driver or boot image.
+
+The R5 linker script in `software/r5/linker.ld` is adapted from AMD
+embeddedsw 2026.1 `scripts/linker_files/lscript_r5.ld.in` and retains its MIT
+copyright/SPDX header. The application links the generated AMD standalone BSP;
+its source notices remain in the installed/generated BSP.

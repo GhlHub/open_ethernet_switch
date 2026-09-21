@@ -1,6 +1,6 @@
 # Open Ethernet Switch
 
-A work-in-progress FPGA Ethernet switch for the AMD Kria KR260, with a planned
+A work-in-progress FPGA Ethernet switch for the AMD Kria KR260, with an initial R5
 FreeRTOS control plane. The current RTL joins port adapters, MAC
 learning/lookup/aging, and a shared DDR packet-buffer architecture under
 `rtl/switch_top.sv`.
@@ -17,13 +17,17 @@ words and the egress frame RAM is prefetched for continuous streaming. The board
 DDR interconnect, CPU-facing AXI DMA, two RGMII ports, and the SFP GTH path.
 Vivado build scripts and three IP configurations are included. Existing local
 implementation reports show a generated bitstream and positive setup/hold
-slack under the current constraints. **Remaining CDC/timing review,
-hardware validation of PHY setup, SFP negotiation hardening, and FreeRTOS firmware remain
-pending; no board operation has been demonstrated.**
+slack under the current constraints. R5 hardware bring-up now demonstrates UART, timers, DHCP acquisition and ping through all four copper Ethernet ports via
+the fabric CPU port. Cable moves retained reachability at `10.0.1.214` on the
+running debug image. See the [four-port results](docs/verification.md#four-copper-ports-passing-dhcp-address-ping-2026-09-20).
+**Sustained throughput, fault recovery, remaining CDC review and SFP hardware
+validation remain pending.**
 
 - [Architecture diagrams and packet flow](docs/architecture.md)
+- [R5 FreeRTOS startup, timers and networking](software/r5/README.md)
 - [Source inventory and development backlog](docs/inventory.md)
 - [Board wiring, clock plan, and integration gaps](docs/board-integration.md)
+- [GEM1 ILA debugging and transmit fixes](docs/gem1-debug.md)
 - [Simulation and lint results](docs/verification.md)
 - [CDC review and remaining assumptions](docs/cdc-review.md)
 - [Imported source and license notices](docs/source-notices.md)
@@ -46,7 +50,7 @@ pending; no board operation has been demonstrated.**
 | `constraints/` | PL RGMII and SFP pins, primary clocks, and implementation CDC path bounds |
 | `tb/` | Twenty-six testbenches (one requires XSim) and an AXI memory model |
 | `build/` | Vivado block-design/synthesis/implementation scripts and digital-switch source list |
-| `third_party/` | FreeRTOS-LTS Git submodule, branch `202604-LTS`; no board application/BSP yet |
+| `third_party/` | FreeRTOS-LTS Git submodule, branch `202604-LTS`; used by the R5 kernel and TCP stack |
 | `sim/Makefile` | Icarus simulation, Verilator lint, and XSim targets |
 
 ## Run the existing simulations

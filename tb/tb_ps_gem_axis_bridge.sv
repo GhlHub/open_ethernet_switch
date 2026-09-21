@@ -292,7 +292,7 @@ module tb_ps_gem_axis_bridge;
 
   // a GEM that reads every cycle it can, and after tx_r_underflow stops
   // reading until tx_r_flushed has gone high and back low (UG1085)
-  task automatic gem_pull_aggressive(input int max_cycles);
+  task automatic gem_pull_aggressive(input int max_cycles, input bit trailing_read = 0);
     int c;
     bit done;
     tx_r_rd <= 1'b0;
@@ -303,7 +303,8 @@ module tb_ps_gem_axis_bridge;
       @(posedge gem_clk);
       c++;
       if (tx_r_valid && tx_r_eop) begin
-        // the frame's last byte was just delivered: a GEM stops here
+        // Hardware can leave one read outstanding after EOP.
+        if (trailing_read) @(posedge gem_clk);
         tx_r_rd <= 1'b0;
         done = 1'b1;
       end else if (tx_r_underflow) begin
@@ -664,6 +665,47 @@ module tb_ps_gem_axis_bridge;
         for (int i = 0; i < tx_rxd_bytes.size() && i < 1518; i++) if (tx_rxd_bytes[i] !== byte'(i * 7 + 3)) ok = 1'b0;
         if (ok) $display("PASS: testG TX 1518-byte frame at line rate: no underflow, content intact");
         else begin $display("FAIL: testG TX line rate (bytes=%0d uf=%0d fl=%0d eop_idx=%0d)", tx_rxd_bytes.size(), uf_cnt, fl_cnt, tx_rxd_eop_idx); errors++; end
+      end
+    end
+
+    // Hardware regression: one trailing read immediately after EOP must
+    // wait at the frame boundary, not corrupt the frame with an underrun.
+    tx_capture_reset();
+    tx_mon_reset();
+    begin
+      byte data[];
+      data = new[314];
+      for (int i = 0; i < 314; i++) data[i] = byte'(i);
+      fork
+        drive_axis_frame(data);
+        gem_pull_aggressive(4000, 1'b1);
+      join
+      repeat (30) @(posedge gem_clk);
+      if (uf_cnt || fl_cnt || tx_rxd_bytes.size() != 314 || tx_rxd_eop_idx != 313) begin
+        $display("FAIL: trailing read caused underrun/flush or damaged frame"); errors++;
+      end
+    end
+    // Honor that already-issued read once the next complete short frame
+    // arrives. No new read pulse is sent until its first byte is returned.
+    tx_capture_reset();
+    begin
+      byte data[];
+      data = new[17];
+      for (int i = 0; i < 17; i++) data[i] = byte'(8'hc0+i);
+      drive_axis_frame(data);
+      repeat (20) @(posedge gem_clk);
+      if (tx_rxd_bytes.size() != 1 || tx_rxd_sop_idx != 0) begin
+        $display("FAIL: trailing read was not answered by next frame SOP"); errors++;
+      end
+      gem_pull_frame(500);
+      repeat (10) @(posedge gem_clk);
+      if (tx_rxd_bytes.size() != 17 || tx_rxd_eop_idx != 16 || uf_cnt || fl_cnt) begin
+        $display("FAIL: next frame after trailing read is corrupt"); errors++;
+      end else begin
+        bit ok = 1'b1;
+        for (int i = 0; i < 17; i++) if (tx_rxd_bytes[i] !== byte'(8'hc0+i)) ok = 1'b0;
+        if (ok) $display("PASS: trailing GEM read waits between frames and resumes without underrun");
+        else begin $display("FAIL: trailing read recovery byte mismatch"); errors++; end
       end
     end
 

@@ -195,3 +195,119 @@ Generated simulator/FPGA products and downloaded vendor PDFs stay out of Git.
 The FreeRTOS-LTS submodule is pinned to `0b25dc50bae4cb971c7a459b109e52ab2f01a6b8`
 on upstream `202604-LTS`; its initialized nested checkouts are clean. This
 validates the dependency reference, not a FreeRTOS firmware build.
+
+## Initial R5 firmware implementation (2026-09-20)
+
+The [R5 firmware](../software/r5/README.md) builds against a standalone BSP
+generated from the existing board XSA with Vitis 2026.1, using the kernel and
+TCP sources from the pinned FreeRTOS-LTS submodule. A complete cross-build
+passes without compiler warnings. The ELF audit verifies ARM entry, low ATCM
+IRQ/SVC vectors targeting FreeRTOS, no unresolved symbols, and load segments
+confined to R5 ATCM and reserved DDR (excluding the fabric pool).
+
+`make -C software/r5 test` passes link-state/flush-guard and DHCP retry timing
+tests (including counter wrap), plus a descriptor/register model covering TX
+padding, alternating descriptors, RX ring recycling, malformed RX and TX
+error/timeout ownership. This is not packet-level DHCP or AXI hardware proof.
+
+`sim-rx-diag` and `sim-mdio` pass all four constituent benches, including the
+new read-only SFP PCS status check and PHY polling failure/recovery test.
+Vivado `synth_design -rtl` of `kr260_top` completes with zero errors/critical
+warnings and 285 warnings. This is elaboration only; the earlier routed
+reports and bitstream do not validate the new status-register RTL.
+
+At this build-only stage no firmware had been loaded onto a board; see the
+subsequent JTAG results below.
+
+### Regenerated hardware: R5 UART console
+
+The updated board XSA includes UART1 at `0xff010000` on MIO36/MIO37. The
+R5 platform was updated from that XSA and rebuilt with UART1 selected for
+stdin/stdout; generated `bspconfig.h` confirms both addresses. Firmware now
+initializes UART1 to 115200 8N1, no flow control, and mirrors output to the
+RAM log. The firmware cross-build and ELF vector/memory audit pass. Physical
+serial output was subsequently confirmed during the JTAG bring-up below.
+
+### First live R5 bring-up (2026-09-20)
+
+Hardware server: `10.0.1.109:3121`; UART telnet bridge: `10.0.1.109:2323`.
+The repository [boot script](../software/r5/boot_jtag.tcl) completes a volatile
+PS reset, A53 FSBL initialization, fabric programming and R5-0 startup in split
+mode. R5-1 stays reset and A53-0 stays halted; no flash was written. The
+[status script](../software/r5/status_jtag.tcl) samples the running application.
+
+Bring-up fixes: select UART1 in the FSBL BSP as well as the R5 BSP; refresh
+FSBL-local `psu_init.c/h` after hardware updates (Vitis retained the old files,
+leaving UART1 reset); use a full PS reset before DDR initialization; resolve
+the assembly `XFsbl_Exit` ELF symbol numerically for an XSDB hardware breakpoint.
+The shared PS MDIO bus identifies DP83867 devices (`2000:a231`) at addresses
+4 and **9**, with no response at the previously assumed 8. Firmware now uses 9
+for GEM1.
+
+Observed:
+
+- FSBL banner and R5 startup/link/DHCP messages arrive on physical UART1;
+  `board_uart_dropped` is zero in the final sample.
+- 5024 RTOS ticks and 3925577 free-running timestamp counts advance during
+  a 5041 ms JTAG sample. Sequential register reads add skew; this supports
+  approximately 1 kHz and 781250 Hz, not a precision frequency measurement.
+- Both PS PHYs initialize. GEM1 admits a 1 Gb/s full-duplex link;
+  `LINK_STATUS=0x22` enables GEM1 plus virtual CPU port 5. Both PL PHY snapshots
+  are `0x208` (initialized, valid, link down); both IDELAY ready bits are set.
+  No SFP link is present.
+- CPU-port AXI DMA RX buffers contain actual IPv4, ARP and IPv6 network frames.
+  MM2S completes a DHCP discover frame; final channel status values are
+  `0x0001100a` / `0x00011008`, without DMA error bits.
+- Initial DHCP attempts failed with a GEM1 TX underrun. Subsequent ILA captures
+  identified the missing PS FIFO clock selection and a spurious underrun on
+  the read after EOP. After both fixes, all 314 DHCP discover bytes match the
+  fabric input, GEM1 completes with zero status error and no PL underrun/flush.
+- R5 acquired `10.0.1.214` through DHCP. Five pings from host `10.0.1.24` on
+  `eth1` succeeded with zero loss (0.684–1.834 ms). Before ping, GEM1 counters
+  showed four successful TX frames, zero TX underruns and 98 RX frames.
+  See [GEM1 debug procedure and evidence](gem1-debug.md).
+
+The board remains running this R5 application. PMU firmware is not loaded in
+this JTAG flow. Boot-image packaging, TX recovery/throughput, link transitions,
+SFP, DHCP renewal and precise retry timing remain
+unverified. Local raw bring-up logs are under ignored `build/r5/`; packet captures
+are not source artifacts.
+
+
+## Four copper ports passing DHCP-address ping (2026-09-20)
+
+Milestone: `20260920-copper_ports_passing_dhcp_ping`. The R5 acquired DHCP
+address `10.0.1.214` on GEM1. The same network cable was then moved through
+GEM0, PL1 and PL0, with no reboot or configuration changes. Each port responded
+at that same address through the fabric CPU port. Connector positions below
+use the user's orientation when looking at the Ethernet connectors.
+
+| Connector | Fabric port | Link | Final ping sample | Additional observations |
+| --- | --- | --- | --- | --- |
+| Right lower | GEM1 (1) | 1 Gb/s full duplex | 5/5, zero loss | DHCP acquisition on UART; zero GEM TX underruns |
+| Right upper | GEM0 (0) | 1 Gb/s full duplex | 15/15, zero loss | TX/RX counters advance; zero GEM TX underruns |
+| Left lower | PL1 (3) | 1 Gb/s full duplex | 20/20, zero loss | PHY status `0x3a8`; no PL RX overflow/underrun flags |
+| Left upper | PL0 (2) | 1 Gb/s full duplex | 20/20, zero loss | PHY status `0x3a8`; no PL RX overflow/underrun flags |
+
+Host probes used `eth1` at `10.0.1.24`. GEM0 and PL1 initially lost four
+probes each; subsequent samples above were clean. PL0's 20-ping sample had
+0.296–2.400 ms round-trip times. R5 remained running and the DMA status showed
+no channel errors. The board was left with the cable on PL0.
+
+These observations establish basic bidirectional connectivity on all four
+copper ports using the DHCP-assigned address. Fresh DHCP acquisition on each
+port was not independently captured, and the move tests do not establish
+lossless handover, lease renewal, sustained throughput, simultaneous multiport
+forwarding or recovery under faults. SFP remains untested.
+
+The tested image includes the GEM FIFO fixes and two ILAs described in
+[GEM1 debugging](gem1-debug.md). It also uses the debug-only PL0 input-delay
+adjustment to 900 ps; the ordinary RTL still specifies 700 ps. PL0's result
+therefore validates this debug image, not an independently rebuilt normal
+image. Final debug-image setup/hold slack is +0.018/+0.010 ns under existing
+constraints; remaining timing/CDC review still applies.
+
+Raw logs are local ignored files under `build/gem1_debug/`: `final/`,
+`status_port_move.log`, `gem0_port_move.log`, `ping_port_move.log`,
+`status_left_lower.log`, `ping_left_lower_settled.log`,
+`status_left_upper.log` and `ping_left_upper.log`.

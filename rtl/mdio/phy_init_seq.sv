@@ -74,7 +74,7 @@ module phy_init_seq #(
   output logic        link_o,          // PHYSTS.LINK_STATUS from the last good poll (0 until valid)
   output logic [1:0]  link_speed_o,    // 00 10M, 01 100M, 10 1000M
   output logic        link_full_o,
-  output logic        link_valid_o,    // at least one poll completed since init
+  output logic        link_valid_o,    // latest poll succeeded
   output logic        link_change_o    // one-cycle pulse when link_o changes
 );
 
@@ -197,13 +197,17 @@ module phy_init_seq #(
         S_RUN: begin
           if (m_done_i) begin
             if (step_q == 4'd13) begin
-              // link poll finished: a failed read keeps the last state
-              if (!err_q) begin
+              // link poll finished: invalidate stale link state on a failed read
+              if (!err_q && !m_error_i) begin
                 link_valid_o <= 1'b1;
                 link_o       <= m_rdata_i[10];
                 link_speed_o <= m_rdata_i[15:14];
                 link_full_o  <= m_rdata_i[13];
                 if (m_rdata_i[10] != link_o) link_change_o <= 1'b1;
+              end else begin
+                link_valid_o <= 1'b0;
+                link_o <= 1'b0;
+                if (link_o) link_change_o <= 1'b1;
               end
               state_q <= S_POLL_WAIT;
               wait_q  <= POLL_CYCLES;

@@ -82,7 +82,7 @@ flowchart TB
     DDR["PS DDR<br/>Switch pool: 256 x 2048 bytes at 0x10000000<br/>Separate software buffers and descriptors"]
     HP0 <--> DDR
     HP1 <--> DDR
-    RTOS["PENDING: FreeRTOS firmware<br/>Memory reservation, cache and DMA ownership<br/>GEM / PHY setup, drivers, interrupts"]
+    RTOS["R5-0 FreeRTOS + TCP (initial)<br/>TTC tick + timestamp, CPU-port DMA<br/>250 ms link service, DHCP + minute retry"]
     RTOS -.-> PS
     classDef present fill:#e1efff,stroke:#245a9b,color:#10243a
     classDef partial fill:#fff0cb,stroke:#a96a00,color:#473000
@@ -90,7 +90,7 @@ flowchart TB
     classDef hardware fill:#eeeeee,stroke:#666666,color:#222222
     class LINK,CLOCK,MDIO,DIAG,SIDEBAND,IIC,INGRESS,EGRESS,CPU,BUF,CTL,HP0,DMA,HP1,IRQ present
     class RGMII,GT,PORTS,FWD partial
-    class RTOS pending
+    class RTOS partial
     class PHY,OPT,PS,DDR hardware
 ```
 
@@ -99,6 +99,10 @@ under the current constraints. Complete external timing and CDC sign-off are
 still pending. The portable system test covers a GEM0-to-CPU lookup miss;
 all-port forwarding, shared DDR contention, sustained load and hardware
 bring-up remain unverified. See [verification](verification.md).
+
+The [initial R5 firmware](../software/r5/README.md) builds against the upstream
+FreeRTOS-LTS checkout and generated board BSP. Its network interface uses the
+CPU virtual port; hardware execution remains to be validated.
 
 ## Physical-port boundaries
 

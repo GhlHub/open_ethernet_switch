@@ -5,15 +5,18 @@ Baseline: 2026-09-20. The repository contains **63 SystemVerilog files under
 GTH, RGMII, PL Ethernet clock generation, and MDIO -- and four packages),
 **26 testbenches** (25 portable and one XSim-only), one AXI memory BFM, three Vivado IP `.xci` configurations
 (GTH, PL Ethernet clocks and SFP PCS clocks), four XDC constraint files,
-three Vivado Tcl scripts, one synthesis source list and `sim/Makefile`. The inventory follows actual module instantiations and
+five Vivado Tcl scripts, a paired-ILA capture analyzer, one synthesis source list and `sim/Makefile`. The inventory follows actual module instantiations and
 interfaces; some source comments describe older stages of development.
 
 The target software environment is **FreeRTOS**. Existing CPU-port comments
 mention Linux socket buffers. The FreeRTOS-LTS source reference is now present,
-but no board application, BSP or driver integration exists. Counts above exclude
+and an initial [R5 firmware](../software/r5/README.md) now builds with a generated
+standalone BSP, upstream kernel/TCP, TTC timers and virtual-port DMA driver.
+Initial JTAG execution now verifies UART, timer progress, all four copper links and
+CPU-port reception/transmission, DHCP acquisition and same-address ping after cable moves (see
+[verification](verification.md#first-live-r5-bring-up-2026-09-20)). Counts above exclude
 the third-party checkout.
-The current hardware interface can be used as the starting point for a
-FreeRTOS network driver.
+The initial driver implements that interface with copied DMA buffers.
 
 See the [overall architecture diagrams](architecture.md) and the
 [verification report](verification.md). "Present" below means source exists;
@@ -21,8 +24,8 @@ it does not mean the block is integrated on the board or production-ready.
 
 Since `166c765`, the only source change is the PL1 RX data/control IDELAY
 override, reduced from 1000 ps to 750 ps to retune receive timing. PL0 remains
-700 ps. Module counts, interfaces, firmware status and development backlog
-are unchanged. See the dated checks in [verification](verification.md).
+700 ps. The initial R5 firmware subsequently adds a readable SFP PCS status register
+and invalidates PL PHY state after failed polls. RTL module counts are unchanged. See the dated checks in [verification](verification.md).
 
 ## Source inventory
 
@@ -50,23 +53,23 @@ are unchanged. See the dated checks in [verification](verification.md).
 | SFP transceiver | [`gth_sfp_wrapper.sv`](../rtl/sfp_pcs/gth_sfp_wrapper.sv), [`gth_sfp_ip.xci`](../rtl/sfp_pcs/ip/gth_sfp_ip.xci) | Updated Transceiver Wizard configuration: X0Y6, 156.25 MHz reference, 1.25 Gb/s, 8b/10b and 16-bit user data. The reference matches the local schematic; the header records channel/pin tracing and prior Vivado synthesis. Joined to the SFP PCS by the board wrapper; earlier local reports establish routing of that assembly. Physical interoperability and clock/reset behavior remain unverified. |
 | GTH behavioral model | [`gth_sfp_sim_model.sv`](../rtl/sfp_pcs/gth_sfp_sim_model.sv) | Simulation-only delayed parallel loopback with reset/status and error injection. Its standalone test passes. It does not model serial encoding, CDR, or hardware timing; existing PCS/SFP-port benches use direct parallel loopback instead of this model. |
 | SFP port assembly | [`sfp_port_top.sv`](../rtl/sfp_pcs/sfp_port_top.sv) | Instantiates the PCS, imported 1G MAC, and stream adapters. Digital loopback test passes. It is a 1G design; the transceiver is deliberately a separate instantiation (the board wrapper connects it at the GTH-parallel-interface boundary). |
-| CPU port | [`cpu_port_top.sv`](../rtl/cpu_port/cpu_port_top.sv), [`cpu_dma_wr.sv`](../rtl/cpu_port/cpu_dma_wr.sv), [`cpu_dma_rd.sv`](../rtl/cpu_port/cpu_dma_rd.sv) | Reuses ingress/egress front ends at port 5 and supplies dedicated switch-pool DMA engines. Stream endpoints connect to a separate CPU-facing AXI DMA SG IP in the block design. Present and subsystem-tested; firmware remains absent. |
-| Board wrapper and build | [`kr260_pl_top.sv`](../rtl/board/kr260_pl_top.sv), [`kr260_top.sv`](../rtl/board/kr260_top.sv), [`sfp_pcs_clk_gen.sv`](../rtl/sfp_pcs/sfp_pcs_clk_gen.sv), [`rst_sync.sv`](../rtl/common/rst_sync.sv), [`build/`](../build/) | `kr260_pl_top` joins `switch_top` to the PHY, MDIO and transceiver interfaces; `kr260_top` connects it name-for-name to the generated block-design wrapper (Zynq PS, interconnect, CPU DMA). Local reports show routing/bitstream generation and positive slack under incomplete constraints; not tested on hardware. See [board integration](board-integration.md#board-build-and-implementation-results). |
+| CPU port | [`cpu_port_top.sv`](../rtl/cpu_port/cpu_port_top.sv), [`cpu_dma_wr.sv`](../rtl/cpu_port/cpu_dma_wr.sv), [`cpu_dma_rd.sv`](../rtl/cpu_port/cpu_dma_rd.sv) | Reuses ingress/egress front ends at port 5 and supplies dedicated switch-pool DMA engines. Stream endpoints connect to a separate CPU-facing AXI DMA SG IP in the block design. Present and subsystem-tested; an initial R5 copy-based driver receives real network frames; DHCP acquisition and four-copper-port ping demonstrate bidirectional traffic through the CPU port. |
+| Board wrapper and build | [`kr260_pl_top.sv`](../rtl/board/kr260_pl_top.sv), [`kr260_top.sv`](../rtl/board/kr260_top.sv), [`sfp_pcs_clk_gen.sv`](../rtl/sfp_pcs/sfp_pcs_clk_gen.sv), [`rst_sync.sv`](../rtl/common/rst_sync.sv), [`build/`](../build/) | `kr260_pl_top` joins `switch_top` to the PHY, MDIO and transceiver interfaces; `kr260_top` connects it name-for-name to the generated block-design wrapper (Zynq PS, interconnect, CPU DMA). Local reports show routing/bitstream generation and positive slack under incomplete constraints; DHCP and all four copper ports pass basic ping on the debug image. See [board integration](board-integration.md#board-build-and-implementation-results). |
 | SFP PCS clock configuration | [`sfp_pcs_clk_gen_ip.xci`](../rtl/sfp_pcs/ip/sfp_pcs_clk_gen_ip.xci) | Third XCI: GTH 62.5 MHz to phase-related 125/62.5 MHz through one MMCM; wrapped by `sfp_pcs_clk_gen`. |
 | SFP and crossing constraints | [`kr260_sfp.xdc`](../constraints/kr260_sfp.xdc), [`kr260_clocks.xdc`](../constraints/kr260_clocks.xdc) | SFP serial/reference/sideband/LED pins and implementation-only max-delay bounds between selected clock domains. External delays and CDC sign-off remain incomplete. |
-| Build entry points | [`build_kr260.tcl`](../build/build_kr260.tcl), [`impl_kr260.tcl`](../build/impl_kr260.tcl), [`synth_switch_top.tcl`](../build/synth_switch_top.tcl), [`switch_top_files.f`](../build/switch_top_files.f) | PS block design, synthesis, implementation/bitstream/reports and OOC digital-switch synthesis. Generated products are ignored. Build and artifact-validation limits are documented in board integration. |
+| Build entry points | [`build_kr260.tcl`](../build/build_kr260.tcl), [`impl_kr260.tcl`](../build/impl_kr260.tcl), [`synth_switch_top.tcl`](../build/synth_switch_top.tcl), [`switch_top_files.f`](../build/switch_top_files.f) | PS block design, synthesis, implementation/bitstream/reports and OOC digital-switch synthesis. Generated products are ignored. GEM1 debug-image creation, paired ILA capture and CSV analysis are described in [GEM1 debugging](gem1-debug.md). Build and artifact-validation limits are documented in board integration. |
 | PHY startup sequencer | [`phy_init_seq.sv`](../rtl/mdio/phy_init_seq.sv) | Owns each PL MDIO master during DP83867 ID/strap checks and delay setup; exposes completion/failure and polls PHYSTS about every 10 ms for link, speed and duplex. PHY addresses 2/3, RX/TX delays 2.00/1.75 ns. |
 | RX elastic buffer | [`rgmii_rx_elastic.sv`](../rtl/pl_gmii/rgmii_rx_elastic.sv), [`fifo36_async_2kx18.sv`](../rtl/common/fifo36_async_2kx18.sv) | Packet-aware idle adjustment over a 2048x18 hard FIFO36E2; separate portable model, occupancy counts and error events. |
 | Receive diagnostics | [`rx_diag_regs.sv`](../rtl/board/rx_diag_regs.sv), [`sticky_xdomain.sv`](../rtl/common/sticky_xdomain.sv) | AXI-Lite at 0x80100000; PL overflow/underrun flags, IDELAY readiness, SFP status/control, software link-state set/clear, flush busy, sticky link events and interrupt enable. Only CPU starts enabled; physical ports require software admission. Toggle clears are indications, not event counters. |
 | SFP sideband | [`sfp_sideband.sv`](../rtl/sfp_pcs/sfp_sideband.sv) | Presence debounce, insertion settle, TX fault retry/lockout, CPU force-off and sticky status. LOS is informational; module management IIC is vendor IP generated by the build. |
 | RGMII I/O timing | [`kr260_rgmii_io.xdc`](../constraints/kr260_rgmii_io.xdc) | Forwarded TX clocks, both-edge input/output delays and per-port IDELAY groups. Board/PHY timing assumptions still require measurement. |
 | Port link control | [`port_link_ctrl.sv`](../rtl/common/port_link_ctrl.sv) | Synchronizes software state and flush toggles into the fabric; delays flush pulses four cycles, drives queue and MAC-table flushes, and returns combined busy. |
-| FreeRTOS reference | [`third_party/README.md`](../third_party/README.md), [`FreeRTOS-LTS`](../third_party/FreeRTOS-LTS/) | Git submodule tracks upstream `202604-LTS`, pinned to `0b25dc50bae4cb971c7a459b109e52ab2f01a6b8`; nested dependencies initialized. Application integration remains pending. |
+| FreeRTOS reference | [`third_party/README.md`](../third_party/README.md), [`FreeRTOS-LTS`](../third_party/FreeRTOS-LTS/) | Git submodule tracks upstream `202604-LTS`, pinned to `0b25dc50bae4cb971c7a459b109e52ab2f01a6b8`; nested dependencies initialized. Used by the R5 firmware now running on the board; basic network transmit/receive is demonstrated on all four copper ports. |
 
 The current buffer defaults reserve 256 slots of 2048 bytes, or **512 KiB of
 DDR payload storage**, starting at `0x10000000`. Metadata and local frame/FIFO
-storage are additional. This address is an RTL constant, not an established
-FreeRTOS memory reservation. Raising buffer counts or frame size requires
+storage are additional. This address is an RTL constant, reserved by the R5 firmware memory contract and excluded from its linker
+regions; boot and other processor memory maps must honor the reservation. Raising buffer counts or frame size requires
 review of RAM use, burst limits, alignment, and tests.
 
 ## Modules and integration still pending
@@ -76,7 +79,7 @@ The following development and verification remain incomplete.
 
 | Pending component | Required work / integration boundary |
 | --- | --- |
-| FreeRTOS firmware and boot flow | Initialize PS GEM/PHY operation; manage PL PHY initialization status and failures; enable supported physical links and flush them on link-down; provide DMA rings, cache/ownership, interrupts and network-stack integration. Reserve the 512 KiB switch pool. No application, XSA export or boot packaging exists. |
+| FreeRTOS firmware and boot flow | Initial R5 startup, TTC tick/timestamp, DMA network interface, 250 ms link service and DHCP minute retry are implemented and cross-linked. JTAG boot, UART, timer progress, DHCP acquisition and ping through all four copper ports are demonstrated. Package FSBL/PMU/bitstream/application, and then add cache-enabled DMA performance and fault restart. |
 | Management and status plane | MAC/MDIO/DMA, SFP IIC and RX/SFP diagnostics are connected. Still needed: forwarding policy, complete PCS configuration, counters and software drivers. Link status/events and flush controls now exist. Default age remains constant; PCS sync/link still drive LEDs. |
 | PS/DDR and CPU DMA verification | HP0 carries the three switch memory interfaces; HP1 carries the CPU AXI DMA masters. Verify generated address windows, arbitration, reset behavior, sustained throughput, descriptor/cache ownership and AXI error recovery. No hardware traffic has been demonstrated. |
 | PL RGMII timing and PHY setup | Automatic PL PHY setup, I/O delays and RX elastic buffering now exist. Validate fitted-board reset behavior, delay variation and trace skew; review IDELAY calibration readiness and abnormal receive recovery. FPGA RX clock-delay branch remains unplaceable. |
@@ -133,7 +136,7 @@ revision limits, clock diagram, and the vendor-source download information.
 - `buf_mgr_core` describes an older CPU path that skips DMA; the actual
   `cpu_port_top` uses two dedicated DMA engines.
 - `axi_dma_pkg` and `cpu_port_top` describe Linux buffers. The intended OS for
-  this project is FreeRTOS, and its software integration remains to be written.
+  this project is FreeRTOS, and its initial R5 integration now exists under `software/r5/`.
 - `mac_forwarding_top` still describes `switch_top` as absent, though the
   table and all six resolvers are now instantiated by that top level. Resolver
   comments also overstate source-address validation and short-frame handling;
@@ -170,5 +173,5 @@ The [bandwidth analysis](architecture.md#switch-fabric-bandwidth-limitations-and
    add sustained-traffic and recovery tests.
 3. Complete I/O constraints and CDC/reset review; harden RGMII clock adaptation
    and SFP negotiation before attempting traffic on hardware.
-4. Implement management and FreeRTOS drivers/boot packaging, then verify PS/DDR,
+4. Validate the initial R5 firmware and complete boot packaging, then verify PS/DDR,
    CPU DMA and all physical ports on the board.

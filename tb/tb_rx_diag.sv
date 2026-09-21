@@ -40,7 +40,7 @@ module tb_rx_diag;
     .s_axi_araddr (araddr), .s_axi_arvalid (arvalid), .s_axi_arready (arready),
     .s_axi_rdata (rdata), .s_axi_rresp (rresp), .s_axi_rvalid (rvalid), .s_axi_rready (rready),
     .flags_i (flags), .idelay_rdy_i (2'b10), .clear_o (clr),
-    .sfp_status_i (16'h0000), .sfp_force_disable_o (), .sfp_clr_fault_seen_o (),
+    .sfp_status_i (16'h0000), .sfp_pcs_status_i (4'b0111), .sfp_force_disable_o (), .sfp_clr_fault_seen_o (),
     .sfp_clr_removed_seen_o (), .sfp_clr_lockout_o (),
     .link_up_o (link_up), .link_flush_tog_o (link_tog), .link_flush_busy_i (flush_busy),
     .phy_link_i (phy_link), .link_event_set_i (evt_set), .link_irq_o (irq));
@@ -101,6 +101,10 @@ module tb_rx_diag;
     axi_read(8'h00, r); check(r[3:0] === 4'b0000, $sformatf("all cleared (%b)", r[3:0]));
     pulse(3); repeat (30) @(posedge clk);
     axi_read(8'h00, r); check(r[3:0] === 4'b1000, "bit3 (other domain) sets");
+
+    axi_read(8'h20, r); check(r === 32'h7, "PCS state is software-readable");
+    axi_write(8'h20, 32'hf, 4'hf);
+    axi_read(8'h20, r); check(r === 32'h7, "PCS state is read-only");
 
     // ---- link registers ----
     axi_read(8'h14, r); check(r[5:0] === 6'b100000, $sformatf("link reset state %b (only CPU port up)", r[5:0]));

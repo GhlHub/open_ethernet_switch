@@ -368,7 +368,7 @@ module kr260_pl_top
     .flags_i (diag_flags), .idelay_rdy_i (idelay_rdy_axi), .clear_o (diag_clr),
     .link_up_o (link_up_axi), .link_flush_tog_o (link_tog_axi), .link_flush_busy_i (link_flush_busy),
     .phy_link_i (phy_link), .link_event_set_i (link_event_set), .link_irq_o (link_irq),
-    .sfp_status_i (sfp_sb_status), .sfp_force_disable_o (sfp_sb_force),
+    .sfp_status_i (sfp_sb_status), .sfp_pcs_status_i (sfp_pcs_s2), .sfp_force_disable_o (sfp_sb_force),
     .sfp_clr_fault_seen_o (sfp_sb_clr_fault), .sfp_clr_removed_seen_o (sfp_sb_clr_removed),
     .sfp_clr_lockout_o (sfp_sb_clr_lockout)
   );
@@ -476,21 +476,26 @@ module kr260_pl_top
 
   logic sfp_sync_ok, sfp_an_link_up, sfp_an_duplex_full, sfp_an_remote_fault;
   logic [1:0] sfp_an_pause;
+  (* ASYNC_REG = "TRUE" *) logic [3:0] sfp_pcs_s1, sfp_pcs_s2;
+  always_ff @(posedge axis_clk or negedge axis_rst_n) begin
+    if (!axis_rst_n) begin sfp_pcs_s1 <= 0; sfp_pcs_s2 <= 0; end
+    else begin
+      sfp_pcs_s1 <= {sfp_an_remote_fault, sfp_an_duplex_full, sfp_an_link_up, sfp_sync_ok};
+      sfp_pcs_s2 <= sfp_pcs_s1;
+    end
+  end
   assign sfp_led = {sfp_sync_ok, sfp_an_link_up};
 
   // ---- link events for the CPU (axis_clk domain) ----
   // PHY link changes come from the MDIO controllers' PHYSTS poll (the PHY INT pad
   // is not wired to the FPGA). SFP sources are changes of already-debounced or
   // synchronized status.
-  (* ASYNC_REG = "TRUE" *) logic [1:0] sfp_an_s;
   logic sfp_an_prev_q, sfp_abs_prev_q, sfp_los_prev_q, sfp_flt_prev_q;
   always_ff @(posedge axis_clk or negedge axis_rst_n) begin
     if (!axis_rst_n) begin
-      sfp_an_s <= '0;
       sfp_an_prev_q <= 1'b0; sfp_abs_prev_q <= 1'b1; sfp_los_prev_q <= 1'b0; sfp_flt_prev_q <= 1'b0;
     end else begin
-      sfp_an_s   <= {sfp_an_s[0], sfp_an_link_up};
-      sfp_an_prev_q  <= sfp_an_s[1];
+      sfp_an_prev_q  <= sfp_pcs_s2[1];   // link_up, already synchronized above (one synchronizer per source)
       sfp_abs_prev_q <= sfp_sb_status[0];
       sfp_los_prev_q <= sfp_sb_status[1];
       sfp_flt_prev_q <= sfp_sb_status[2];
@@ -499,7 +504,7 @@ module kr260_pl_top
   assign link_event_set = { !sfp_flt_prev_q && sfp_sb_status[2],
                             sfp_los_prev_q ^ sfp_sb_status[1],
                             sfp_abs_prev_q ^ sfp_sb_status[0],
-                            sfp_an_prev_q  ^ sfp_an_s[1],
+                            sfp_an_prev_q  ^ sfp_pcs_s2[1],
                             phy_link_chg[1], phy_link_chg[0] };
 
   // GEM resets: each GEM FIFO clock domain gets its own synchronized reset

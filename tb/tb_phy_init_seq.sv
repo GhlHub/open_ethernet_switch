@@ -22,6 +22,7 @@ module mdio_phy_model #(
   input  logic mdc,
   inout  wire  mdio,
   input  logic strap11,
+  input  logic disconnected,
   input  logic [15:0] id2
 );
   logic [15:0] regs [0:31];
@@ -46,7 +47,7 @@ module mdio_phy_model #(
   always @(negedge mdc) rv = rd_val(regad);   // re-evaluated every half clock (array writes by the bench must be seen)
   wire drive = is_rd && (n >= 47);
   wire dbit  = (n == 47) ? 1'b0 : rv[63 - n];
-  assign mdio = drive ? dbit : 1'bz;
+  assign mdio = drive && !disconnected ? dbit : 1'bz;
 
   task automatic reset_regs();
     for (int i = 0; i < 32; i++) regs[i] = 16'h0;
@@ -109,7 +110,7 @@ module tb_phy_init_seq;
   pullup (mdio0);
   pullup (mdio1);
   wire mdc0, mdc1;
-  logic go0 = 0, go1 = 0, strap = 0;
+  logic go0 = 0, go1 = 0, strap = 0, disconnected = 0;
   wire done0, fail0, done1, fail1, link0, chg0;
   int chg_count = 0;
   always @(posedge clk) if (chg0) chg_count++;
@@ -127,7 +128,7 @@ module tb_phy_init_seq;
     .mdio_io (mdio0), .mdc_o (mdc0));
 
   mdio_phy_model #(.ADDR(5'd2)) phy0 (.busy_i (dut.busy), .mdc (mdc0), .mdio (mdio0),
-                                      .strap11 (strap), .id2 (16'hA231));
+                                      .strap11 (strap), .disconnected (disconnected), .id2 (16'hA231));
 
   // second instance: id mismatch; AXI unused
   mdio_controller_sim_model #(.INIT_PHY_ADDR(5'd3), .INIT_WAIT_CYCLES(20)) dut1 (
@@ -142,7 +143,7 @@ module tb_phy_init_seq;
     .mdio_io (mdio1), .mdc_o (mdc1));
 
   mdio_phy_model #(.ADDR(5'd3)) phy1 (.busy_i (dut1.busy), .mdc (mdc1), .mdio (mdio1),
-                                      .strap11 (1'b0), .id2 (16'h1234));
+                                      .strap11 (1'b0), .disconnected (1'b0), .id2 (16'h1234));
 
   wire mdio2, mdc2, done2, fail2;
   pullup (mdio2);
@@ -251,6 +252,15 @@ module tb_phy_init_seq;
       check(link0 === 1'b0 && chg_count == c0 + 2, $sformatf("poll: link-down seen (%0d pulses)", chg_count - c0));
       phy0.regs[5'h11] = 16'hA400;
       repeat (8000) @(posedge clk);
+      // Failed MDIO polling must invalidate cached link, then recover.
+      disconnected = 1;
+      repeat (8000) @(posedge clk);
+      axi_read(8'h10, st);
+      check(st[9] === 1'b0 && link0 === 1'b0, "poll failure clears validity and link");
+      disconnected = 0;
+      repeat (8000) @(posedge clk);
+      axi_read(8'h10, st);
+      check(st[9] === 1'b1 && link0 === 1'b1, "poll recovers after PHY returns");
       c0 = chg_count;
       go0 = 0;                                     // PHY reset asserted while link is up: treated as link down
       repeat (20) @(posedge clk);

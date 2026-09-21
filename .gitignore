@@ -36,3 +36,8 @@ build/reports_*.txt
 /docs/ds925-zynq-ultrascale-plus.pdf
 /docs/ug571-ultrascale-selectio.pdf
 /docs/ug583-ultrascale-pcb-design.pdf
+
+# R5 hardware export, BSP, firmware and host tests
+/build/r5/
+/software/r5/out/
+/build/gem1_debug/

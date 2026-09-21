@@ -39,6 +39,8 @@
 // (The PS GEM0/GEM1 PHYs are not covered: their link is the PS's own concern.)
 // Flags come from sticky_xdomain (sourced in the RGMII clock domains).
 
+//   0x20 PCS_STATUS read-only {bit3 remote fault, bit2 full duplex,
+//                         bit1 negotiation link, bit0 PCS sync}.
 module rx_diag_regs (
   input  logic        clk,
   input  logic        rst_n,
@@ -66,6 +68,7 @@ module rx_diag_regs (
   output logic [3:0]  clear_o,   // one-cycle pulses
 
   input  logic [15:0] sfp_status_i,
+  input  logic [3:0] sfp_pcs_status_i, // synchronized {fault, full, link, sync}
   output logic        sfp_force_disable_o,
   output logic        sfp_clr_fault_seen_o,
   output logic        sfp_clr_removed_seen_o,
@@ -170,6 +173,7 @@ module rx_diag_regs (
           8'h14:   s_axi_rdata <= {20'd0, phy_link_i, 1'b0, flush_busy_s[1], 2'b00, link_up_o};
           8'h18:   s_axi_rdata <= {26'd0, event_q};
           8'h1C:   s_axi_rdata <= {26'd0, event_en_q};
+          8'h20:   s_axi_rdata <= {28'd0, sfp_pcs_status_i};
           default: s_axi_rdata <= 32'd0;
         endcase
       end
