@@ -96,6 +96,9 @@ Use a newly built bitstream containing `PCS_STATUS` at diagnostic offset
 `0x20`; the previous bitstream reads zero there and cannot admit SFP traffic.
 The exported XSA describes the BD; exporting it does not rebuild the PL RTL.
 
+See the [complete memory map and ownership contract](../../docs/memory-map.md)
+for DMA handoffs, register windows and internal FPGA memories.
+
 | Region | Owner |
 | --- | --- |
 | `0x00000000–0x0000ffff` | R5-0 ATCM reset/startup vectors |

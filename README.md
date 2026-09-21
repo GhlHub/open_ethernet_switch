@@ -38,6 +38,7 @@ endpoint with zero SFP receive errors. See [SFP results](docs/sfp-debug.md).
 hardware validation remain pending.**
 
 - [Architecture diagrams and packet flow](docs/architecture.md)
+- [Memory map, cache policy and ownership](docs/memory-map.md)
 - [R5 FreeRTOS startup, timers and networking](software/r5/README.md)
 - [Source inventory and development backlog](docs/inventory.md)
 - [Board wiring, clock plan, and integration gaps](docs/board-integration.md)
