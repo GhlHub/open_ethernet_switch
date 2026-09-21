@@ -517,7 +517,12 @@ module kr260_pl_top
   // ---------------------------------------------------------------------
   // the switch
   // ---------------------------------------------------------------------
-  switch_top u_switch (
+  switch_top #(
+    // PCS clock is 125 MHz: 10 ms 1000BASE-X restart/acknowledge/idle timers.
+    .SFP_AN_BREAK_LINK_CYCLES(1_250_000),
+    .SFP_AN_LINK_TIMER_CYCLES(1_250_000),
+    .SFP_AN_IDLE_DETECT_CYCLES(1_250_000)
+  ) u_switch (
     .clk (fab_clk), .rst_n (fab_rst_n),
     .gtx_clk_pl0 (gtx_clk_pl0), .gtx_clk_pl1 (gtx_clk_pl1),
     .gtx_clk_sfp (gtx_clk_sfp), .gtx_rst_n_sfp (gtx_rst_n_sfp),

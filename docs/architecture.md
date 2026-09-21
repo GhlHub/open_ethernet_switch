@@ -145,14 +145,15 @@ per domain and publishes data read pointers one word per clock. See
 
 The SFP uses 1000BASE-X at 1.25 Gb/s serial rate. Its 125 MHz codec and
 62.5 MHz gearbox clocks now come from one MMCM driven by GTH TXUSRCLK2.
-The fixed-phase gearbox, MMCM-to-GT relationship and receive clock correction
-still need hardware validation. This is not a 10G datapath.
+The gearbox now transfers complete words across these related clocks and
+passes four-phase simulation. GTH startup is verified; receive clock correction
+and hardware packet operation are under [investigation](sfp-debug.md). This is not a 10G datapath.
 
 Experimental Clause 37 negotiation overrides transmitted MAC symbols and
 exports link/duplex/pause/fault status. It does not gate frame admission;
-frames accepted during negotiation/restart can be lost or truncated. Timers
-still default to eight cycles, with incomplete compatibility, fault, idle
-stability and pause rules. Two-PCS tests share clocks and the same RTL; they
+frames accepted during negotiation/restart can be lost or truncated. The board
+overrides short simulation timers with 10 ms restart and 10 ms acknowledge/idle
+intervals; compatibility, fault, idle stability and pause rules remain incomplete. Two-PCS tests share clocks and the same RTL; they
 do not establish independent-peer interoperability. See the
 [development backlog](inventory.md#modules-and-integration-still-pending).
 

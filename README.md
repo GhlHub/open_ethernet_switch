@@ -20,14 +20,22 @@ implementation reports show a generated bitstream and positive setup/hold
 slack under the current constraints. R5 hardware bring-up now demonstrates UART, timers, DHCP acquisition and ping through all four copper Ethernet ports via
 the fabric CPU port. Cable moves retained reachability at `10.0.1.214` on the
 running debug image. See the [four-port results](docs/verification.md#four-copper-ports-passing-dhcp-address-ping-2026-09-20).
-**Sustained throughput, fault recovery, remaining CDC review and SFP hardware
-validation remain pending.**
+The SFP path now acquires the same DHCP address through an Ipolex copper SFP
+and passes settled small/full-MTU ping tests on the debug image; startup loss
+and isolated bring-up errors remain under investigation. The managed switch
+RX-error counter subsequently remained stable at 803. Together with the
+four copper-port results, this establishes the
+`20260920-all_ports_passing_dhcp_ping` basic-connectivity milestone.
+See [SFP results](docs/sfp-debug.md).
+**Sustained throughput, fault recovery, remaining CDC review and complete SFP
+hardware validation remain pending.**
 
 - [Architecture diagrams and packet flow](docs/architecture.md)
 - [R5 FreeRTOS startup, timers and networking](software/r5/README.md)
 - [Source inventory and development backlog](docs/inventory.md)
 - [Board wiring, clock plan, and integration gaps](docs/board-integration.md)
 - [GEM1 ILA debugging and transmit fixes](docs/gem1-debug.md)
+- [SFP module, GTH clock/reset and receive-status investigation](docs/sfp-debug.md)
 - [Simulation and lint results](docs/verification.md)
 - [CDC review and remaining assumptions](docs/cdc-review.md)
 - [Imported source and license notices](docs/source-notices.md)

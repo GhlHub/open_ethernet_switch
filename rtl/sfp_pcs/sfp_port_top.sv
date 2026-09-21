@@ -44,7 +44,11 @@
 // both domains; both must already be synchronized to their own clock by
 // the caller.
 
-module sfp_port_top (
+module sfp_port_top #(
+  parameter int AN_BREAK_LINK_CYCLES = 8,
+  parameter int AN_LINK_TIMER_CYCLES = 8,
+  parameter int AN_IDLE_DETECT_CYCLES = 8
+) (
   input  logic clk,          // fabric clock (62.5 MHz)
   input  logic rst_n,
   input  logic axis_clk,     // MAC's AXI4-Stream + AXI4-Lite clock (150 MHz)
@@ -123,7 +127,11 @@ module sfp_port_top (
   logic       gmii_rx_dv;
   logic       gmii_rx_er;
 
-  sfp_1000base_x_pcs u_pcs (
+  sfp_1000base_x_pcs #(
+    .AN_BREAK_LINK_CYCLES(AN_BREAK_LINK_CYCLES),
+    .AN_LINK_TIMER_CYCLES(AN_LINK_TIMER_CYCLES),
+    .AN_IDLE_DETECT_CYCLES(AN_IDLE_DETECT_CYCLES)
+  ) u_pcs (
     .clk             (gtx_clk),
     .rst_n           (gtx_rst_n),
     .gth_clk         (gth_clk),

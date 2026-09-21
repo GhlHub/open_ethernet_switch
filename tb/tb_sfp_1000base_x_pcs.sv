@@ -31,25 +31,22 @@
 
 `timescale 1ns/1ps
 
-module tb_sfp_1000base_x_pcs;
+module tb_sfp_1000base_x_pcs #(
+  parameter integer GTH_FIRST_EDGE_NS = 16,
+  parameter bit RX_BYTE_SHIFT = 0
+);
 
   logic clk = 0;
   logic rst_n = 0;
   always #4 clk = ~clk; // 125 MHz-equivalent for simulation purposes
 
-  // gth_clk must be clk/2, phase-related (see sfp_1000base_x_pcs.sv's
-  // header) -- not an independent oscillator. clk's first posedge here
-  // is at t=4 (period 8), so each completed 2-byte pair's one-clk-cycle-
-  // wide valid window is (4+8k, 12+8k) for the relevant even k; gth_clk's
-  // rising edge is placed at that window's midpoint (t=16, then every
-  // 16ns), which is the phase this DUT's gearbox/degearbox actually
-  // needs -- landing exactly on a clk edge instead (as a naive clk/2
-  // divider starting at t=0 would) samples mid-update and was the first
-  // thing tried here; it corrupted every pair.
+  // Exercise the related 2:1 clocks at either coincident edge and between
+  // edges. A gearbox must transfer complete words at every legal phase;
+  // timing closure alone cannot establish the logical byte pairing.
   logic gth_clk = 0;
   logic gth_rst_n = 0;
   initial begin
-    #16 gth_clk = 1;
+    #(GTH_FIRST_EDGE_NS) gth_clk = 1;
     forever #8 gth_clk = ~gth_clk;
   end
 
@@ -78,8 +75,16 @@ module tb_sfp_1000base_x_pcs;
   // (both byte lanes, so it reliably corrupts every cycle rather than
   // just every other one)
   logic inject_err = 1'b0;
-  assign rxdata         = txdata;
-  assign rxcharisk      = txcharisk;
+  // Delay the stream by one byte to cover comma/control symbols on the
+  // upper GTH lane, as observed from the physical copper SFP module.
+  logic [7:0] previous_hi;
+  logic previous_hi_k;
+  always_ff @(posedge gth_clk or negedge gth_rst_n) begin
+    if (!gth_rst_n) begin previous_hi <= 0; previous_hi_k <= 0; end
+    else begin previous_hi <= txdata[15:8]; previous_hi_k <= txcharisk[1]; end
+  end
+  assign rxdata = RX_BYTE_SHIFT ? {txdata[7:0], previous_hi} : txdata;
+  assign rxcharisk = RX_BYTE_SHIFT ? {txcharisk[0], previous_hi_k} : txcharisk;
   assign rxdisperr      = 2'b00;
   assign rxnotintable   = {2{inject_err}};
 
@@ -151,12 +156,26 @@ module tb_sfp_1000base_x_pcs;
     @(posedge clk);
   endtask
 
+  // A legal odd GMII start shortens the post-/S/ preamble from six
+  // bytes to five. Normalize only that exact prefix for payload checking.
+  task automatic normalize_preamble();
+    bit short_prefix;
+    short_prefix = rxd_bytes.size() >= 6 && rxd_bytes[5] == 8'hd5;
+    for (int i=0; i<5 && i<rxd_bytes.size(); i++)
+      if (rxd_bytes[i] != 8'h55) short_prefix=0;
+    if (short_prefix) begin
+      rxd_bytes.push_front(8'h55);
+      for (int i=0; i<rxd_er_idx.size(); i++) rxd_er_idx[i]++;
+    end
+  endtask
+
   initial begin
     gmii_txd   = '0;
     gmii_tx_en = 1'b0;
     gmii_tx_er = 1'b0;
 
     repeat (5) @(posedge clk);
+    #1; // release away from either active edge
     rst_n     = 1'b1;
     gth_rst_n = 1'b1;
 
@@ -204,7 +223,8 @@ module tb_sfp_1000base_x_pcs;
       byte expected[];
       payload = new[20];
       for (int i = 0; i < 20; i++) payload[i] = byte'(i + 8'h10);
-      // RX reconstructs 6x0x55+SFD (7 bytes), not the full 8-byte
+      // After normalizing permitted shrinkage, expect 6x0x55+SFD.
+      // RX forwards the actual preamble, not the full 8-byte
       // preamble -- /S/ itself already stood in for the first preamble
       // byte on the wire, so only 7 more preamble-ish code groups
       // actually follow it (see gmii_1000base_x_rx.sv's header comment).
@@ -216,6 +236,7 @@ module tb_sfp_1000base_x_pcs;
       cap_reset();
       drive_frame(payload, -1);
       wait_cycles(10);
+      normalize_preamble();
 
       if (rxd_bytes.size() != 27) begin
         $display("FAIL: testB received %0d bytes, expected 27", rxd_bytes.size());
@@ -246,6 +267,7 @@ module tb_sfp_1000base_x_pcs;
       cap_reset();
       drive_frame(payload, -1);
       wait_cycles(10);
+      normalize_preamble();
 
       if (rxd_bytes.size() != 19) begin
         $display("FAIL: testC received %0d bytes, expected 19", rxd_bytes.size());
@@ -270,6 +292,7 @@ module tb_sfp_1000base_x_pcs;
       cap_reset();
       drive_frame(payload, 5); // error on payload byte index 5
       wait_cycles(10);
+      normalize_preamble();
 
       if (rxd_bytes.size() != 23) begin // 7 preamble/SFD + 16 payload
         $display("FAIL: testD received %0d bytes, expected 23", rxd_bytes.size());
@@ -313,14 +336,13 @@ module tb_sfp_1000base_x_pcs;
     end
 
     if (errors == 0) $display("=== ALL TESTS PASSED ===");
-    else              $display("=== %0d TEST(S) FAILED ===", errors);
+    else              $fatal(1, "=== %0d TEST(S) FAILED ===", errors);
     $finish;
   end
 
   initial begin
     #1_000_000;
-    $display("FAIL: global testbench timeout");
-    $finish;
+    $fatal(1, "FAIL: global testbench timeout");
   end
 
 endmodule

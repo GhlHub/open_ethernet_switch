@@ -91,9 +91,10 @@ FPGA RX clock delay remains disabled.
 [`sfp_pcs_clk_gen`](../rtl/sfp_pcs/sfp_pcs_clk_gen.sv) wraps a
 [third IP configuration](../rtl/sfp_pcs/ip/sfp_pcs_clk_gen_ip.xci).
 Its VCO is 1187.5 MHz (62.5 x 19), with output divisors 9.5 and 19.
-The two PCS clocks retain synchronous timing checks; their relationship to
-the GT user interfaces, receive clock correction and reset behavior still
-need independent review and hardware validation.
+The two PCS clocks retain synchronous timing checks. The [SFP investigation](sfp-debug.md)
+verified startup after selecting TX-derived GTH user clocks, corrected gearbox
+word pairing and enabled receive clock correction. Hardware packet validation
+and recovery checks remain pending.
 
 Sharing an oscillator does not eliminate the receive clock-domain crossings.
 Each PHY supplies its own RXC; the adapter captures RX data there and transfers
@@ -135,9 +136,10 @@ board validation remains pending.
 
 The SFP PCS now includes `autoneg_1000base_x` and exports informational
 link/duplex/pause/fault status through the switch. Its three timer parameters
-default to 8 cycles and are not exposed through the enclosing SFP/switch tops.
+default to 8 cycles for simulation; the board supplies 10 ms restart and 10 ms
+acknowledgement/idle timers through the enclosing SFP/switch tops.
 There is no TX backpressure or frame-boundary coordination while configuration
-ordered sets override MAC data. Hardware timers, compatibility/fault rules,
+ordered sets override MAC data. Compatibility/fault rules,
 idle detection, and link-down admission policy must be completed before use
 with a real peer. See [known RTL gaps](inventory.md#known-gaps-in-existing-rtl).
 

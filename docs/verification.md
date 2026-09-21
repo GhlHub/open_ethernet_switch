@@ -311,3 +311,57 @@ Raw logs are local ignored files under `build/gem1_debug/`: `final/`,
 `status_port_move.log`, `gem0_port_move.log`, `ping_port_move.log`,
 `status_left_lower.log`, `ping_left_lower_settled.log`,
 `status_left_upper.log` and `ping_left_upper.log`.
+
+
+## SFP copper-module bring-up (2026-09-20)
+
+The Ipolex ASF-GE-T works with the 1G 1000BASE-X path after GTH RXCTRL mapping,
+TX-derived clock startup, coherent word packing, hardware AN timers, clock
+correction, shortened-preamble RX, restart configuration, TX alignment and
+idle-disparity fixes. Five new portable benches bring the inventory to 30
+portable benches plus one XSim bench. The five focused tests and the eight
+PCS phase/alignment cases pass, as do SFP port, two-peer AN and switch tests.
+Old RTL reproduces failures in the mapping, gearbox, zero-configuration,
+shortened-preamble, TX-alignment and idle-selection regressions. This was a
+focused regression, not a fresh run of every unrelated target.
+
+The final instrumented image meets setup/hold at +0.018/+0.012 ns with the
+existing constraints and PL0's 900 ps debug override. Two fresh JTAG boots
+acquired `10.0.1.214` through the SFP. Settled traffic passed 60/60 small pings
+and 30/30 full-MTU pings (1472-byte ICMP payload, no fragmentation). The second
+boot also passed 30/30 full-MTU pings but lost ten early small pings before
+49 consecutive replies. Initial loss, one RX-error counter increment reported
+on the managed switch, and one KR260 RX FCS/error count in the first run
+remain unresolved. The second run ended with zero KR260 RX errors/overflow
+across 653 accepted frames. These results establish basic connectivity, not
+reliable cold startup, a throughput rating or full PCS conformance.
+
+See [SFP investigation](sfp-debug.md) for causes, probes, evidence locations,
+and the earlier image's unresolved restart loop. No flash was written.
+
+
+## All ports passing DHCP and ping milestone (2026-09-20)
+
+Check-in label: `20260920-all_ports_passing_dhcp_ping`.
+
+| Physical connector | Fabric interface | Hardware result |
+| --- | --- | --- |
+| Right lower RJ45 | PS GEM1 | DHCP address and ping verified in the copper milestone |
+| Right upper RJ45 | PS GEM0 | Same DHCP address remained reachable after cable move |
+| Left lower RJ45 | PL1 RGMII | Same DHCP address remained reachable after cable move |
+| Left upper RJ45 | PL0 RGMII | Same DHCP address remained reachable after cable move |
+| SFP cage with Ipolex ASF-GE-T | PL 1000BASE-X | DHCP acquired on two boots; settled small/full-MTU ping passed |
+
+All ports use the fabric's virtual CPU port and the R5 FreeRTOS network stack
+at `10.0.1.214`. Copper results were obtained on the earlier copper debug
+image; SFP results use the updated SFP debug image. This is accumulated
+per-port evidence, not a simultaneous five-port test or a rerun of the four
+copper connectors on the final SFP image.
+
+After the SFP tests, the operator confirmed that the managed switch RX-error
+counter had not increased beyond 803 since the previous check. No duration
+was supplied, so this confirms counter stability over that observation
+interval rather than a quantified error-free soak test. The earlier 802→803
+increment and startup ping losses remain recorded above. The milestone marks
+basic DHCP/ping connectivity across all five physical ports; throughput,
+startup reliability and fault-recovery validation remain pending.

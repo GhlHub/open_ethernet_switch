@@ -338,6 +338,14 @@ xsim-integ:
 	  xelab -debug typical tb_egress_gem_tx_integration -s tb_sim && \
 	  xsim tb_sim -runall
 
+.PHONY: sim-sfp-pcs-phases
+sim-sfp-pcs-phases:
+	@set -e; for phase in 4 8 12 16; do for shift in 0 1; do \
+	  echo "PCS GTH first edge: $$phase ns, RX byte shift: $$shift"; \
+	  iverilog -g2012 -s tb_sfp_1000base_x_pcs -Ptb_sfp_1000base_x_pcs.GTH_FIRST_EDGE_NS=$$phase -Ptb_sfp_1000base_x_pcs.RX_BYTE_SHIFT=$$shift -o tb_sfp_pcs_phase.vvp $(SFP_PCS_SRCS) $(SFP_PCS_TB); \
+	  vvp tb_sfp_pcs_phase.vvp; \
+	done; done
+
 sim-sfp-pcs: tb_sfp_1000base_x_pcs.vvp
 	vvp tb_sfp_1000base_x_pcs.vvp
 
@@ -647,3 +655,29 @@ xsim-mdio:
 clean:
 	rm -f tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_autoneg_1000base_x.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp tb_rgmii_gmii_sim_model.vvp tb_pl_eth_clk_gen_sim_model.vvp tb_mdio_controller.vvp tb_phy_init_seq.vvp tb_mac_reset_reclock.vvp
 	rm -rf xsim_run_idelay_gate xsim_run_rx_elastic tb_rgmii_rx_elastic.vvp xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_autoneg xsim_run_async_fifo xsim_run_async_fifo_xpm xsim_run_ps_eth_xpm xsim_run_integ_xpm xsim_run_pl_gmii_xpm xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim xsim_run_rgmii_sim xsim_run_pl_clkgen_sim xsim_run_mdio
+
+# Check real wrapper wiring against the GTH decoded RX control-port contract.
+.PHONY: sim-gth-rx-mapping
+sim-gth-rx-mapping:
+	iverilog -g2012 -s tb_gth_rx_mapping -o tb_gth_rx_mapping.vvp ../rtl/sfp_pcs/gth_sfp_wrapper.sv $(TB_DIR)/tb_gth_rx_mapping.sv
+	vvp tb_gth_rx_mapping.vvp
+
+.PHONY: sim-autoneg-clock-correction
+sim-autoneg-clock-correction:
+	iverilog -g2012 -s tb_autoneg_clock_correction -o tb_autoneg_clock_correction.vvp $(SFP_PCS_DIR)/sfp_pcs_pkg.sv $(SFP_PCS_DIR)/autoneg_1000base_x.sv $(TB_DIR)/tb_autoneg_clock_correction.sv
+	vvp tb_autoneg_clock_correction.vvp
+
+.PHONY: sim-sfp-rx-preamble
+sim-sfp-rx-preamble:
+	iverilog -g2012 -s tb_sfp_rx_preamble -o tb_sfp_rx_preamble.vvp $(SFP_PCS_DIR)/sfp_pcs_pkg.sv $(SFP_PCS_DIR)/gmii_1000base_x_rx.sv $(TB_DIR)/tb_sfp_rx_preamble.sv
+	vvp tb_sfp_rx_preamble.vvp
+
+.PHONY: sim-sfp-tx-alignment
+sim-sfp-tx-alignment:
+	iverilog -g2012 -s tb_sfp_tx_alignment -o tb_sfp_tx_alignment.vvp $(SFP_PCS_DIR)/sfp_pcs_pkg.sv $(SFP_PCS_DIR)/gmii_1000base_x_tx.sv $(TB_DIR)/tb_sfp_tx_alignment.sv
+	vvp tb_sfp_tx_alignment.vvp
+
+.PHONY: sim-sfp-tx-idle
+sim-sfp-tx-idle:
+	iverilog -g2012 -s tb_sfp_tx_idle -o tb_sfp_tx_idle.vvp $(SFP_PCS_SRCS) $(TB_DIR)/tb_sfp_tx_idle.sv
+	vvp tb_sfp_tx_idle.vvp

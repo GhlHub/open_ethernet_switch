@@ -48,8 +48,8 @@
 //     uses for finer-grained TX/RX-only Pause combinations.
 //   - The RESTART/COMPLETE_ACKNOWLEDGE/IDLE_DETECT timers use small
 //     parameterized cycle counts (defaults sized for fast simulation),
-//     not the spec's real ~10-20 ms break_link_timer or ~1.6 ms
-//     link_timer durations -- override via parameters (using clk's real
+//     rather than the 1000BASE-X 10 ms link timer (1.6 ms belongs to
+//     SGMII). Override via parameters (using clk's real
 //     frequency) before hardware bring-up. Same pattern as
 //     LOCK_DELAY_CYCLES in rtl/pl_gmii/pl_eth_clk_gen_sim_model.sv.
 //   - IDLE_DETECT reuses this PCS's own Clause 36.2.5.2 data-sync result
@@ -240,7 +240,7 @@ module autoneg_1000base_x
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       state_q              <= S_AN_ENABLE;
-      tx_config_q          <= ADV_ABILITY;
+      tx_config_q          <= '0;
       rx_config_latched_q  <= '0;
       restart_cnt_q        <= '0;
       link_timer_cnt_q     <= '0;
@@ -252,7 +252,7 @@ module autoneg_1000base_x
     end else begin
       unique case (state_q)
         S_AN_ENABLE: begin
-          tx_config_q   <= ADV_ABILITY; // ACK bit clear
+          tx_config_q   <= '0; // break-link configuration, not an ability advertisement
           restart_cnt_q <= '0;
           link_up_o     <= 1'b0;
           state_q       <= S_AN_RESTART;
@@ -260,6 +260,7 @@ module autoneg_1000base_x
 
         S_AN_RESTART: begin
           if (restart_cnt_q == BREAK_LINK_CYCLES) begin
+            tx_config_q <= ADV_ABILITY;
             state_q <= S_ABILITY_DETECT;
           end else begin
             restart_cnt_q <= restart_cnt_q + 1'b1;
@@ -267,7 +268,8 @@ module autoneg_1000base_x
         end
 
         S_ABILITY_DETECT: begin
-          if (config_stable_pulse) begin
+          // Zero configuration requests a restart; it is not an ability.
+          if (pcs_sync_ok_i && config_stable_pulse && last_candidate_q[13:0] != 0) begin
             rx_config_latched_q <= last_candidate_q;
             state_q             <= S_ACKNOWLEDGE_DETECT;
           end
@@ -276,7 +278,9 @@ module autoneg_1000base_x
         S_ACKNOWLEDGE_DETECT: begin
           tx_config_q[14] <= 1'b1; // ACK
           if (config_stable_pulse) begin
-            if (last_candidate_q[14]) begin // partner's ACK also set
+            if (last_candidate_q[13:0] == 0) begin
+              state_q <= S_AN_ENABLE;
+            end else if (last_candidate_q[14]) begin // partner's ACK also set
               if (last_candidate_q[13:0] == rx_config_latched_q[13:0]) begin
                 link_timer_cnt_q <= '0;
                 state_q          <= S_COMPLETE_ACKNOWLEDGE;

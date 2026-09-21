@@ -39,29 +39,22 @@
 //   - gth_clk/gth_rst_n (62.5 MHz-class, NEW): the actual GTH-parallel-
 //     interface, native 2-code-groups/cycle width.
 //
-// gth_clk MUST be exactly clk/2, phase-related (both derived from the
-// same MMCM/BUFG in the GTH wrapper stage -- see
-// rtl/sfp_pcs/gth_sfp_wrapper.sv), not an independent oscillator: the
-// gearbox/degearbox below is a synchronous width converter, not a true
-// asynchronous CDC. Getting the exact phase right (so a gth_clk edge
-// never samples mid-update) is a hardware/MMCM configuration concern,
-// verified via Vivado static timing closure at implementation time --
-// the same class of "assumed correctly related by construction"
-// simplification this file already made for its single clk domain
-// before this change; RTL alone can't prove a phase relationship, only
-// documented and relied upon (same rationale as gtx_rst_n's "must
-// already be synchronized by the caller" note elsewhere in this
-// project). One shared lane_q toggle (clk domain) drives both the TX
-// packer and RX unpacker below, so they can't drift out of phase with
-// each other even if the assumed clk<->gth_clk phase turns out wrong in
-// simulation -- only their relationship to gth_clk itself depends on it.
+// gth_clk MUST be exactly clk/2 and phase-related (the board uses one
+// MMCM). These are related-clock transfers whose setup/hold paths must
+// close in implementation; they are not asynchronous CDCs. The gearbox
+// commits a complete TX pair before crossing, and the unpacker retains
+// the matching RX high byte when consuming the low byte. This preserves
+// byte pairing at either coincident clock edge and between clock edges;
+// merely meeting timing on independently updated byte registers did not.
 //
 // Byte lane order matches this project's established word convention
 // (see e.g. mac_addr_resolver.sv/ingress_port_wr.sv): lane 0 = bits
 // [7:0] = the earlier-transmitted/earlier-received code group, lane 1 =
 // bits [15:8] = the later one.
 
-module sfp_1000base_x_pcs #(
+module sfp_1000base_x_pcs
+  import sfp_pcs_pkg::*;
+#(
   parameter logic       AN_ADV_FULL_DUPLEX  = 1'b1,
   parameter logic       AN_ADV_HALF_DUPLEX  = 1'b0,
   parameter logic [1:0] AN_ADV_PAUSE        = 2'b00,
@@ -104,7 +97,7 @@ module sfp_1000base_x_pcs #(
   output logic       an_remote_fault_o
 );
 
-  // shared clk-domain lane toggle -- see header
+  // Two byte positions per related GTH word clock.
   logic lane_q;
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) lane_q <= 1'b0;
@@ -138,31 +131,72 @@ module sfp_1000base_x_pcs #(
   wire [7:0] tx_sym   = an_tx_active ? tx_an_sym   : tx_gmii_sym;
   wire       tx_sym_k = an_tx_active ? tx_an_sym_k : tx_gmii_sym_k;
 
-  logic [7:0] tx_pack_lo_q, tx_pack_hi_q;
-  logic       tx_pack_lo_k_q, tx_pack_hi_k_q;
+  logic [7:0] tx_pack_lo_q;
+  logic       tx_pack_lo_k_q;
+  logic [15:0] tx_pair_q;
+  logic [1:0]  tx_pair_k_q;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       tx_pack_lo_q   <= '0;
-      tx_pack_hi_q   <= '0;
       tx_pack_lo_k_q <= 1'b0;
-      tx_pack_hi_k_q <= 1'b0;
+      tx_pair_q      <= '0;
+      tx_pair_k_q    <= '0;
     end else if (!lane_q) begin
       tx_pack_lo_q   <= tx_sym;
       tx_pack_lo_k_q <= tx_sym_k;
     end else begin
-      tx_pack_hi_q   <= tx_sym;
-      tx_pack_hi_k_q <= tx_sym_k;
+      // Commit both lanes together; the slower clock must never see a
+      // new low byte paired with the previous word's high byte.
+      tx_pair_q   <= {tx_sym, tx_pack_lo_q};
+      tx_pair_k_q <= {tx_sym_k, tx_pack_lo_k_q};
     end
   end
 
+  // Track the disparity of the actual ordered GTH words, including AN.
+  // 8b/10b changes running disparity for each unbalanced 6b/4b subcode;
+  // balanced alternative encodings do not change this parity rule.
+  function automatic logic rd_next(input logic rd, input logic [7:0] d,
+                                    input logic k);
+    logic flip6, flip4;
+    begin
+      case (d[4:0])
+        0,1,2,4,8,15,16,23,24,27,29,30,31: flip6=1'b1;
+        28: flip6=k;
+        default: flip6=1'b0;
+      endcase
+      flip4=(d[7:5]==0 || d[7:5]==4 || d[7:5]==7);
+      rd_next=rd ^ flip6 ^ flip4;
+    end
+  endfunction
+  logic tx_rd_q, tx_comma_q;
+  logic tx_rd_d, tx_comma_d;
+  logic [15:0] tx_idle_word;
+  always_comb begin
+    tx_rd_d=tx_rd_q;
+    tx_comma_d=tx_comma_q;
+    tx_idle_word=tx_pair_q;
+    for (int i=0; i<2; i++) begin
+      // After a comma, RD- means that comma started at RD+. Use /I1/
+      // (D5.6) to leave RD negative; otherwise /I2/ preserves RD-.
+      if (tx_comma_d && !tx_pair_k_q[i] &&
+          tx_pair_q[i*8 +: 8]==D16_2 && !tx_rd_d)
+        tx_idle_word[i*8 +: 8]=D5_6;
+      tx_rd_d=rd_next(tx_rd_d,tx_idle_word[i*8 +: 8],tx_pair_k_q[i]);
+      tx_comma_d=tx_pair_k_q[i] && tx_idle_word[i*8 +: 8]==K28_5;
+    end
+  end
   always_ff @(posedge gth_clk or negedge gth_rst_n) begin
     if (!gth_rst_n) begin
       txdata_o    <= '0;
       txcharisk_o <= '0;
+      tx_rd_q    <= 1'b0; // GTH encoder starts with negative disparity
+      tx_comma_q <= 1'b0;
     end else begin
-      txdata_o    <= {tx_pack_hi_q, tx_pack_lo_q};
-      txcharisk_o <= {tx_pack_hi_k_q, tx_pack_lo_k_q};
+      txdata_o    <= tx_idle_word;
+      txcharisk_o <= tx_pair_k_q;
+      tx_rd_q    <= tx_rd_d;
+      tx_comma_q <= tx_comma_d;
     end
   end
 
@@ -185,10 +219,28 @@ module sfp_1000base_x_pcs #(
     end
   end
 
-  wire [7:0] rx_sym            = lane_q ? rx_word_q[15:8]   : rx_word_q[7:0];
-  wire       rx_sym_k          = lane_q ? rx_k_q[1]          : rx_k_q[0];
-  wire       rx_sym_disperr    = lane_q ? rx_disperr_q[1]    : rx_disperr_q[0];
-  wire       rx_sym_notintable = lane_q ? rx_notintable_q[1] : rx_notintable_q[0];
+  logic [7:0] rx_hi_q;
+  logic rx_hi_k_q, rx_hi_disperr_q, rx_hi_notintable_q;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      rx_hi_q            <= '0;
+      rx_hi_k_q          <= 1'b0;
+      rx_hi_disperr_q    <= 1'b0;
+      rx_hi_notintable_q <= 1'b0;
+    end else if (!lane_q) begin
+      // The GTH word register can change between the two byte reads.
+      // Retain this word's high byte when its low byte is consumed.
+      rx_hi_q            <= rx_word_q[15:8];
+      rx_hi_k_q          <= rx_k_q[1];
+      rx_hi_disperr_q    <= rx_disperr_q[1];
+      rx_hi_notintable_q <= rx_notintable_q[1];
+    end
+  end
+
+  wire [7:0] rx_sym            = lane_q ? rx_hi_q            : rx_word_q[7:0];
+  wire       rx_sym_k          = lane_q ? rx_hi_k_q          : rx_k_q[0];
+  wire       rx_sym_disperr    = lane_q ? rx_hi_disperr_q    : rx_disperr_q[0];
+  wire       rx_sym_notintable = lane_q ? rx_hi_notintable_q : rx_notintable_q[0];
 
   logic sync_ok;
   assign sync_ok_o = sync_ok;

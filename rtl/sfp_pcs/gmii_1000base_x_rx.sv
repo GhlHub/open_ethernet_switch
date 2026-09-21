@@ -7,24 +7,13 @@
 // -> GMII, gated by sync_1000base_x.sv's sync_ok_i. One code group in,
 // one GMII byte out, every cycle.
 //
-// On /S/ (K27.7), reconstructs a preamble (six 0x55 bytes then the 0xD5
-// SFD -- matching what actually remains on the wire, since /S/ itself
-// already stood in for the transmit side's first preamble byte, see
-// gmii_1000base_x_tx.sv) before passing subsequent code groups through
-// as gmii_rxd_o, rather than passing through nothing. This is one byte
-// shorter than a textbook 7-byte preamble; deliberately not padded back
-// out to 7, since a receiving MAC's job is to sync on the SFD byte
-// itself, not count exactly 7 bytes ahead of it -- padding back to a
-// full 7 would need decoupling GMII output timing from code-group input
-// timing for one cycle, for no real interoperability benefit. /V/
-// (K30.7) or any invalid code group mid-frame
-// propagates as gmii_rx_er_o for that cycle without ending the frame;
-// /T/ (K29.7) ends it (rx_dv drops the same cycle /T/ arrives, since /T/
-// itself was never payload), and the following /R/ is consumed without
-// separately validating its value. Any other K-code encountered mid-
-// frame (protocol violation -- e.g. an unexpected second /S/ or a stray
-// comma) aborts the frame immediately (rx_er pulsed, back to idle)
-// rather than passing it through as if it were data.
+// On /S/ (K27.7), pass the actual following preamble bytes through GMII
+// until the received SFD. 1000BASE-X may shorten the preamble by one byte
+// for an odd transmission start; synthesizing a fixed preamble/SFD instead
+// silently discarded the first destination-address byte on those frames.
+// The MAC synchronizes on the actual SFD rather than a fixed byte count.
+// /V/ or an invalid data group marks RX error; /T/ ends the frame. Other
+// control characters inside a frame abort it. Following /R/ is consumed.
 //
 // sync_ok_i dropping at any point immediately forces rx_dv_o low and
 // resets back to idle, matching the real link-down behavior a physical
@@ -49,24 +38,13 @@ module gmii_1000base_x_rx
 
   wire code_group_ok = !rxdisperr_i && !rxnotintable_i;
 
-  typedef enum logic [2:0] {S_IDLE, S_PREAMBLE, S_SFD, S_DATA, S_EOP_R} state_t;
+  typedef enum logic [2:0] {S_IDLE, S_PREAMBLE, S_DATA, S_EOP_R} state_t;
   state_t state_q, state_d;
 
-  logic [2:0] preamble_cnt_q;
-
   always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      state_q        <= S_IDLE;
-      preamble_cnt_q <= '0;
-    end else if (!sync_ok_i) begin
-      state_q        <= S_IDLE;
-      preamble_cnt_q <= '0;
-    end else begin
-      state_q <= state_d;
-      if (state_q == S_PREAMBLE) begin
-        preamble_cnt_q <= (preamble_cnt_q == 3'd5) ? 3'd0 : preamble_cnt_q + 1'b1;
-      end
-    end
+    if (!rst_n) state_q <= S_IDLE;
+    else if (!sync_ok_i) state_q <= S_IDLE;
+    else state_q <= state_d;
   end
 
   always_comb begin
@@ -83,19 +61,14 @@ module gmii_1000base_x_rx
         end
       end
       S_PREAMBLE: begin
-        // 6 cycles here, not 7: /S/ itself already stood in for the
-        // first preamble byte on the wire (see gmii_1000base_x_tx.sv),
-        // so only 6 more 0x55s + the SFD actually follow it -- if this
-        // reconstructs a full 7, it silently swallows the first real
-        // payload byte while catching up to the real stream.
-        gmii_rxd_o   = 8'h55;
-        gmii_rx_dv_o = 1'b1;
-        if (preamble_cnt_q == 3'd5) state_d = S_SFD;
-      end
-      S_SFD: begin
-        gmii_rxd_o   = 8'hD5;
-        gmii_rx_dv_o = 1'b1;
-        state_d      = S_DATA;
+        if (!rxcharisk_i && code_group_ok &&
+            ((rxdata_i == 8'h55) || (rxdata_i == 8'hd5))) begin
+          gmii_rx_dv_o = 1'b1;
+          if (rxdata_i == 8'hd5) state_d = S_DATA;
+        end else begin
+          gmii_rx_er_o = 1'b1;
+          state_d = S_IDLE;
+        end
       end
       S_DATA: begin
         if (rxcharisk_i) begin

@@ -7,36 +7,15 @@
 // width conversion needed, clocked by the same 125 MHz clock as GMII/
 // TXUSRCLK.
 //
-// Framing: /S/ (K27.7) replaces the GMII byte on the very first cycle
-// tx_en is seen high (the real preamble byte that cycle is discarded, per
-// spec -- the PCS receive process on the far end reconstructs preamble
-// from /S/, it doesn't need to see it transmitted). Payload bytes pass
-// through unchanged while tx_en stays high, substituting /V/ (K30.7,
-// Error_Propagation) for any cycle tx_er is also asserted. When tx_en
-// drops, /T/ (K29.7) then /R/ (K23.7) are appended, then idle resumes.
+// /S/ replaces a preamble byte in the even code-group position. If
+// GMII starts in the odd position, finish the idle pair first and discard
+// that first preamble byte. All payload/FCS bytes then pass unchanged.
+// /T/ follows TX_EN deassertion; one or two /R/ symbols keep the next idle
+// comma in the same even position. TX_ER propagates as /V/.
 //
-// Two deliberate, documented simplifications relative to the full spec
-// (both wire-valid, neither affects basic framing correctness -- see
-// each comment below for why):
-//   1. Idle is always /I2/ (K28.5, D16.2), never alternating with /I1/.
-//      Full spec-correct idle selection requires tracking running
-//      disparity through arbitrary frame payload bytes to guarantee
-//      comma always transmits at negative disparity, which needs the
-//      complete 256-entry 8b/10b disparity table for arbitrary D-codes --
-//      not something to embed from a secondhand/scraped source without
-//      much more rigorous verification than was practical here. GTH's
-//      hardware encoder still produces fully wire-valid, disparity-
-//      bounded output for whatever symbol we choose every cycle; the
-//      only cost of this simplification is that comma may occasionally
-//      transmit at positive rather than the spec-preferred negative
-//      disparity, which the receive side (and GTH's own comma detector,
-//      when configured for both-polarity detection in the GTH wrapper
-//      stage) needs to tolerate rather than reject.
-//   2. The End-of-Packet-Delimiter is always /T/R/I/ (idle immediately
-//      after /R/). The full spec chooses between /T/R/I/ and /T/R/R/
-//      based on total frame code-group parity, for bit-error resilience
-//      on the delimiter specifically -- not a basic framing-correctness
-//      requirement, so left as a later refinement.
+// This stage emits /I2/ candidates. The PCS word output tracks running
+// disparity across AN and data, selecting /I1/ when needed before GTH
+// performs the actual 8b/10b encoding.
 
 module gmii_1000base_x_tx
   import sfp_pcs_pkg::*;
@@ -58,11 +37,8 @@ module gmii_1000base_x_tx
   typedef enum logic [1:0] {S_IDLE, S_DATA, S_EOP_R} state_t;
   state_t state_q, state_d;
 
-  // Idle is the two-code-group /I2/ ordered set (comma, then D16.2),
-  // repeating -- not a single symbol. idle_comma_q selects which half of
-  // that pair is due next; it's forced back to "comma due" on every
-  // entry into S_IDLE so idle always resumes cleanly on a comma boundary
-  // rather than picking up mid-pair.
+  // Free-running code-group parity, preserved through every frame.
+  // True denotes the even position occupied by idle comma or /S/.
   logic idle_comma_q;
 
   always_ff @(posedge clk or negedge rst_n) begin
@@ -71,7 +47,7 @@ module gmii_1000base_x_tx
       idle_comma_q  <= 1'b1;
     end else begin
       state_q <= state_d;
-      if (state_d == S_IDLE) idle_comma_q <= (state_q == S_IDLE) ? ~idle_comma_q : 1'b1;
+      idle_comma_q <= ~idle_comma_q;
     end
   end
 
@@ -83,7 +59,7 @@ module gmii_1000base_x_tx
 
     unique case (state_q)
       S_IDLE: begin
-        if (gmii_tx_en_i) begin
+        if (gmii_tx_en_i && idle_comma_q) begin
           txdata_o    = K27_7; // /S/, replaces this cycle's GMII byte
           txcharisk_o = 1'b1;
           state_d     = S_DATA;
@@ -102,7 +78,7 @@ module gmii_1000base_x_tx
       S_EOP_R: begin
         txdata_o    = K23_7; // /R/
         txcharisk_o = 1'b1;
-        state_d     = S_IDLE;
+        if (!idle_comma_q) state_d = S_IDLE;
       end
       default: state_d = S_IDLE;
     endcase

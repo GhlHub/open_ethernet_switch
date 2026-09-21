@@ -59,15 +59,12 @@
 //     polarities (RXCOMMADETEN/RXMCOMMAALIGNEN/RXPCOMMAALIGNEN) --
 //     matches sfp_1000base_x_pcs.sv's own documented tolerance for comma
 //     arriving at either running-disparity polarity
-//   - RX elastic buffer enabled (not bypassed) + ENABLE_COMMON_USRCLK,
-//     so the IP's own TX-side user clock also drives the RX fabric
-//     interface -- the buffer absorbs the real PPM offset between local
-//     and recovered clocks internally, so this wrapper only needs to
-//     hand the rest of the design ONE clock domain (gth_clk_o) for both
-//     TX and RX, matching what sfp_1000base_x_pcs.sv's gearbox/degearbox
-//     assumes. This is the standard, intended use of this feature (not
-//     a simulation-only simplification) -- real per-symbol clock
-//     recovery still happens in the CDR ahead of the elastic buffer.
+//   - RX elastic buffer enabled + ENABLE_COMMON_USRCLK=2 (TXOUTCLK), so the IP's
+//     TX-side user clock also drives the RX fabric interface. Clock correction
+//     inserts/removes /I2/ (K28.5,D16.2) and /C1/ prefix (K28.5,D21.5) pairs
+//     to absorb peer/local frequency offset during idle and negotiation.
+//     The AN parser scans complete four-symbol config windows, ignoring
+//     fragments. Buffer-error recovery still needs separate validation.
 //   - reset sequencing (PLL cal, TX/RX PLL+datapath resets, waiting for
 //     resetdone) is handled entirely inside the generated IP
 //     (LOCATE_RESET_CONTROLLER=CORE) -- this wrapper only needs to
@@ -194,6 +191,9 @@ module gth_sfp_wrapper (
     .gthrxp_in                           (rxp_i),
     .gtrefclk0_in                        (gtrefclk0_int),
 
+    .rxbufreset_in                      (1'b0),
+    .rxbufstatus_out                    (), // observed by the SFP debug ILA
+    .rxclkcorcnt_out                    (), // AN parser tolerates /C1/ fragments
     .rx8b10ben_in                        (1'b1),
     .rxcommadeten_in                     (1'b1),
     .rxmcommaalignen_in                  (1'b1),
@@ -210,17 +210,17 @@ module gth_sfp_wrapper (
     .rxbyteisaligned_out                 (),
     .rxbyterealign_out                   (),
     .rxcommadet_out                      (),
-    .rxctrl0_out                         (rxctrl0_int), // RXDISPERR
-    .rxctrl1_out                         (rxctrl1_int), // RXCHARISCOMMA (unused)
-    .rxctrl2_out                         (rxctrl2_int), // RXCHARISK
+    .rxctrl0_out                         (rxctrl0_int), // RXCHARISK (UG576 Table 4-27)
+    .rxctrl1_out                         (rxctrl1_int), // RXDISPERR
+    .rxctrl2_out                         (rxctrl2_int), // RXCHARISCOMMA (unused)
     .rxctrl3_out                         (rxctrl3_int), // RXNOTINTABLE
     .rxpmaresetdone_out                  (rxpmaresetdone_int),
     .txpmaresetdone_out                  (txpmaresetdone_int)
   );
 
   assign rxdata_o       = gtwiz_userdata_rx_int;
-  assign rxcharisk_o    = rxctrl2_int[1:0];
-  assign rxdisperr_o    = rxctrl0_int[1:0];
+  assign rxcharisk_o    = rxctrl0_int[1:0];
+  assign rxdisperr_o    = rxctrl1_int[1:0];
   assign rxnotintable_o = rxctrl3_int[1:0];
 
   // ---- gth_rst_n_o: async assert on either done signal dropping,

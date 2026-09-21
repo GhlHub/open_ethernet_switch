@@ -3,9 +3,9 @@
 Baseline: 2026-09-20. The repository contains **63 SystemVerilog files under
 `rtl/`** (59 logical modules, including four simulation-only behavioral models --
 GTH, RGMII, PL Ethernet clock generation, and MDIO -- and four packages),
-**26 testbenches** (25 portable and one XSim-only), one AXI memory BFM, three Vivado IP `.xci` configurations
+**31 testbenches** (30 portable and one XSim-only), one AXI memory BFM, three Vivado IP `.xci` configurations
 (GTH, PL Ethernet clocks and SFP PCS clocks), four XDC constraint files,
-five Vivado Tcl scripts, a paired-ILA capture analyzer, one synthesis source list and `sim/Makefile`. The inventory follows actual module instantiations and
+seven Vivado Tcl scripts, a paired-ILA capture analyzer, one synthesis source list and `sim/Makefile`. The inventory follows actual module instantiations and
 interfaces; some source comments describe older stages of development.
 
 The target software environment is **FreeRTOS**. Existing CPU-port comments
@@ -17,15 +17,21 @@ CPU-port reception/transmission, DHCP acquisition and same-address ping after ca
 [verification](verification.md#first-live-r5-bring-up-2026-09-20)). Counts above exclude
 the third-party checkout.
 The initial driver implements that interface with copied DMA buffers.
+The `20260920-all_ports_passing_dhcp_ping` milestone adds SFP DHCP and settled
+small/full-MTU ping to the earlier four-copper-port results. The managed
+switch RX-error counter remained at 803 on the operator's follow-up check;
+startup losses and isolated bring-up errors remain documented in
+[verification](verification.md#all-ports-passing-dhcp-and-ping-milestone-2026-09-20).
 
 See the [overall architecture diagrams](architecture.md) and the
 [verification report](verification.md). "Present" below means source exists;
 it does not mean the block is integrated on the board or production-ready.
 
-Since `166c765`, the only source change is the PL1 RX data/control IDELAY
-override, reduced from 1000 ps to 750 ps to retune receive timing. PL0 remains
-700 ps. The initial R5 firmware subsequently adds a readable SFP PCS status register
-and invalidates PL PHY state after failed polls. RTL module counts are unchanged. See the dated checks in [verification](verification.md).
+The copper-tested milestone is `29aea8f`. The subsequent [SFP investigation](sfp-debug.md)
+adds module/PHY IIC diagnostics, two SFP ILAs and capture scripts, a GTH receive-flag
+wiring regression, corrected RXCTRL mapping and TX-derived common user clocks.
+RTL module counts are unchanged. PL1 RX IDELAY is 750 ps; PL0 source remains
+700 ps, with a 900 ps override in the copper-tested/debug images.
 
 ## Source inventory
 
@@ -49,8 +55,8 @@ and invalidates PL PHY state after failed polls. RTL module counts are unchanged
 | PL Ethernet constraints | [`kr260_pl_ethernet.xdc`](../constraints/kr260_pl_ethernet.xdc) | PL0 bank 66 / PL1 bank 65 package pins, LVCMOS18, and 25 MHz reference / 125 MHz RX input clocks. Targets the physical ports of `kr260_top`. RGMII I/O delays and crossing bounds now exist in separate XDC files; remaining timing findings require review. Schematic findings and source provenance are in [board integration](board-integration.md). |
 | PL Ethernet clock generation | [`pl_eth_clk_gen.sv`](../rtl/pl_gmii/pl_eth_clk_gen.sv), [`pl_eth_clk_gen_sim_model.sv`](../rtl/pl_gmii/pl_eth_clk_gen_sim_model.sv), [`pl_eth_clk_gen_ip.xci`](../rtl/pl_gmii/ip/pl_eth_clk_gen_ip.xci) | Clocking Wizard wrapper: 25 MHz input, 125/300/100 MHz outputs, per-domain reset release after lock. Board assembly uses two instances, with only PL0 supplying the shared 100 MHz fabric clock. The 300 MHz outputs now calibrate RX data/control pin delays. The behavioral model passes nominal period/startup tests; local board implementation evidence is recorded separately. |
 | MDIO controller | [`open_eth_mdio_master.sv`](../rtl/mdio/open_eth_mdio_master.sv), [`mdio_controller.sv`](../rtl/mdio/mdio_controller.sv), [`mdio_controller_sim_model.sv`](../rtl/mdio/mdio_controller_sim_model.sv) | Imported GPL-3.0-or-later Clause 22 engine with a new AXI-Lite register shim. Hardware wrapper uses IOBUF; portable model uses a tristate assignment. Write-frame/read-data/status-clear tests pass. Two instances in the board top connect the separate PL PHY buses and CPU register map. Register map and software requirements are in [board integration](board-integration.md#mdio-management-interface). |
-| SFP PCS | [`sfp_pcs_pkg.sv`](../rtl/sfp_pcs/sfp_pcs_pkg.sv), [`sfp_1000base_x_pcs.sv`](../rtl/sfp_pcs/sfp_1000base_x_pcs.sv), [`gmii_1000base_x_tx.sv`](../rtl/sfp_pcs/gmii_1000base_x_tx.sv), [`gmii_1000base_x_rx.sv`](../rtl/sfp_pcs/gmii_1000base_x_rx.sv), [`sync_1000base_x.sv`](../rtl/sfp_pcs/sync_1000base_x.sv), [`autoneg_1000base_x.sv`](../rtl/sfp_pcs/autoneg_1000base_x.sv) | Symbol conversion, synchronization, and experimental Clause 37 base-page negotiation. Negotiation overrides TX symbols and exports informational link/duplex/pause/fault status through the SFP port and switch top. Self-loopback and two-PCS negotiation/data/recovery tests pass. Simulation timers, simplified pause/idle detection, and missing TX gating prevent treating this as a hardware-ready or fully compliant link manager. |
-| SFP transceiver | [`gth_sfp_wrapper.sv`](../rtl/sfp_pcs/gth_sfp_wrapper.sv), [`gth_sfp_ip.xci`](../rtl/sfp_pcs/ip/gth_sfp_ip.xci) | Updated Transceiver Wizard configuration: X0Y6, 156.25 MHz reference, 1.25 Gb/s, 8b/10b and 16-bit user data. The reference matches the local schematic; the header records channel/pin tracing and prior Vivado synthesis. Joined to the SFP PCS by the board wrapper; earlier local reports establish routing of that assembly. Physical interoperability and clock/reset behavior remain unverified. |
+| SFP PCS | [`sfp_pcs_pkg.sv`](../rtl/sfp_pcs/sfp_pcs_pkg.sv), [`sfp_1000base_x_pcs.sv`](../rtl/sfp_pcs/sfp_1000base_x_pcs.sv), [`gmii_1000base_x_tx.sv`](../rtl/sfp_pcs/gmii_1000base_x_tx.sv), [`gmii_1000base_x_rx.sv`](../rtl/sfp_pcs/gmii_1000base_x_rx.sv), [`sync_1000base_x.sv`](../rtl/sfp_pcs/sync_1000base_x.sv), [`autoneg_1000base_x.sv`](../rtl/sfp_pcs/autoneg_1000base_x.sv) | Symbol conversion, synchronization, and experimental Clause 37 base-page negotiation. Negotiation overrides TX symbols and exports informational link/duplex/pause/fault status through the SFP port and switch top. Self-loopback and two-PCS negotiation/data/recovery tests pass. Board timers are set to 10 ms. Shortened preamble, frame alignment, idle disparity and zero-configuration restart corrections are tested; simplified pause/idle detection and missing TX gating remain compliance gaps. |
+| SFP transceiver | [`gth_sfp_wrapper.sv`](../rtl/sfp_pcs/gth_sfp_wrapper.sv), [`gth_sfp_ip.xci`](../rtl/sfp_pcs/ip/gth_sfp_ip.xci) | Updated Transceiver Wizard configuration: X0Y6, 156.25 MHz reference, 1.25 Gb/s, 8b/10b and 16-bit user data. The reference matches the local schematic; the header records channel/pin tracing and prior Vivado synthesis. Joined to the SFP PCS by the board wrapper; earlier local reports establish routing of that assembly. TX-derived common user-clock startup and clean received symbols are verified with the copper SFP module. The debug image acquires DHCP and passes settled small/full-MTU pings; startup loss and isolated errors remain under investigation; see [SFP debug](sfp-debug.md). |
 | GTH behavioral model | [`gth_sfp_sim_model.sv`](../rtl/sfp_pcs/gth_sfp_sim_model.sv) | Simulation-only delayed parallel loopback with reset/status and error injection. Its standalone test passes. It does not model serial encoding, CDR, or hardware timing; existing PCS/SFP-port benches use direct parallel loopback instead of this model. |
 | SFP port assembly | [`sfp_port_top.sv`](../rtl/sfp_pcs/sfp_port_top.sv) | Instantiates the PCS, imported 1G MAC, and stream adapters. Digital loopback test passes. It is a 1G design; the transceiver is deliberately a separate instantiation (the board wrapper connects it at the GTH-parallel-interface boundary). |
 | CPU port | [`cpu_port_top.sv`](../rtl/cpu_port/cpu_port_top.sv), [`cpu_dma_wr.sv`](../rtl/cpu_port/cpu_dma_wr.sv), [`cpu_dma_rd.sv`](../rtl/cpu_port/cpu_dma_rd.sv) | Reuses ingress/egress front ends at port 5 and supplies dedicated switch-pool DMA engines. Stream endpoints connect to a separate CPU-facing AXI DMA SG IP in the block design. Present and subsystem-tested; an initial R5 copy-based driver receives real network frames; DHCP acquisition and four-copper-port ping demonstrate bidirectional traffic through the CPU port. |
@@ -84,7 +90,7 @@ The following development and verification remain incomplete.
 | PS/DDR and CPU DMA verification | HP0 carries the three switch memory interfaces; HP1 carries the CPU AXI DMA masters. Verify generated address windows, arbitration, reset behavior, sustained throughput, descriptor/cache ownership and AXI error recovery. No hardware traffic has been demonstrated. |
 | PL RGMII timing and PHY setup | Automatic PL PHY setup, I/O delays and RX elastic buffering now exist. Validate fitted-board reset behavior, delay variation and trace skew; review IDELAY calibration readiness and abnormal receive recovery. FPGA RX clock-delay branch remains unplaceable. |
 | SFP hardware validation | Module IIC and sideband control are connected. Validate real modules, timing parameters, lockout/recovery, GT/PCS phase and receive clock correction. No optical hardware test exists. |
-| SFP link management | Expose hardware timer values through enclosing tops; implement compatibility/fault, idle/config stability and link-down TX admission rules. Next Page and complete asymmetric-pause resolution are absent. |
+| SFP link management | Board timer values now propagate through enclosing tops. Implement compatibility/fault, idle/config stability and link-down TX admission rules. Next Page and complete asymmetric-pause resolution are absent. |
 | Constraints and CDC review | Latest local CDC summary: zero critical and 13 warning clock-pair rows. Review residual timing/CDC findings and the new diagnostics/PHY-start/sideband paths; verify hardware margins and reset contracts. See CDC review and verification evidence. |
 | Full-system verification | Expand the GEM0-to-CPU smoke test to all port pairs, learned unicast, flood, contention, exhaustion, reset/error recovery and sustained load through a shared memory/interconnect model. Test independent GEM RX/TX clocks; current benches tie each pair together. |
 
@@ -98,7 +104,7 @@ report. The inventory preserves the source and does not resolve these gaps.
 
 | Finding | Evidence and remaining work |
 | --- | --- |
-| SFP negotiation uses simulation defaults | All three timer parameters default to 8 cycles and are exposed only on `sfp_1000base_x_pcs`, not through `sfp_port_top` / `switch_top`. Set hardware timing and expose configuration before deployment. There is no negotiation-disable/fixed-link control. |
+| SFP negotiation configuration | Generic timer defaults remain 8 cycles; the board overrides restart to 10 ms and acknowledge/idle timers to 10 ms at 125 MHz through `sfp_port_top` / `switch_top`. There is no negotiation-disable/fixed-link control. |
 | SFP negotiation policy and TX admission | The TX mux replaces MAC symbols during negotiation without backpressure or frame-boundary coordination, so accepted traffic can be lost or truncated during bring-up/restart. `link_up_o` can assert without a mutually supported full-duplex mode and with remote-fault status set. Pause resolution is only a bitwise AND; Next Page is not exchanged. |
 | SFP negotiation stability and test scope | The config-match counter retains history across invalid windows, sync loss and FSM restarts; idle detection uses PCS sync rather than checking received idle ordered sets. Review restart/stability rules. Two-PCS tests use the same RTL, clock pair and default abilities; they do not establish protocol compliance or independent-clock interoperability. |
 | MDIO register contract and verification | READ_DATA is the live shared master register and can be overwritten by polling. CPU START during sequencer activity becomes one pending bit, using configuration at eventual issue; START during a CPU transaction is ignored. Polling status/deferred starts are tested. The sequencer declares but does not use `m_busy_i`; review a poll becoming due during a CPU transaction, plus AXI split-channel/strobe/backpressure races. |

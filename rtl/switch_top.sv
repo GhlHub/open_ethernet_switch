@@ -57,7 +57,11 @@ module switch_top
   // age_tick's clock divider (see below); overridable so a testbench can
   // use a small value instead of the real ~4Hz-at-100MHz divide count,
   // which is far too slow to usefully simulate
-  parameter int AGE_TICK_DIVIDE_COUNT = 100_000_000 / 4
+  parameter int AGE_TICK_DIVIDE_COUNT = 100_000_000 / 4,
+  // Simulation defaults; the board top supplies the 125 MHz timer values.
+  parameter int SFP_AN_BREAK_LINK_CYCLES = 8,
+  parameter int SFP_AN_LINK_TIMER_CYCLES = 8,
+  parameter int SFP_AN_IDLE_DETECT_CYCLES = 8
 ) (
   input  logic clk,      // fabric clock (100 MHz) -- shared by everything
   input  logic rst_n,
@@ -817,7 +821,11 @@ module switch_top
   // =========================================================================
   // SFP0 (port 4)
   // =========================================================================
-  sfp_port_top u_sfp0 (
+  sfp_port_top #(
+    .AN_BREAK_LINK_CYCLES(SFP_AN_BREAK_LINK_CYCLES),
+    .AN_LINK_TIMER_CYCLES(SFP_AN_LINK_TIMER_CYCLES),
+    .AN_IDLE_DETECT_CYCLES(SFP_AN_IDLE_DETECT_CYCLES)
+  ) u_sfp0 (
     .clk              (clk),
     .rst_n            (rst_n),
     .axis_clk         (axis_clk),
