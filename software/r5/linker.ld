@@ -16,7 +16,8 @@ _UNDEF_STACK_SIZE = DEFINED(_UNDEF_STACK_SIZE) ? _UNDEF_STACK_SIZE : 1024;
  * Fabric packet pool 0x10000000..0x1007ffff is deliberately excluded. */
 MEMORY {
  psu_r5_0_atcm_MEM_0 (rwx) : ORIGIN = 0x00000000, LENGTH = 0x10000
- r5_ddr (rwx) : ORIGIN = 0x20000000, LENGTH = 0x02000000
+ r5_ddr (rwx) : ORIGIN = 0x20000000, LENGTH = 0x01ff8000
+ r5_dma (rw) : ORIGIN = 0x21ff8000, LENGTH = 0x8000
 }
 
 /* Specify the default entry point to the program */
@@ -245,6 +246,18 @@ SECTIONS
    *(.gnu.linkonce.tb.*)
    __tbss_end = .;
 } > r5_ddr
+
+/* Dedicated MPU region: normal non-cacheable, shareable, execute-never.
+ * Explicitly initialized by fabric_dma_init; excluded from startup BSS. */
+.dma_nocache (NOLOAD) : {
+   __dma_nocache_start = .;
+   KEEP (*(.dma_nocache))
+   . = ALIGN(64);
+   __dma_nocache_used_end = .;
+} > r5_dma
+__dma_nocache_end = ORIGIN(r5_dma) + LENGTH(r5_dma);
+ASSERT((ORIGIN(r5_dma) & (LENGTH(r5_dma) - 1)) == 0, "DMA MPU alignment")
+ASSERT(SIZEOF(.dma_nocache) <= LENGTH(r5_dma), "DMA region overflow")
 
 .bss (NOLOAD) : {
    . = ALIGN(4);

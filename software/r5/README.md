@@ -18,7 +18,8 @@ Implemented:
 - A single `fabric0` network interface through virtual switch port 5 and AXI
   DMA at `0x80000000`. The GEMs are physical switch ports, not FreeRTOS NICs.
   RX uses 16 SG descriptors; TX uses two alternating descriptors and waits for
-  completion. Buffers are copied; D-cache is disabled for initial bring-up.
+  completion. Buffers are copied; D-cache is enabled for application memory, while DMA
+  descriptors and bounce buffers occupy a reserved non-cacheable MPU region.
 - A 250 ms `vTaskDelayUntil` task samples all five physical ports. GEM0/GEM1
   DP83867 PHYs (addresses 4/9, verified on the development carrier) are read
   over GEM1's shared MDIO bus. PL0/PL1
@@ -99,12 +100,34 @@ The exported XSA describes the BD; exporting it does not rebuild the PL RTL.
 | --- | --- |
 | `0x00000000–0x0000ffff` | R5-0 ATCM reset/startup vectors |
 | `0x10000000–0x1007ffff` | Fabric packet pool, exclusively reserved |
-| `0x20000000–0x21ffffff` | R5 firmware, RTOS heap/stacks and DMA buffers |
+| `0x20000000–0x21ff7fff` | R5 firmware and RTOS heap/stacks; cacheable DDR |
+| `0x21ff8000–0x21ffffff` | 32 KiB DMA region; normal non-cacheable, shareable, execute-never |
 
 Other processors, boot payloads and OS memory maps must reserve both DDR
-regions. Descriptors/data are in DDR, never R5-local TCM. The first stage
-uses no cache maintenance because D-cache is disabled; enabling it later
-requires a deliberate DMA memory/cache policy. Instruction caching is allowed.
+reservations (the R5 reservation includes both cacheable and DMA subregions).
+D-cache is enabled after a higher-priority MPU region is installed for
+`.dma_nocache`. All 18 descriptors and 18 bounce buffers live there, aligned
+to 64 bytes; driver state, FreeRTOS heap and stacks retain the BSP's cacheable
+DDR mapping. MMIO retains the BSP's non-cacheable attributes.
+The DMA section is NOLOAD and explicitly cleared after DMA reset, before
+ownership is handed to hardware. The driver still uses memory barriers;
+per-packet cache maintenance is unnecessary because DMA never accesses the
+cacheable application buffers directly. Instruction caching is unchanged.
+The ELF audit checks DMA placement/alignment and application-memory separation.
+Startup checks read back MPU registers and confirm SCTLR MPU/D-cache enable bits.
+
+**Future work: review the DMA descriptor and packet-buffer cache policy.**
+Keeping both non-cacheable is the initial implementation, not a final performance
+decision. Measure CPU cost and throughput, then evaluate descriptor and payload
+policies separately, including keeping descriptors uncached while caching packet
+buffers. Any cached DMA storage requires explicit clean/invalidate operations at
+ownership transfers, cache-line isolation, and tests for ring reuse, reset and
+error recovery. Retain the current policy until a replacement is validated.
+
+JTAG reads through the PSU see DDR, not necessarily dirty R5 cache contents.
+Values such as `xTickCount`, driver state and the UART software log can therefore
+appear stale in `status_jtag.tcl`. Use UART output and live network traffic for
+firmware liveness; MMIO and the non-cacheable DMA region remain directly readable.
 
 Development MAC: `02:4b:52:32:36:01`; assign a unique address per board before
 connecting multiple boards. DHCP transaction/TCP sequence randomness is a

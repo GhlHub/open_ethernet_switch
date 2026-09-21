@@ -4,6 +4,9 @@
 #include "xscugic.h"
 #include "xttcps.h"
 #include "xil_cache.h"
+#include "xil_mpu.h"
+#include "xreg_cortexr5.h"
+#include "xpseudo_asm.h"
 #include "xil_printf.h"
 #include "xparameters.h"
 
@@ -29,12 +32,37 @@ static void timer_init(XTtcPs *timer, uintptr_t base)
     XTtcPs_Stop(timer);
     XTtcPs_DisableInterrupts(timer, XTTCPS_IXR_ALL_MASK);
 }
+extern uint8_t __dma_nocache_start[], __dma_nocache_end[];
+static void cache_init(void)
+{
+    uintptr_t base=(uintptr_t)__dma_nocache_start;
+    size_t size=(uintptr_t)__dma_nocache_end-base;
+    uint32_t region=Xil_GetNextMPURegion();
+    uint32_t attr=NORM_SHARED_NCACHE | PRIV_RW_USER_RW | EXECUTE_NEVER;
+    configASSERT(size==0x8000u && (base&(size-1u))==0);
+    configASSERT(region<MAX_POSSIBLE_MPU_REGS);
+    /* New region must outrank the BSP DDR mapping. */
+    for (unsigned i=region;i<MAX_POSSIBLE_MPU_REGS;i++)
+        configASSERT(Mpu_Config[i].RegionStatus!=MPU_REG_ENABLED);
+    configASSERT(Xil_SetMPURegion(base,size,attr)==XST_SUCCESS);
+    /* Read the actual CP15 registers, not just the BSP's software table. */
+    mtcp(XREG_CP15_MPU_MEMORY_REG_NUMBER,region);
+    isb();
+    configASSERT(mfcp(XREG_CP15_MPU_REG_BASEADDR)==base);
+    configASSERT(mfcp(XREG_CP15_MPU_REG_SIZE_EN)==((REGION_32K<<1)|REGION_EN));
+    configASSERT(mfcp(XREG_CP15_MPU_REG_ACCESS_CTRL)==attr);
+    Xil_DCacheEnable();
+    uint32_t control=mfcp(XREG_CP15_SYS_CONTROL);
+    configASSERT((control&5u)==5u); /* MPU and data cache enabled */
+    xil_printf("R5 D-cache ON: SCTLR=%08x DMA=%08x..%08x MPU=%u attr=%08x\r\n",
+               control,(unsigned)base,(unsigned)(base+size-1u),region,attr);
+}
 void board_init(void)
 {
-    /* Initial bring-up deliberately disables the R5 D-cache: CPU DMA uses DDR
-     * descriptors and bounce buffers, with explicit ownership barriers. */
+    /* Flush/disable before overriding DDR attributes; DMA has not started. */
     Xil_DCacheDisable();
     board_console_init();
+    cache_init();
     XScuGic_Config *cfg = XScuGic_LookupConfig(0xf9000000UL);
     configASSERT(cfg != NULL);
     configASSERT(cfg->DistBaseAddress == configINTERRUPT_CONTROLLER_BASE_ADDRESS);

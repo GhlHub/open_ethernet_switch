@@ -432,3 +432,47 @@ FCS/error counts, zero overflow and 785 TX frames. PCS_STATUS=7,
 LINK_STATUS=0x31, R5 timers advanced normally and DMA reported no errors.
 The board is left running this image without debug instrumentation.
 The other three copper ports were not re-tested in this load.
+
+## R5 data cache with non-cacheable DMA storage (2026-09-21)
+
+Application DDR `0x20000000–0x21ff7fff` retains the BSP's normal write-back
+cacheable mapping. The final 32 KiB, `0x21ff8000–0x21ffffff`, is reserved
+for all RX/TX descriptors and bounce buffers in `.dma_nocache`, overridden
+by a higher-priority MPU region as normal, shareable, non-cacheable and
+execute-never. Peripheral mappings remain non-cacheable. Driver state,
+FreeRTOS heap and stacks remain cacheable; no cached application buffer is
+handed directly to DMA. DMA storage is explicitly cleared after the DMA
+reset because its linker section is NOLOAD and outside startup BSS.
+
+`make -C software/r5 -j8 all test` passed: firmware build, ELF/vector audit,
+DMA-region placement/alignment checks, link/DHCP policy tests, and DMA
+padding, ring-wrap, descriptor rotation and error/timeout ownership tests.
+Hardware startup reads back CP15 MPU configuration and asserts MPU/cache
+enable. UART reported `SCTLR=00E5187D`, MPU region 10, attributes
+`0000130C`, and the expected 32 KiB address range.
+
+Loaded via JTAG using the existing FPGA image without ILAs. DHCP acquired
+`10.0.1.214`. Initial 10/10 small pings passed. Concurrent tests passed
+1,000/1,000 full-MTU pings (1472-byte payload, repeated A55A) and 1,000/1,000
+short pings (57-byte payload, repeated 73) to the CPU, plus 300/300 full-MTU
+pings to GEM0 endpoint `10.0.1.140`. CPU traffic repeatedly reuses both
+TX descriptors and all 16 RX descriptors. DMA statuses remained
+`0x1100a/0x11008`, PCS=7, links=0x31. SFP counters showed 3,435 accepted
+RX frames, zero RX errors and zero overflow.
+
+Evidence is in `build/gem1_debug/cache/`. These tests validate basic cache
+policy and repeated DMA ownership transfers, not maximum throughput or
+long-duration reliability. PSU JTAG reads of cacheable DDR symbols can now
+be stale; the status script warns about this. Hardware registers and DMA
+storage remain readable without cache maintenance.
+
+A second JTAG boot again reported the expected MPU/cache settings and acquired
+the same DHCP address. Its 300/300 full-MTU pings with repeated 0x00 payload
+passed, and DMA status remained healthy. The board is left running the
+cache-enabled firmware; persistent boot flash was not changed.
+
+The descriptor and packet-buffer cache policy remains a future review item.
+The current non-cacheable DMA region is the initial functional baseline.
+These passing tests do not select an optimal policy; compare CPU cost and
+throughput before considering cached payloads or descriptors, and validate
+cache maintenance at every DMA ownership transition.

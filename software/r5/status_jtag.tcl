@@ -23,7 +23,8 @@ set tick1 [mrd -value $ticks]
 set stamp1 [mrd -value 0xff120018]
 set dt [expr {[clock milliseconds]-$t0}]
 puts "elapsed_ms=$dt tick_delta=[expr {($tick1-$tick0)&0xffffffff}] timestamp_delta=[expr {($stamp1-$stamp0)&0xffffffff}]"
-puts "Expected approximately 1000 ticks/s and 781250 timestamp counts/s; JTAG reads add sampling skew."
+puts "Expected approximately 781250 timestamp counts/s; JTAG reads add sampling skew."
+puts "R5 D-cache is enabled: DDR symbols (including xTickCount) may be stale through PSU reads. Use UART/network traffic to confirm firmware liveness."
 puts "PHY initialization flags (low two bytes):"
 puts [mrd [symbol_address ps_ready]]
 puts "Fabric diagnostics (LINK_STATUS at +0x14):"

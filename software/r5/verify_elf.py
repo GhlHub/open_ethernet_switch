@@ -35,4 +35,13 @@ for offset, handler in [(8, 'FreeRTOS_SWI_Handler'), (24, 'FreeRTOS_IRQ_Handler'
     literal = offset + 8 + (instruction & 0xfff)
     assert struct.unpack_from('<I', vectors, literal)[0] == symbols[handler]
 assert not subprocess.check_output([nm, '--undefined-only', str(elf)], text=True).strip()
+base, end = symbols['__dma_nocache_start'], symbols['__dma_nocache_end']
+assert base == 0x21ff8000 and end == 0x22000000
+assert base <= symbols['__dma_nocache_used_end'] <= end
+for name, size in [('rx', 16*64), ('tx', 2*64),
+                   ('rx_data', 16*1536), ('tx_data', 2*1536)]:
+    addr = symbols[name]
+    assert addr % 64 == 0 and base <= addr and addr + size <= end, name
+assert symbols['__bss_end__'] <= base and symbols['_stack'] <= base
+print('PASS: DMA descriptors/buffers isolated in aligned 32 KiB non-cacheable region')
 print('PASS: R5 entry, RTOS low vectors, resolved symbols and reserved memory ranges')

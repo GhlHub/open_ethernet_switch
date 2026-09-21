@@ -1,5 +1,6 @@
 /* AXI DMA SG CPU virtual port. One frame per descriptor, copy-based ownership.
- * All storage is in reserved R5 DDR and D-cache is disabled at board startup.
+ * Descriptors and bounce buffers occupy the non-cacheable DDR MPU region.
+ * Driver state and application buffers remain cacheable.
  * Fail closed on DMA error/timeout: never reuse a buffer hardware might own. */
 #include "board.h"
 #include "FreeRTOS.h"
@@ -14,11 +15,11 @@
 #define DMA_ERRORS 0x770u
 struct bd { uint32_t next, next_hi, buffer, buffer_hi, reserved[2], control; volatile uint32_t status; uint32_t app[8]; };
 _Static_assert(sizeof(struct bd) == 64, "AXI DMA descriptor alignment");
-static struct bd rx[RX_COUNT] __attribute__((aligned(64)));
+static struct bd rx[RX_COUNT] __attribute__((section(".dma_nocache"), aligned(64)));
 /* Two TX descriptors avoid presenting the same tail address consecutively. */
-static struct bd tx[2] __attribute__((aligned(64)));
-static uint8_t rx_data[RX_COUNT][FRAME_BYTES] __attribute__((aligned(64)));
-static uint8_t tx_data[2][FRAME_BYTES] __attribute__((aligned(64)));
+static struct bd tx[2] __attribute__((section(".dma_nocache"), aligned(64)));
+static uint8_t rx_data[RX_COUNT][FRAME_BYTES] __attribute__((section(".dma_nocache"), aligned(64)));
+static uint8_t tx_data[2][FRAME_BYTES] __attribute__((section(".dma_nocache"), aligned(64)));
 static unsigned rx_index, tx_index;
 static bool ready, failed;
 static uint32_t address(const void *p) { return (uint32_t)(uintptr_t)p; }
@@ -35,6 +36,9 @@ bool fabric_dma_init(void)
     while (mmio_read(DMA_BASE)&4) {
         if (board_timestamp()-start > board_timestamp_hz()/10u) { failed=true; return false; }
     }
+    /* NOLOAD section is outside startup BSS. Initialize only after DMA reset. */
+    memset(rx,0,sizeof rx); memset(tx,0,sizeof tx);
+    memset(rx_data,0,sizeof rx_data); memset(tx_data,0,sizeof tx_data);
     for (unsigned i=0;i<RX_COUNT;i++) {
         rx[i].next=address(&rx[(i+1)%RX_COUNT]);
         rx[i].buffer=address(rx_data[i]); rx[i].control=FRAME_BYTES;
