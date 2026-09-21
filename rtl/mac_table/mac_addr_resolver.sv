@@ -18,8 +18,9 @@
 // dest_mask_o/dest_mask_valid_o feed ingress_port_wr's dest_mask_i/
 // dest_mask_valid_i directly:
 //   - lookup hit  -> dest_mask_o = the table's learned one-hot-or-wider
-//     port mask for that destination (truncated to NUM_PORTS bits; the
-//     table supports up to PORTMASK_W=8 ports, this switch uses 6)
+//     port mask for that destination, excluding this ingress port and
+//     truncated to NUM_PORTS bits. A same-port-only hit resolves to zero
+//     (drop), never a flood. The table supports PORTMASK_W=8 ports; we use 6.
 //   - lookup miss -> flood: every port except this one's own. This is
 //     also the correct behavior for broadcast/multicast destinations
 //     without any separate detection logic, since a multicast bit set in
@@ -161,7 +162,7 @@ module mac_addr_resolver
     if (lookup_result_valid_i) begin
       mask_ready_next = 1'b1;
       dest_mask_next  = lookup_result_hit_i
-        ? lookup_result_port_mask_i[NUM_PORTS-1:0]
+        ? (lookup_result_port_mask_i[NUM_PORTS-1:0] & FLOOD_MASK)
         : FLOOD_MASK;
     end
   end

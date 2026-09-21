@@ -23,6 +23,8 @@
 //   D. a malformed frame (<12 bytes, ends before both MACs are captured)
 //      on port 2 -> dest_mask_o[2] must resolve to 0 (drop) rather than
 //      leaving dest_mask_valid_o[2] stuck low forever
+//   E. on each physical/CPU port, a same-port destination hit resolves
+//      to zero (drop), with a valid decision and no flood fallback
 
 `timescale 1ns/1ps
 
@@ -222,14 +224,35 @@ module tb_mac_forwarding_top;
       end
     end
 
+    // A learned destination behind the ingress port must be filtered,
+    // including CPU port 5. A zero result must not fall back to flooding.
+    for (int port = 0; port < NUM_PORTS; port++) begin
+      bit timed_out;
+      logic [47:0] local_mac;
+      local_mac = 48'h020000001000 + 48'(port);
+      send_frame(port, MAC_UNKNOWN_DST, local_mac, 20);
+      wait_for_mask(port, timed_out);
+      if (timed_out) $fatal(1, "learning frame timed out on port %0d", port);
+      wait_cycles(50);
+      send_frame(port, local_mac, 48'h020000002000 + 48'(port), 20);
+      wait_for_mask(port, timed_out);
+      if (timed_out || dest_mask[port] !== '0) begin
+        $display("FAIL: same-port hit on port %0d: timeout=%0b mask=%0b",
+                 port, timed_out, dest_mask[port]);
+        errors++;
+      end else
+        $display("PASS: same-port hit on port %0d drops without flooding", port);
+      wait_cycles(10);
+    end
+
     if (errors == 0) $display("=== ALL TESTS PASSED ===");
-    else              $display("=== %0d TEST(S) FAILED ===", errors);
+    else              $fatal(1, "=== %0d TEST(S) FAILED ===", errors);
     $finish;
   end
 
   initial begin
     #2_000_000;
-    $display("FAIL: global testbench timeout");
+    $fatal(1, "FAIL: global testbench timeout");
     $finish;
   end
 

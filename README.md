@@ -26,7 +26,14 @@ and isolated bring-up errors remain under investigation. The managed switch
 RX-error counter subsequently remained stable at 803. Together with the
 four copper-port results, this establishes the
 `20260920-all_ports_passing_dhcp_ping` basic-connectivity milestone.
-See [SFP results](docs/sfp-debug.md).
+A subsequent intermittent-loss investigation captured SFP GTH decoder errors;
+the receiver now explicitly uses LPM equalization. Initial LPM testing passed
+300/300 full-MTU pings to an endpoint through GEM0 and 300/300 patterned
+full-MTU CPU pings, with no SFP MAC receive errors. A brief post-boot
+interruption in that debug run remains unexplained. The normal image now
+runs without ILAs or a debug hub and includes ingress-port exclusion on MAC
+lookup hits; it passed DHCP and 300/300 full-MTU pings to both CPU and GEM0
+endpoint with zero SFP receive errors. See [SFP results](docs/sfp-debug.md).
 **Sustained throughput, fault recovery, remaining CDC review and complete SFP
 hardware validation remain pending.**
 

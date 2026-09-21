@@ -365,3 +365,70 @@ interval rather than a quantified error-free soak test. The earlier 802→803
 increment and startup ping losses remain recorded above. The milestone marks
 basic DHCP/ping connectivity across all five physical ports; throughput,
 startup reliability and fault-recovery validation remain pending.
+
+## Post-milestone intermittent-loss investigation
+
+The SFP uplink and right-upper GEM0 endpoint `10.0.1.140` were active together.
+ILA captured incorrect payload bytes accompanied by GTH disparity and invalid-code
+flags before the PCS. The Wizard's AUTO mode had selected DFE; the source XCI
+now explicitly selects LPM. Its generated primitive differences were applied
+to the debug checkpoint, with unchanged +0.018/+0.012 ns setup/hold slack and
+successful bitstream DRC. The project GTH OOC checkpoint was regenerated too.
+
+LPM boot acquired DHCP automatically. The initial CPU full-MTU test lost
+sequences 2–25, then received every remaining packet (276/300 overall).
+A subsequent repeated-0x73 full-MTU CPU test passed 300/300.
+The forwarded endpoint test also passed 300/300 full-MTU pings when the
+test socket accepted replies on either host interface. Interface-bound
+endpoint tests were misleading: captures show CRC-valid replies addressed
+to the workstation's Wi-Fi MAC for its Ethernet IP. Both host interfaces
+share the LAN and allow cross-interface ARP replies.
+See [detailed evidence and limitations](sfp-debug.md#intermittent-packet-loss-with-an-attached-endpoint).
+
+After at least 60 seconds without generated pings, simultaneous full-MTU
+tests passed another 300/300 to each target (default CPU payload, repeated
+0x00 endpoint payload). Settled totals were 600/600 per target. The final
+SFP counters showed 5,687 accepted RX frames, zero RX FCS/error counts and
+zero overflow; links and R5/DMA status remained healthy. This is a short
+functional test, not a throughput or long-duration reliability qualification.
+
+## Ingress exclusion on destination lookup hits (2026-09-21)
+
+The resolver now removes the ingress port from learned destination masks.
+A hit containing only that port resolves to a valid zero mask (drop), without
+falling back to flooding. The forwarding regression learns a destination
+behind each of the six ports and checks a subsequent same-port hit; all six
+cases failed before the fix and pass afterward. Existing unknown-destination,
+other-port unicast and short-frame checks also pass. Commands:
+`make -C sim sim-mac-fwd sim-switch-top`. The full switch smoke test passes.
+This change is included in the normal hardware image described below.
+
+## Normal image without debug ILAs (2026-09-21)
+
+Re-synthesized the current RTL (including same-port destination filtering)
+and implemented the normal project with the LPM GTH configuration. No ILA
+or debug-hub cells remain; the implemented design's debug-core collection
+is empty. The optional debug insertion/capture scripts remain available
+for future investigations and are not part of the normal build.
+
+The image meets setup/hold at +0.018/+0.010 ns under the current constraints.
+It uses 25,459 LUTs, 33,953 registers and 51.5 BRAM tiles. Unlike the prior
+instrumented image, it meets timing with the source's PL0/PL1 RX delays of
+700/750 ps; no 900 ps PL0 implementation override was applied.
+`build/impl_kr260.tcl` now rejects incomplete runs, unexpected debug cores
+and negative setup/hold slack.
+
+Loaded `build/vivado_kr260/kr260_switch.runs/impl_1/kr260_top.bit` through
+`software/r5/boot_jtag.tcl`. R5 started, DHCP acquired `10.0.1.214`,
+and SFP plus GEM0 links came up. This was a volatile JTAG load, without
+changing boot flash. Logs are under `build/gem1_debug/no_ila/`; implementation
+reports are under `build/reports/`.
+
+Simultaneous full-MTU tests passed 300/300 pings to the CPU at
+`10.0.1.214` and 300/300 to the GEM0 endpoint at `10.0.1.140`.
+Pings used the default Ethernet route without binding the receive socket
+to an interface. Final SFP counters: 1,617 accepted RX frames, zero RX
+FCS/error counts, zero overflow and 785 TX frames. PCS_STATUS=7,
+LINK_STATUS=0x31, R5 timers advanced normally and DMA reported no errors.
+The board is left running this image without debug instrumentation.
+The other three copper ports were not re-tested in this load.

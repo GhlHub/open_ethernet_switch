@@ -166,8 +166,9 @@ do not establish independent-peer interoperability. See the
    write DMA copies the frame into `DDR_BASE_ADDR + bufid * BUFFER_BYTES`.
 3. In parallel with frame reception, each `mac_addr_resolver` snoops accepted
    words to capture destination/source MACs and request lookup/learning. A hit
-   returns the learned mask; a miss floods all other ports (including CPU for
-   physical ingress).
+   returns the learned mask with the ingress port removed; a same-port-only
+   hit drops the frame rather than flooding. A miss floods all other ports
+   (including CPU for physical ingress).
    `mac_forwarding_top` supplies `dest_mask_i` / `dest_mask_valid_i`; ingress
    waits for a valid decision before enqueue. Learning currently precedes
    final frame validation; see the [resolver gaps](inventory.md#known-gaps-in-existing-rtl).

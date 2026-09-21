@@ -271,6 +271,7 @@ rebuild that run before linking the board synthesis result:
 ```tcl
 open_project build/vivado_kr260/kr260_switch.xpr
 set_property CONFIG.ENABLE_COMMON_USRCLK 2 [get_ips gth_sfp_ip]
+set_property CONFIG.RX_EQ_MODE LPM [get_ips gth_sfp_ip]
 generate_target all [get_ips gth_sfp_ip]
 reset_run gth_sfp_ip_synth_1
 launch_runs gth_sfp_ip_synth_1 -jobs 8
@@ -283,3 +284,115 @@ checkpoint for `build/debug_sfp.tcl`. It verifies TXOUTCLK drives the user
 clock helper before adding the ILAs. Use the resulting matching `.bit` and
 `.ltx` files for programming and capture. The normal clean-project build
 imports the repository XCI; this caveat concerns reuse of the local project.
+
+## Intermittent packet loss with an attached endpoint
+
+After the milestone, the operator reported a stall followed by spontaneous
+recovery. The SFP remained the uplink and right-upper GEM0 connected to endpoint
+`10.0.1.140`, not to the same managed switch. The CPU retained `10.0.1.214`.
+R5 tick/timestamp counters advanced, DMA showed no errors, and GEM0 reported
+no TX underrun, RX FCS error or RX overrun. Both links stayed active
+(`LINK_STATUS=0x31`, `PCS_STATUS=7`).
+
+Small CPU pings passed 120/120, but full-MTU loss varied widely: separate
+CPU runs received 2/30, 149/150, 137/180 and 180/300. The forwarded endpoint
+received 11/30 full-MTU pings. The SFP MAC RX error counter increased while
+its overflow counter remained zero. This is evidence of intermittent receive
+corruption rather than a confirmed processor or fabric hang.
+
+Raw GTH ILA captures caught expected payload byte `0x73` decoded as `0x93`,
+with RXCHARISK, RXDISPERR and RXNOTINTABLE asserted on that byte. It occurred
+in both low and high byte lanes in separate captures. RXBUFSTATUS stayed
+zero throughout those corrupt captures. Other captures contained complete
+1518-byte ICMP requests with valid CRCs. Thus at least part of the loss
+originates at the serial receiver/decoder, before PCS frame parsing.
+
+The Wizard's previous `RX_EQ_MODE=AUTO`, with a 20 dB insertion-loss
+assumption, generated DFE mode (`RXLPMEN=0`).
+[AMD UG576, RX equalizer](https://docs.amd.com/v/u/en-US/ug576-ultrascale-gth-transceivers)
+recommends LPM for low-loss channels and repetitive, unscrambled 8b/10b
+traffic; DFE automatic adaptation can drift with repeated patterns. This is
+a candidate explanation for the observed corruption and self-recovery,
+not a direct measurement of the equalizer's internal state.
+
+The repository XCI now explicitly selects `RX_EQ_MODE=LPM`. Comparing
+Wizard-generated primitive configurations produces exactly these differences:
+
+| Setting | Previous DFE | LPM |
+| --- | --- | --- |
+| RXLPMEN | 0 | 1 |
+| RX_SUM_IREF_TUNE | 0x9 | 0x4 |
+| RX_SUM_VCMTUNE | 0xa | 0x6 |
+
+Local evidence is under `build/gem1_debug/stall_investigation/`.
+In particular, `rx_aligned_1.csv` and `rx_aligned_2.csv` contain the decoder
+faults; `lpm_delta.json` records the Wizard attribute comparison.
+The previous image/checkpoint/probes are preserved under `pre_lpm/`.
+
+### Test-host ARP ambiguity
+
+The test workstation has Ethernet `10.0.1.24` (MAC
+`c8:ff:bf:0f:6e:4f`) and Wi-Fi `10.0.1.14` (MAC
+`88:f4:da:9f:ec:b4`) on the same subnet. With LPM loaded,
+`ping -I eth1` to the endpoint initially received 0/300 despite no MAC
+errors. Five raw SFP TX captures showed complete, CRC-valid ICMP echo replies
+from `10.0.1.140` to `10.0.1.24`, addressed to the workstation's
+**Wi-Fi MAC**. These are in `build/gem1_debug/lpm/endpoint_tx_*.csv`.
+
+The host has `arp_ignore=0` on both interfaces and globally, permitting
+ARP replies for an address on another interface, as described in the
+[Linux IP sysctl documentation](https://kernel.org/doc/html/latest/networking/ip-sysctl.html).
+An interface-bound ping can miss replies arriving through the other interface.
+Repeating the test without `-I eth1` restores responses; route lookup still
+selects Ethernet and source `10.0.1.24` for outgoing requests.
+No host network configuration was changed. Earlier interface-bound loss
+figures are therefore not reliable measures of FPGA packet loss by
+themselves. The independently captured GTH decoder errors remain valid evidence.
+
+### LPM implementation and hardware validation
+
+For a controlled comparison, the first LPM debug image applies precisely the
+three Wizard-generated differences above to the preserved routed checkpoint.
+RXLPMEN is tied to the same constant-one net as RX8B10BEN. This retains the
+existing logic, probes and 900 ps PL0 IDELAY override. Routing and bitstream
+DRC passed; setup/hold slack remains +0.018/+0.012 ns. The existing project's
+GTH output products and OOC synthesis checkpoint were also regenerated with
+LPM explicitly selected.
+
+The LPM image is `build/gem1_debug/lpm/sfp_lpm.bit`, with matching
+`sfp_lpm.ltx` and `routed.dcp`. It was loaded using
+`software/r5/boot_jtag.tcl`, resetting the receiver and PS through the normal
+volatile bring-up sequence. DHCP acquired `10.0.1.214` automatically;
+GEM0 and SFP subsequently reported link up (`0x31`).
+The first CPU test received 276/300 full-MTU pings: only sequences 2–25 were
+lost, with all 26–300 received. This initial interruption remains unexplained.
+The next CPU test with full-MTU repeated `0x73` payload passed 300/300.
+
+The unbound endpoint test passed 300/300 full-MTU pings. After at least
+60 seconds without generated ping traffic (ordinary LAN background traffic
+remained), another simultaneous pair of tests passed 300/300 to the CPU
+with the default payload and 300/300 to the endpoint with repeated
+`0x00` payload. Thus the settled tests received 600/600 full-MTU replies
+from each address, across two payload patterns per target.
+
+Final SFP counters were 5,687 accepted RX frames, zero RX FCS/error counts,
+zero overflow and 2,836 TX frames. PCS_STATUS remained 7 and LINK_STATUS
+0x31. R5 timers continued advancing at the expected rates and DMA status
+showed no errors. Logs are in `build/gem1_debug/lpm/`:
+`cpu_large.log`, `cpu_pattern73.log`, `endpoint_unbound.log`,
+`cpu_after_idle.log`, `endpoint_after_idle.log`, `mac_final.log`,
+`status_final.log` and `uart.log`.
+
+These results support keeping LPM for this module/channel and traffic pattern.
+They do not prove DFE adaptation was the sole cause of all prior losses,
+nor establish long-duration reliability or explain the brief initial
+interruption. The board is left running LPM; persistent boot flash is unchanged.
+
+## Debug instrumentation removed (2026-09-21)
+
+The normal project was rebuilt with LPM and ingress-port exclusion on
+destination lookup hits, without inserting ILAs or a debug hub. It was
+loaded and passed DHCP plus 300/300 full-MTU pings to each of the CPU and
+GEM0 endpoint, with zero SFP MAC receive errors. This supersedes the running
+LPM debug image above. See [normal-image validation](verification.md#normal-image-without-debug-ilas-2026-09-21).
+Historical debug scripts, images and captures remain available for reference.

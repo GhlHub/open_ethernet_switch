@@ -12,7 +12,14 @@ set_property USED_IN {implementation} [get_files $here/../constraints/kr260_rgmi
 reset_run impl_1
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
+if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} {
+  error "Implementation did not complete"
+}
 open_run impl_1
+# This is the normal image. Debug insertion is an explicit, separate build.
+if {[llength [get_debug_cores -quiet]]} {
+  error "Unexpected debug cores in normal implementation"
+}
 file mkdir $here/reports
 report_timing_summary -file $here/reports/impl_timing_summary.rpt
 report_utilization    -file $here/reports/impl_utilization.rpt
@@ -22,3 +29,11 @@ report_cdc -summary   -file $here/reports/impl_cdc_summary.rpt
 report_drc            -file $here/reports/impl_drc.rpt
 report_methodology    -file $here/reports/impl_methodology.rpt
 report_io             -file $here/reports/impl_io.rpt
+
+foreach delay {max min} {
+  set path [get_timing_paths -delay_type $delay -max_paths 1]
+  if {![llength $path] || [get_property SLACK $path] < 0} {
+    error "Implementation timing failed: $delay; do not program this image"
+  }
+}
+puts "Normal image verified: no debug cores; setup and hold timing met."

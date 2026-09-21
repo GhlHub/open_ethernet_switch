@@ -157,6 +157,9 @@ The checked-in build inputs are:
   `bd`, `synth` (default), or `impl` stage.
 - [`impl_kr260.tcl`](../build/impl_kr260.tcl): opens the existing synthesized
   project, resets/re-runs implementation through bitstream and writes reports.
+  It rejects incomplete runs, debug cores and negative setup/hold slack.
+  Normal builds contain no ILAs or debug hub; the separate
+  `debug_gem1.tcl` and `debug_sfp.tcl` scripts explicitly add instrumentation.
 - [`synth_switch_top.tcl`](../build/synth_switch_top.tcl) and
   [`switch_top_files.f`](../build/switch_top_files.f): out-of-context digital
   switch synthesis; the file list matches `SWITCH_TOP_SRCS` in the Makefile.
@@ -173,9 +176,9 @@ vivado -mode batch -source build/impl_kr260.tcl -nolog -nojournal
 
 `build_kr260.tcl` deletes and recreates `build/vivado_kr260/` on each call,
 including with `bd`; preserve any wanted prior results first. `impl_kr260.tcl`
-restarts the existing implementation run. The scripts do not explicitly
-validate run status after every `wait_on_run`, so inspect run status, logs,
-reports and the bitstream rather than relying only on the batch exit code.
+restarts the existing implementation run and checks completion, absence of
+debug cores and setup/hold timing. The project-creation script does not yet
+validate every run status explicitly; inspect its logs and generated reports.
 The bitstream path is
 `build/vivado_kr260/kr260_switch.runs/impl_1/kr260_top.bit`.
 Reports and generated IP/project products are ignored by Git. An [R5 application and XSA/BSP export flow](../software/r5/README.md) now exist;
