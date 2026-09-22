@@ -215,3 +215,10 @@ See [statistics.md](../../docs/statistics.md) for the counter definitions,
 register protocol, widths, ownership, snapshot API, build examples and
 validation limits. The all-counter build was loaded through JTAG on 2026-09-21;
 DHCP and full-MTU pings to the R5 and forwarded endpoint passed.
+
+## Web management
+
+The firmware serves `/configuration` and `/statistics` on HTTP port 80 without
+login. Configure the five physical ports and view all available statistics and
+sensors; statistics refresh every second. Port settings reset on reboot.
+See [web interface](../../docs/web-interface.md) for API, behavior, and tests.

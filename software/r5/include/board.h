@@ -21,6 +21,8 @@ uint32_t board_timestamp_hz(void);
 void board_assert(const char *, unsigned);
 bool board_phy_mask(uint8_t *mask);
 void board_link_task(void *unused);
+void board_ports_set(uint8_t mask);
+void board_ports_get(uint8_t *admin, uint8_t *physical, uint8_t *forwarding);
 void network_start(void);
 void network_link_changed(bool up);
 bool fabric_dma_init(void);

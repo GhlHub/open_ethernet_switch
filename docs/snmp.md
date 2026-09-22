@@ -88,6 +88,7 @@ are tracked by the firmware build dependencies. Do not log the community.
 | `B.3.1.<column>.<direction>` | Optional fabric DDR instrumentation |
 | `B.4.1.<column>.<event>` | Optional debug events |
 | `B.5.<field>.0` | Environmental readings and sensor health |
+| `B.6.1.<column>.<bank>.<slot>` | Timeout counts by hardware counter location |
 
 Port row indices are **one-based**: 1 GEM0/right upper, 2 GEM1/right lower,
 3 PL0/left upper, 4 PL1/left lower, 5 SFP, 6 CPU. Columns 1 and 2 are name
@@ -113,7 +114,54 @@ the hardware does not provide those exact distinctions.
 Collection health fields 1–9: availability (`1=available`, `2=unavailable`),
 hardware capability word, attempted polls, late polls, saturated reads,
 read timeouts, collection timestamp age in ms, PS timestamp frequency in Hz,
-and firmware build bits (`1=ports`, `2=DDR`, `4=debug`). Optional tables are
+and firmware build bits (`1=ports`, `2=DDR`, `4=debug`).
+Fields **10 and 11** (added 2026-09-22) are `Counter32` timeout counts:
+
+- `krStatsMailboxReleaseTimeouts.0`: R5 exceeded the approximately 100 us
+  BUSY-release wait before selecting a counter. Elapsed time includes any
+  preemption of the statistics task; this does not prove the hardware stayed
+  busy for the entire interval.
+- `krStatsSnapshotResponseTimeouts.0`: DATA returned the hardware timeout
+  sentinel after approximately 27.3 us waiting for snapshot acknowledgment.
+  Firmware retains and retries the same pending counter index.
+
+`krStatsReadTimeouts.0` remains the combined total, equal to the sum of these
+two classes modulo 2^32. All reset on R5 restart. Existing OIDs are unchanged.
+The reader script displays both new fields (null with older firmware).
+
+Fields **12–14** record the most recent timeout locations:
+`krStatsLastReleaseIndex`, `krStatsLastReleaseTargetIndex`, and
+`krStatsLastResponseIndex`. Each is the raw hardware index (`bank * 16 + slot`);
+4294967295 means no event since restart. Release index is read from the active
+hardware INDEX register; release target is the next index firmware wanted
+to select. A response timeout records the selected/requested index.
+
+The new `B.6.1.<column>.<bank>.<slot>` table exposes a Counter32 per timeout
+class for every compiled-in hardware counter: column 1 release, column 2
+snapshot response. Both bank and slot are **zero-based**, matching the hardware
+register interface. Values count timeout attempts, including repeated retries.
+Release counts are attributed to the active hardware index. Each class's table
+sum matches its scalar total modulo 2^32 for valid indices; queries spanning
+multiple collection intervals can temporarily differ. No new destructive
+hardware counter reads are introduced.
+
+```sh
+# All snapshot-response counts, indexed by bank and slot.
+snmpwalk -v2c -c public -On 10.0.1.214 .1.3.6.1.4.1.32473.1.6.1.2
+
+# Most recent response-timeout index.
+snmpget -v2c -c public -On 10.0.1.214 .1.3.6.1.4.1.32473.1.1.14.0
+```
+
+Banks 0–3 are GEM0 RX, GEM0 TX, GEM1 RX, GEM1 TX (slots 0–3);
+4–7 are PL0, PL1, SFP, CPU (slots 0–7); 8–11 are physical DDR write/read
+and CPU DDR write/read (slots 0–7); bank 12 is debug (slots 0–15).
+Slot definitions follow [statistics.md](statistics.md). The reader script
+prints nonzero table rows with source/counter names and decodes the last indices
+into bank and slot. JSON `timeouts` contains only nonzero rows; an empty list
+means no per-index events, or the table is absent on older firmware.
+
+Optional tables are
 absent when not compiled in. If the hardware capabilities disagree with the
 firmware, availability is false and the collector is disabled; do not use
 the displayed totals. Timeouts may mean partially updated totals; a nonzero
@@ -167,6 +215,10 @@ and [RFC 5612](https://www.rfc-editor.org/rfc/rfc5612.html).
 The latest 30-second observation recorded two historical mailbox read timeouts,
 up from one during initial deployment; none occurred within that sample.
 Collection continued at four polls per second without saturation or late polls.
-Timeout bank/index and reason are not yet exposed and need instrumentation.
+The 2026-09-22 firmware separates release and snapshot-response timeouts
+as described above. The subsequent per-index diagnostics record both classes
+by bank/slot and retain the most recent timeout indices. A live response
+timeout was observed before these location diagnostics were deployed; its
+location cannot be recovered retrospectively.
 See [live counter observations](verification.md#2026-09-21-live-snmp-counter-observation)
 for packet, latency, backpressure and sensor results and their limits.

@@ -193,6 +193,16 @@ saturation and timeout flags make missed intervals visible. If a source clock
 stops, the AXI read returns a timeout sentinel after approximately 27.3 µs,
 retaining the request. Firmware retries that same index on its next poll;
 a delayed snapshot is not discarded or attributed to another counter.
+Firmware separately counts `mailbox_release_timeouts` (the approximately
+100 us software BUSY-release deadline) and `snapshot_response_timeouts`
+(the hardware DATA timeout sentinel). `read_timeouts` remains their combined
+total. The software deadline includes task preemption; neither counter
+alone identifies the affected bank/index. Additional software arrays now
+count each timeout class by bank/slot. Last response index and last release
+active/target indices are retained (UINT32_MAX until the first event). Release
+attribution uses the active hardware INDEX register; the target records the
+counter firmware was about to select. These diagnostics are exposed through
+SNMP and do not change hardware or retry sequencing.
 While that request is pending, other counter reads are deferred. Forwarding
 and the link task continue; delayed statistics may saturate.
 

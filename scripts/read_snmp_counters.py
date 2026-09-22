@@ -12,7 +12,9 @@ import sys
 import time
 
 HEALTH = ('available', 'capabilities', 'polls', 'late_polls', 'saturated_reads',
-          'read_timeouts', 'age_ms', 'timestamp_hz', 'build_flags')
+          'read_timeouts', 'age_ms', 'timestamp_hz', 'build_flags',
+          'mailbox_release_timeouts', 'snapshot_response_timeouts',
+          'last_release_index', 'last_release_target_index', 'last_response_index')
 PORT = ('rx_good_packets', 'rx_bad_packets', 'rx_good_bytes', 'rx_bad_bytes',
         'tx_good_packets', 'tx_bad_packets', 'tx_good_bytes', 'tx_bad_bytes')
 DDR = ('bytes', 'bursts', 'latency_cycles', 'max_latency_cycles',
@@ -68,9 +70,26 @@ def collect(args, executable):
         value = values.get((5, field, 0))
         sensors[name] = value / (1000 if field < 6 else 1000000) if (
             valid & (1 << bit) and value is not None) else None
+    bank_names = ('GEM0 RX', 'GEM0 TX', 'GEM1 RX', 'GEM1 TX', 'PL0', 'PL1',
+                  'SFP', 'CPU', 'physical ingress write', 'physical egress read',
+                  'CPU write', 'CPU read', 'debug')
+    timeouts = []
+    for bank, source in enumerate(bank_names):
+        slots = 4 if bank < 4 else 16 if bank == 12 else 8
+        for slot in range(slots):
+            release = values.get((6, 1, 1, bank, slot), 0)
+            response = values.get((6, 1, 2, bank, slot), 0)
+            if not (release or response):
+                continue
+            names = PORT[(bank % 2)*4:(bank % 2)*4+4] if bank < 4 else PORT if bank < 8 else DDR
+            name = next((d['name'] for d in debug if d['index'] == slot+1), f'event {slot}') if bank == 12 else names[slot]
+            timeouts.append({'bank': bank, 'slot': slot, 'index': bank*16+slot,
+                             'source': source, 'counter': name,
+                             'mailbox_release_timeouts': release,
+                             'snapshot_response_timeouts': response})
     return {'time': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
             'host': args.host, 'health': health, 'ports': ports, 'ddr': ddr,
-            'debug': debug, 'sensors': sensors}
+            'debug': debug, 'sensors': sensors, 'timeouts': timeouts}
 
 
 def display(data):
@@ -83,6 +102,15 @@ def display(data):
         print('WARNING: saturation recorded; totals may undercount.')
     if h['read_timeouts']:
         print('NOTE: mailbox timeouts recorded; collection may have partial updates.')
+    print('Timeout locations (bank and slot are zero-based):')
+    for key in ('last_release_index', 'last_release_target_index', 'last_response_index'):
+        index = h.get(key)
+        description = ('unavailable' if index is None else 'none since restart' if index == 4294967295
+                       else f'bank {index >> 4}, slot {index & 15}, index 0x{index:02x}')
+        print(f'  {key}: {description}')
+    for row in data['timeouts']:
+        print(f"  {row['source']} / {row['counter']} (bank {row['bank']}, slot {row['slot']}): "
+              f"release={row['mailbox_release_timeouts']}, response={row['snapshot_response_timeouts']}")
     print(f"\n{'Port / direction':27} {'Link':5} {'Good packets':>14} {'Bad packets':>12} {'Good bytes':>16} {'Bad bytes':>12}")
     for port in data['ports']:
         for direction in ('rx', 'tx'):

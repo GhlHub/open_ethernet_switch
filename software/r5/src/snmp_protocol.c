@@ -133,7 +133,7 @@ static uint8_t missing(const struct snmp_mib *m,const struct snmp_oid *o)
 {
     for (size_t i=0;i<m->count;i++) {
         const struct snmp_oid *p=&m->object[i].oid;
-        size_t base=p->length-1;
+        size_t base=p->length-m->object[i].instance_arcs;
         if (o->length>=base && !memcmp(p->arc,o->arc,base*sizeof(uint32_t)))
             return 0x81; /* known object, absent instance */
     }

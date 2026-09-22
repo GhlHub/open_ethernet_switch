@@ -205,7 +205,10 @@ The GEM RX bridge packs bytes before crossing into the fabric; TX unpacks
 after crossing into the GEM clock domain. TX starts after 128 words or the
 frame's final word is buffered. Both PL/SFP adapters now transfer one 16-bit
 word per cycle, with 256-word (512-byte payload) FIFOs. The physical ingress
-DMA takes two cycles per 128-bit beat; CPU ingress remains three. Egress
+DMA now sustains one 128-bit beat per cycle after pipeline fill when AXI
+is ready. Two buffered words with reserved space for each pending RAM read
+keep data stable during backpressure. CPU ingress remains three cycles per
+beat. Egress
 prefetches the next RAM beat to stream without the former beat-boundary gaps.
 
 ## Port state and link-down handling
@@ -228,9 +231,9 @@ in-flight traffic need further testing. The register map is in
 
 ## Switch-fabric bandwidth limitations and areas to investigate
 
-Status: written from reading the RTL after the fabric clock moved to 100 MHz, the
-ingress write engine to 2 cycles per beat, and the per-port stream stages to one word
-per cycle. **The DDR throughput estimates below are analytical, not measured system
+Status: updated 2026-09-22 for the pipelined physical ingress write engine
+(one beat per cycle after fill). Fabric clock is 100 MHz, and per-port stream
+stages transfer one word per cycle. **The DDR throughput estimates below are analytical, not measured system
 performance.** A single-port MAC loopback bench measures frame integrity and
 GMII gaps; no bench exercises sustained traffic on several ports through a
 realistic shared-memory model. Figures marked "assumed" use an
@@ -243,7 +246,7 @@ and DDR, plus about 6 cycles of state overhead per frame.
 | Path | Data-phase ceiling | Notes |
 | --- | --- | --- |
 | HP0 port, per direction | 12.8 Gbit/s (1.6 GB/s) | Shared by ingress writes, egress reads and the CPU-port master; DDR is also shared with the PS |
-| Ingress write master | 6.4 Gbit/s (800 MB/s) | 2 cycles per 16-byte beat (`S_RD_ISSUE`, `S_W`); one burst outstanding |
+| Ingress write master | 12.8 Gbit/s (1.6 GB/s) | 1 cycle per 16-byte beat after pipeline fill, with AXI ready; one burst outstanding |
 | Egress read master | 12.8 Gbit/s | 1 beat per cycle; one burst outstanding |
 | Per-port egress stream out of `egress_port_rd` | 1.6 Gbit/s | One word per cycle; the next 128-bit beat is prefetched while the current one drains (it was 8 words per 10 cycles) |
 | PL/SFP port adapters, each direction | 1.6 Gbit/s | Word-wide FIFOs (`switch_egress_to_mac_txd.sv`, `mac_rxd_to_switch_ingress.sv`): one 16-bit word per fabric cycle on the fabric side and per MAC-clock cycle on the MAC side (2.3 Gbit/s). This replaced a byte-serial version that limited each port to 0.8 Gbit/s (0.5 Gbit/s at 62.5 MHz). |
@@ -270,10 +273,13 @@ and DDR, plus about 6 cycles of state overhead per frame.
 2. **One shared write master** serves all five ports and holds the bus for a whole
    frame burst; other ports wait. One burst outstanding means every frame pays the
    write-response latency.
-3. **Beat cadence**: 2 cycles per beat caps the data phase at 800 MB/s
-   (about 670 MB/s for 1518-byte frames assumed, far less for 64-byte frames where
-   per-frame overhead dominates: about 2.3 million frames/s assumed against
-   7.4 million at five-port small-frame line rate).
+3. **Beat cadence (improved)**: the physical ingress engine now transfers one
+   beat per cycle after filling its two-word buffer, rather than alternating
+   RAM read and AXI write cycles. For 1,500 bytes (94 beats), the no-stall
+   simulation measures 96 cycles from AW acceptance to the final W handshake,
+   versus 188 before. This excludes address waiting, response latency and
+   frame arbitration/enqueue overhead. Small-frame throughput remains sensitive
+   to these fixed costs; sustained multiport bandwidth remains unmeasured.
 4. **Buffer pool**: `NUM_BUFFERS = 256` buffers of 2 KiB (512 KiB). The buffer test verifies all 256 slots can be allocated after flush/release
    races. Sustained traffic through pool exhaustion and recovery remains untested.
 5. **Serialized control plane**: `queue_mgr` and `free_list_mgr` each process one
@@ -323,10 +329,10 @@ and DDR, plus about 6 cycles of state overhead per frame.
 2. **Ingress buffering**: double-buffer the port frame RAM and/or deepen the MAC-side
    RX FIFO so a port can receive while the previous frame drains; define and test
    overflow behaviour (clean drop plus a counter).
-3. **Ingress write engine**: stream one beat per cycle (prefetch the next beat while
-   presenting the current one, with a skid buffer for `wready` stalls) and allow
-   several bursts in flight to hide the response latency; the same for
-   `cpu_dma_wr.sv`.
+3. **Ingress write engine**: physical-port beat pipelining is implemented and
+   simulation-tested. Allowing several bursts in flight to hide response latency
+   remains future work and requires updating the statistics monitor
+   single-outstanding contract. The separate `cpu_dma_wr.sv` remains unoptimized.
 4. **Egress read engine**: allow several outstanding reads and overlap the next
    frame's fetch with the current stream (double-buffered frame RAM or a larger
    transmit FIFO). Beat-boundary prefetch is already implemented.

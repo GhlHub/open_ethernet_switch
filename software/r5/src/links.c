@@ -6,6 +6,17 @@
 #define GEM0 0xff0b0000UL
 #define GEM1 0xff0c0000UL
 static bool ps_ready[2];
+static uint8_t admin_mask=PHYSICAL_PORT_MASK, physical_mask, forwarding_mask;
+void board_ports_set(uint8_t mask)
+{
+    taskENTER_CRITICAL(); admin_mask=mask & PHYSICAL_PORT_MASK; taskEXIT_CRITICAL();
+}
+void board_ports_get(uint8_t *admin,uint8_t *physical,uint8_t *forwarding)
+{
+    taskENTER_CRITICAL();
+    *admin=admin_mask; *physical=physical_mask; *forwarding=forwarding_mask;
+    taskEXIT_CRITICAL();
+}
 /* Verified on the development carrier by DP83867 ID reads (2000:a231).
  * GEM1 responds at address 9, not the previously assumed address 8. */
 static const unsigned ps_phy_addr[2]={4,9};
@@ -85,7 +96,7 @@ bool board_phy_mask(uint8_t *mask)
         if (!valid) ps_ready[i]=false;
         bool link=valid && (status&0xe400u)==0xa400u;
         if (link) up |= 1u<<i;
-        mmio_write((i?GEM1:GEM0),link?0x1cu:0x10u);
+        mmio_write((i?GEM1:GEM0),(link && (admin_mask & (1u<<i)))?0x1cu:0x10u);
     }
     uint32_t calibrated=mmio_read(DIAG_BASE);
     for (unsigned i=0;i<2;i++) {
@@ -105,6 +116,13 @@ void board_link_task(void *unused)
     TickType_t wake=xTaskGetTickCount();
     for (;;) {
         uint8_t desired; board_phy_mask(&desired);
+        physical_mask=desired;
+        desired &= admin_mask;
+        /* Stop RX at each MAC as well as removing fabric destinations. PHYs
+         * remain active so physical link state is still observable. */
+        const uintptr_t macs[]={0x80040000UL,0x80080000UL,0x800c0000UL};
+        for (unsigned i=0;i<3;i++)
+            mmio_write(macs[i]+0x404,(admin_mask & (1u<<(i+2)))?0x12000000u:0x02000000u);
         if (!fabric_dma_healthy()) desired=0;
         struct link_action a=link_update(&state,desired,
             (mmio_read(DIAG_BASE+LINK_STATUS)&0x100u)!=0,
@@ -112,6 +130,7 @@ void board_link_task(void *unused)
         if (a.clear) mmio_write(DIAG_BASE+LINK_CLR,a.clear);
         if (a.set) mmio_write(DIAG_BASE+LINK_SET,a.set);
         if (a.clear || a.set) xil_printf("Fabric physical links: %02x\r\n",state.enabled);
+        forwarding_mask=state.enabled;
         network_link_changed(state.enabled!=0);
         vTaskDelayUntil(&wake,pdMS_TO_TICKS(250));
     }

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KR260 · Ethernet switch</title>
+<style>
+:root{color-scheme:dark;font:15px system-ui,sans-serif;background:#101820;color:#e6edf3}body{max-width:1280px;margin:0 auto;padding:32px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #344452;padding-bottom:20px}h1{font-size:24px;margin:0}h2{font-size:19px;margin-top:32px}nav a{color:#9fd8ef;margin-left:24px}a[aria-current]{color:white;font-weight:bold}p{color:#afbecb;line-height:1.6}.panel{background:#17232e;border:1px solid #344452;border-radius:12px;padding:22px;margin:24px 0;overflow:auto}table{border-collapse:collapse;width:100%;font-size:14px;white-space:nowrap}th,td{text-align:right;padding:12px;border-bottom:1px solid #344452}th:first-child,td:first-child{text-align:left}th{color:#9eafbf;font-weight:500}button{background:#9fe2c0;color:#102c20;padding:12px 22px;border:0;border-radius:6px;font:inherit;font-weight:600;cursor:pointer}button:disabled{opacity:.5;cursor:wait}input{width:20px;height:20px;accent-color:#9fe2c0}.ok{color:#9fe2c0}.bad{color:#ffad9e}#status{min-height:24px}small{color:#afbecb}td{font-variant-numeric:tabular-nums}footer{margin:32px 0;color:#afbecb}@media(max-width:600px){body{padding:16px}header{display:block}nav{margin-top:20px}nav a{margin:0 24px 0 0}}
+</style>
+<header><h1>KR260 <small>/ Ethernet switch</small></h1><nav><a href="/configuration">Configuration</a><a href="/statistics">Statistics</a></nav></header>
+<p id="status" role="status" aria-live="polite">Connecting…</p><main id="content"></main><footer>R5 management · No login required</footer>
+<script>
+'use strict';
+const ports=['GEM0 · Right upper','GEM1 · Right lower','PL0 · Left upper','PL1 · Left lower','SFP','CPU virtual port'];
+const portCols=['RX good packets','RX bad packets','RX good bytes','RX bad bytes','TX good packets','TX bad packets','TX good bytes','TX bad bytes'];
+const ddrCols=['Bytes','Bursts','Latency sum (cycles)','Max latency (cycles)','Address stalls (cycles)','Data stalls (cycles)','AXI errors','Outstanding (cycles)'];
+const debugNames=['GEM0 ingress stall','GEM1 ingress stall','PL0 ingress stall','PL1 ingress stall','SFP ingress stall','GEM0 egress stall','GEM1 egress stall','PL0 egress stall','PL1 egress stall','SFP egress stall','CPU to fabric stall','Fabric to CPU stall','CPU allocation wait','CPU enqueue wait','Link flush busy','Combined AXI errors'];
+const content=document.querySelector('#content'),status=document.querySelector('#status');
+const config=location.pathname==='/configuration';
+document.querySelector(`a[href="/${config?'configuration':'statistics'}"]`).setAttribute('aria-current','page');
+function esc(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function table(title,headers,rows){return `<section class="panel"><h2>${esc(title)}</h2><table><thead><tr>${headers.map(x=>`<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>'<tr>'+row.map(x=>`<td>${esc(x)}</td>`).join('')+'</tr>').join('')}</tbody></table></section>`;}
+async function api(path,options={}){const r=await fetch(path,{...options,cache:'no-store',signal:AbortSignal.timeout(5000)});if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}
+let busy=false;
+async function loadConfig(){
+ const p=await api('/api/ports');
+ content.innerHTML='<h2>Port configuration</h2><p>Disable a port to stop receiving and forwarding traffic through it. The physical link may remain up. Changes apply within 250 ms; re-enabling can wait for the fabric queue flush. Settings reset to all ports enabled on reboot.</p><div class="panel"><table><thead><tr><th>Port</th><th>Enabled</th><th>Physical link</th><th>Forwarding</th></tr></thead><tbody>'+ports.slice(0,5).map((name,i)=>`<tr><td>${esc(name)}</td><td><input type="checkbox" aria-label="Enable ${esc(name)}" data-port="${i}" ${p.admin&(1<<i)?'checked':''}></td><td>${p.physical&(1<<i)?'Up':'Down'}</td><td>${p.forwarding&(1<<i)?'Active':'Inactive'}</td></tr>`).join('')+'</tbody></table></div><p>Disabling the port used by your browser will disconnect this page. To recover, use another enabled port or reboot the board.</p><button id="save">Apply settings</button> <button id="reload">Reload status</button>';
+ document.querySelector('#save').onclick=save;document.querySelector('#reload').onclick=()=>loadConfig().catch(failed);
+ status.textContent='Configuration loaded';status.className='ok';
+}
+async function save(){if(busy)return;busy=true;const button=document.querySelector('#save');button.disabled=true;
+ let mask=0;document.querySelectorAll('input[data-port]').forEach(e=>{if(e.checked)mask|=1<<Number(e.dataset.port);});
+ try{await api('/api/ports',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-KR260-Request':'1'},body:`mask=${mask}`});status.textContent='Settings accepted. Updating port status…';setTimeout(()=>loadConfig().catch(failed),750);}catch(e){failed(e);}finally{busy=false;button.disabled=false;}}
+function failed(e){status.textContent=`Unable to refresh: ${e.message}. Displayed values may be stale.`;status.className='bad';}
+async function refresh(){if(busy)return;busy=true;try{
+ const s=await api('/api/statistics');
+ let html='<h2>Statistics</h2><p>Refreshes every second · Cumulative totals since firmware restart · Counter reads do not clear these totals. DDR and debug cycle counts use the 100 MHz fabric clock (10 ns/cycle).</p>';
+ html+=table('Ethernet ports',['Port',...portCols],s.ports.map((v,i)=>[ports[i],...v]));
+ html+='<p>CPU RX is processor → fabric; CPU TX is fabric → processor.</p>';
+ if(s.ddr)html+=table('Fabric ↔ DDR',['Direction',...ddrCols],s.ddr.map((v,i)=>[['Physical ingress write','Physical egress read','CPU write','CPU read'][i],...v]));
+ if(s.debug)html+=table('Debug counters',['Counter','Total (cycles, except AXI errors)'],s.debug[0].map((v,i)=>[debugNames[i],v]));
+ const health=['capabilities','polls','age_ms','late_polls','saturated_reads','read_timeouts','release_timeouts','response_timeouts','last_release_index','last_release_target_index','last_response_index'];
+ html+=table('Collector health',['Field','Value'],health.map(k=>[k,k.startsWith('last_')&&s[k]===4294967295?'None':s[k]]));
+ html+=table('Timeout locations',['Bank','Slot','Release timeouts','Response timeouts'],s.timeouts);
+ const v=s.sensors, valid=(bit,value,unit)=>v.valid_mask&bit?`${value} ${unit}`:'Unavailable';
+ let sensors=[['PS temperature',valid(1,v.temperature_mc[0]/1000,'°C')],['PL temperature',valid(2,v.temperature_mc[1]/1000,'°C')]];
+ v.voltage_uv.forEach((n,i)=>sensors.push([['PS LP','PS FP','PS AUX','PL INT','PL AUX','PL BRAM'][i],valid(i<3?1:2,n/1e6,'V')]));
+ sensors.push(['SOM current',valid(4,v.som_current_ua/1e6,'A')],['SOM voltage',valid(4,v.som_voltage_uv/1e6,'V')],['SOM power',valid(4,v.som_power_uw/1e6,'W')],['Sensor errors',v.errors],['Sensor age (ms)',v.age_ms]);
+ html+=table('Temperature, voltage & power',['Sensor','Value'],sensors);content.innerHTML=html;
+ status.textContent=s.available?`Updated ${new Date().toLocaleTimeString()}`:'Statistics unavailable: check firmware and FPGA counter options';status.className=s.available?'ok':'bad';
+ }catch(e){failed(e);}finally{busy=false;}}
+if(config)loadConfig().catch(failed);else{refresh();setInterval(refresh,1000);}
+</script></html>

@@ -20,6 +20,13 @@ struct statistics_snapshot {
 #endif
     uint64_t timestamp;
     uint32_t polls, late_polls, saturated_reads, read_timeouts, capabilities;
+    /* Total above remains the sum of these two timeout classes (mod 2^32). */
+    uint32_t mailbox_release_timeouts, snapshot_response_timeouts;
+    /* Indexed by hardware bank and slot, including zero-valued unused slots. */
+    uint32_t release_timeout_by_index[13][16];
+    uint32_t response_timeout_by_index[13][16];
+    /* Raw bank<<4 | slot; UINT32_MAX means no event since restart. */
+    uint32_t last_release_index, last_release_target_index, last_response_index;
     bool available;
 };
 struct sensor_snapshot {

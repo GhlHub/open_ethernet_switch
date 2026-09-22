@@ -690,3 +690,16 @@ sim-statistics:
 	vvp tb_statistics_axi.vvp
 	iverilog -g2012 -s tb_statistics_ports -o tb_statistics_ports.vvp ../rtl/stats/stats_gem.sv ../rtl/stats/stats_axis.sv $(TB_DIR)/tb_statistics_ports.sv
 	vvp tb_statistics_ports.vvp
+
+.PHONY: sim-ingress-pipeline
+sim-ingress-pipeline: tb_ingress_dma_pipeline.vvp
+	vvp $<
+
+tb_ingress_dma_pipeline.vvp: $(BUFMGR_DIR)/buf_mgr_pkg.sv $(DMA_DIR)/axi_dma_pkg.sv $(COMMON_DIR)/rr_arbiter.sv $(DMA_DIR)/ingress_dma_wr.sv $(TB_DIR)/tb_ingress_dma_pipeline.sv
+	iverilog -g2012 -s tb_ingress_dma_pipeline -o $@ $^
+
+.PHONY: sim-ingress-pipeline-verilator
+sim-ingress-pipeline-verilator: $(BUFMGR_DIR)/buf_mgr_pkg.sv $(DMA_DIR)/axi_dma_pkg.sv $(COMMON_DIR)/rr_arbiter.sv $(DMA_DIR)/ingress_dma_wr.sv $(TB_DIR)/tb_ingress_dma_pipeline.sv
+	mkdir -p obj_dir/ingress_pipeline
+	verilator --binary --timing -Wno-TIMESCALEMOD --top-module tb_ingress_dma_pipeline --Mdir obj_dir/ingress_pipeline -j 4 $^
+	./obj_dir/ingress_pipeline/Vtb_ingress_dma_pipeline

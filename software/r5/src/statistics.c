@@ -8,7 +8,10 @@
 #define DATA (DIAG_BASE+0x2c)
 #define BUSY (DIAG_BASE+0x30)
 #define EXPECTED_CAPS (0x53540101u | (STATS_DDR<<1) | (STATS_DEBUG<<2))
-static struct statistics_snapshot totals;
+static struct statistics_snapshot totals={
+    .last_release_index=UINT32_MAX, .last_release_target_index=UINT32_MAX,
+    .last_response_index=UINT32_MAX
+};
 static int pending=-1;
 void statistics_get(struct statistics_snapshot *out)
 {
@@ -42,6 +45,11 @@ static bool read_counter(unsigned index)
         while (mmio_read(BUSY))
             if (board_timestamp()-start > board_timestamp_hz()/10000u) {
                 totals.read_timeouts++;
+                totals.mailbox_release_timeouts++;
+                unsigned active=mmio_read(INDEX)&0xffu;
+                totals.last_release_index=active;
+                totals.last_release_target_index=index;
+                if ((active>>4)<13) totals.release_timeout_by_index[active>>4][active&15]++;
                 return false;
             }
         mmio_write(INDEX,index);
@@ -50,6 +58,9 @@ static bool read_counter(unsigned index)
     if (value==UINT32_MAX) {
         pending=(int)index;
         totals.read_timeouts++;
+        totals.snapshot_response_timeouts++;
+        totals.last_response_index=index;
+        totals.response_timeout_by_index[index>>4][index&15]++;
         return false;
     }
     pending=-1;

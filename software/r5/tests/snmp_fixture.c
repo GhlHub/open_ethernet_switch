@@ -6,6 +6,9 @@ size_t fixture_respond(const uint8_t *in,size_t n,uint8_t *out,size_t cap)
     struct statistics_snapshot s={0};
     struct sensor_snapshot v={0};
     s.available=true; s.capabilities=0x53540101u|(STATS_DDR<<1)|(STATS_DEBUG<<2);
+    s.mailbox_release_timeouts=7; s.snapshot_response_timeouts=11; s.read_timeouts=18;
+    s.release_timeout_by_index[3][2]=7; s.response_timeout_by_index[0][1]=11;
+    s.last_release_index=0x32; s.last_release_target_index=0x33; s.last_response_index=1;
     s.timestamp=900; s.polls=42; s.port[0][0]=UINT64_MAX;
     s.port[1][0]=UINT64_C(1)<<63;
     s.port[2][0]=UINT64_C(1)<<32;
@@ -15,7 +18,7 @@ size_t fixture_respond(const uint8_t *in,size_t n,uint8_t *out,size_t cap)
     v.timestamp=950; v.valid_mask=7; v.temperature_mc[0]=-12345;
     v.som_current_ua=-1250;
     snmp_mib_build(&mib,&s,&v,1000,1000,9876,0x31);
-    assert(mib.count==87+36*STATS_DDR+32*STATS_DEBUG);
+    assert(mib.count==188+100*STATS_DDR+64*STATS_DEBUG);
     return snmp_respond(in,n,out,cap,"public",&mib);
 }
 #ifdef FUZZ_MAIN

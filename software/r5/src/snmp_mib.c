@@ -17,17 +17,17 @@ static void add(struct snmp_mib *m, unsigned group, unsigned column,
     memcpy(o->oid.arc,root,sizeof(root));
     o->oid.length=sizeof(root)/sizeof(root[0]);
     o->oid.arc[o->oid.length++]=group;
-    if (group>=2 && group<=4) o->oid.arc[o->oid.length++]=1;
+    if ((group>=2 && group<=4) || group==6) o->oid.arc[o->oid.length++]=1;
     o->oid.arc[o->oid.length++]=column;
     o->oid.arc[o->oid.length++]=row;
-    o->type=type; o->number=value; o->text=text;
+    o->instance_arcs=1; o->type=type; o->number=value; o->text=text;
 }
 static void system_object(struct snmp_mib *m,unsigned column,uint8_t type,
                            uint64_t value,const char *text)
 {
     struct snmp_object *o=&m->object[m->count++];
     *o=(struct snmp_object){.oid={{1,3,6,1,2,1,1,column,0},9},
-                           .type=type,.number=value,.text=text};
+                           .type=type,.instance_arcs=1,.number=value,.text=text};
 }
 static uint32_t age(uint64_t now,uint64_t then,uint32_t hz)
 {
@@ -67,6 +67,11 @@ void snmp_mib_build(struct snmp_mib *m,const struct statistics_snapshot *s,
         age(now,s->timestamp,hz),hz,1u|(STATS_DDR<<1)|(STATS_DEBUG<<2)};
     for (unsigned i=0;i<9;i++)
         add(m,1,i+1,0,i==0?INTEGER:(i>=2 && i<=5?COUNTER:GAUGE),health[i],NULL);
+    add(m,1,10,0,COUNTER,s->mailbox_release_timeouts,NULL);
+    add(m,1,11,0,COUNTER,s->snapshot_response_timeouts,NULL);
+    add(m,1,12,0,GAUGE,s->last_release_index,NULL);
+    add(m,1,13,0,GAUGE,s->last_release_target_index,NULL);
+    add(m,1,14,0,GAUGE,s->last_response_index,NULL);
     for (unsigned col=1;col<=10;col++) for (unsigned row=0;row<6;row++)
         add(m,2,col,row+1,col==1?STRING:col==2?INTEGER:COUNTER64,
             col==1?0:col==2?((links>>row)&1?1:2):s->port[row][col-3],
@@ -91,4 +96,16 @@ void snmp_mib_build(struct snmp_mib *m,const struct statistics_snapshot *s,
     add(m,5,12,0,INTEGER,(uint64_t)(int64_t)v->som_current_ua,NULL);
     add(m,5,13,0,GAUGE,v->som_voltage_uv,NULL);
     add(m,5,14,0,GAUGE,v->som_power_uw,NULL);
+    for (unsigned col=1;col<=2;col++) for (unsigned bank=0;bank<13;bank++) {
+        if (bank>=8 && bank<12 && !STATS_DDR) continue;
+        if (bank==12 && !STATS_DEBUG) continue;
+        unsigned slots=bank<4?4:bank==12?16:8;
+        for (unsigned slot=0;slot<slots;slot++) {
+            add(m,6,col,bank,COUNTER,col==1?s->release_timeout_by_index[bank][slot]:
+                s->response_timeout_by_index[bank][slot],NULL);
+            struct snmp_object *o=&m->object[m->count-1];
+            o->oid.arc[o->oid.length++]=slot;
+            o->instance_arcs=2;
+        }
+    }
 }

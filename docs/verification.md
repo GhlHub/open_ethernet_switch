@@ -1,5 +1,197 @@
 # Design inventory verification
 
+## 2026-09-22 R5 web management
+
+Added HTTP configuration/statistics pages and loaded the all-counter R5 build
+with the existing pipelined-ingress FPGA bitstream. Host parser/JSON tests pass
+under ASan/UBSan with all four statistics build combinations; existing policy,
+DMA, statistics and SNMP regressions pass. Firmware memory/vector verification
+passes. Browser tests verify separate pages, one-second refreshing, exact
+64-bit totals, configuration POSTs, and desktop/mobile rendering. Live Chromium
+loads both pages and refreshes statistics without JavaScript errors.
+
+Live test at `10.0.1.214`: administrative mask 31/physical mask 17/forwarding
+mask 17 initially; disabling GEM0 changes administrative mask to 30 and
+forwarding mask to 16 while physical mask remains 17. Endpoint
+`10.0.1.140` stops answering pings; R5 management stays reachable through SFP.
+Restoring mask 31 restores forwarding and passes 10/10 endpoint pings.
+Ten subsequent statistics samples advance normally. SNMP remains accessible;
+collector late polls, saturation and sensor errors remain zero in the final
+sample. One snapshot-response timeout was recorded at bank 2, slot 0
+(GEM1 RX good packets); no mailbox-release timeout was recorded.
+Disconnected-port traffic isolation and disabling the SFP
+management uplink were not tested live. All ports were left enabled.
+
+After the firmware/FPGA reload, SFP initially had PCS sync but no completed
+negotiation (`PCS_STATUS=1`); the module copper PHY reported a resolved link.
+A 500 ms TX_DISABLE pulse through the existing sideband control restored
+`PCS_STATUS=7`, and the existing one-minute DHCP retry acquired `10.0.1.214`.
+This startup negotiation recovery issue remains separate from HTTP behavior;
+no automatic SFP recovery change was included.
+
+Evidence, screenshots, boot logs, exact firmware copy and SHA-256 manifest:
+`build/r5/web_validation/`. The volatile JTAG load does not change boot flash.
+See [web-interface.md](web-interface.md) for behavior and API details.
+
+Deployed firmware SHA-256:
+`15535c10b708c8ededddc62ad675be53079c3f362db51be3ec0fd865777b5053`.
+The user confirmed unchanged SFP managed-switch uplink and GEM0 endpoint
+connections after validation. The board runs this web-enabled firmware with
+the pipelined-ingress bitstream described below.
+
+## 2026-09-22 pipelined DMA bitstream deployment
+
+Loaded `build/r5/ingress_pipeline_validation/kr260_ingress_pipeline.bit`
+through JTAG with the latest per-index timeout diagnostic firmware. Bitstream
+SHA-256: `2455aed75db5dc661de592958cc139fe68a1ef9ea80103f942ee0456814bf5ed`;
+firmware SHA-256: `a83338763d34dc4b3fdc5eb19b7a52fb7b9f4e01bcba7055e8800ebe8e66c77b`.
+Flash was unchanged; the PS reset also reset all software statistics totals.
+
+- DHCP acquired `10.0.1.214`; GEM0 and SFP came up without manual recovery.
+- Simultaneous full-MTU ping tests passed 100/100 to the R5 and 100/100 to
+  endpoint `10.0.1.140`. SNMP polling continued during traffic.
+- Final sample: zero bad packets/bytes on all ports, zero AXI errors, zero
+  statistics timeouts, late polls or saturated reads. Sensor validity mask 7,
+  errors 0. This short test does not establish that the GEM1 timeout is fixed.
+- Across before/after snapshots, physical ingress writes completed 1,445
+  bursts with 2,890 data-stall cycles: **two cycles per burst**. These are
+  downstream WREADY stalls, which the internal read/write pipeline does not
+  promise to eliminate. The faster WVALID cadence can expose backpressure
+  previously hidden by internal idle cycles; the exact stall timing was not
+  captured here.
+- The maximum observed physical ingress write latency was 135 fabric cycles
+  (1.35 us), versus 226 cycles (2.26 us) in the earlier old-image sample.
+  Traffic mixes differ, so this is not a controlled performance comparison.
+  The simulation comparison below is the controlled measurement of DMA cadence.
+
+Evidence, UART/boot logs, firmware copy, pings and SNMP snapshots are under
+`build/r5/ingress_pipeline_validation/board/`; the parent manifest records
+programming status and validation. The subsequent web deployment retains this
+FPGA image and updates the R5 firmware.
+
+## 2026-09-22 timeout bank/slot diagnostics
+
+Firmware now counts mailbox-release and snapshot-response timeouts separately
+for each implemented hardware bank/slot. It also records the last release
+active index, release target index and snapshot-response index. Sentinel
+4294967295 means no event since R5 restart. The active INDEX register is read
+only on a release timeout; hardware clear-on-read statistics ownership is
+unchanged. SNMP has three additional health scalars and a bank/slot-indexed
+timeout table; the reader labels nonzero rows and decodes the last indices.
+
+- `make -C software/r5 test` passes. Statistics tests verify attribution to a
+  nonzero bank/slot, active-versus-target release indices, class/table sums,
+  initial sentinels and pending-request retry. Twelve SNMP tests pass for each
+  of four counter builds, including two-index table exceptions and walking.
+- Net-SNMP and the reader script pass against a host fixture with deliberately
+  different active/target indices and nonzero counts. The MIB resolves symbolic
+  names correctly. The SNMP object capacity was raised to 384 to hold the
+  expanded tree; request/response bounds and UDP queue limits are unchanged.
+- R5 built with both optional statistics categories and passed the ELF audit.
+  Deployed SHA-256:
+  `a83338763d34dc4b3fdc5eb19b7a52fb7b9f4e01bcba7055e8800ebe8e66c77b`.
+- Loaded using the unchanged, previously deployed all-counter bitstream.
+  DHCP acquired `10.0.1.214`; GEM0 and SFP links came up. The newly built
+  ingress-pipeline bitstream was deliberately not loaded during this diagnostic
+  update, preserving the hardware under investigation. Flash was unchanged.
+- Live Net-SNMP walk returned 348 project instances (plus an end-of-view line).
+  Seven reader samples verified the per-index sums against class totals, with
+  no timeouts, late polls or saturation. All last indices were the no-event
+  sentinel following reset. Full-MTU pings passed 50/50 to the R5 and 50/50
+  to endpoint `10.0.1.140` during sampling.
+
+The earlier timeout cannot be located retrospectively; these new counters
+will identify future occurrences. Firmware and logs are retained under
+`build/r5/timeout_index_validation/`. This is diagnostic instrumentation,
+not a timeout root-cause fix.
+
+## 2026-09-22 physical ingress DMA pipelining
+
+The physical-port ingress write engine now overlaps synchronous packet-RAM
+reads with AXI W transfers. A two-word buffer accounts for queued words and
+the one-cycle read in flight before issuing another read. AXI backpressure
+halts read-ahead without overwriting data; accepted beat count determines
+WSTRB and WLAST. Address sequencing, per-frame arbitration and waiting for B
+before completion are preserved. CPU write DMA is unchanged.
+
+Simulation was completed before starting the isolated all-counter hardware
+build. Reproduce the primary checks with:
+
+```sh
+make -C sim sim-ingress-pipeline sim-ingress sim-switch-top sim-integ sim-statistics
+make -C sim lint-ingress
+make -C sim sim-ingress-pipeline-verilator
+```
+
+- The new bench passes 2,372 cases per run: every length from 1 through 2,048
+  bytes, distributed across five ports; 300 randomized-backpressure frames;
+  stalls on the final beat; long initial data stalls; delayed address and
+  response handshakes; resets with stalled AW, buffered reads and pending B.
+  Checks include exact data, strobes, WLAST, no extra RAM reads, stable AXI
+  values under backpressure, correct completion timing and consecutive beats.
+- Three Icarus runs with different random seeds pass. The same 2,372-case
+  bench also passes with Verilator, as does lint of the complete ingress
+  subsystem. Existing ingress tests include actual
+  packet RAM and concurrent ports; switch forwarding/link-flush, GEM transmit
+  integration and statistics regressions also pass.
+- Running the same bench against the pre-change DMA confirms the throughput
+  comparison below. The baseline enables its expected two-cycle beat cadence.
+
+| 1,500-byte frame, 94 beats, always-ready AXI | Before | Pipelined |
+| --- | ---: | ---: |
+| AW handshake to final W handshake | 188 cycles | 96 cycles |
+| First through final W handshake, inclusive | 187 cycles | 94 cycles |
+| Steady data cadence | 2 cycles/beat | 1 cycle/beat |
+
+At 100 MHz, the address-to-last-data interval falls from 1.88 us to 0.96 us.
+These measurements exclude B-response latency, per-frame arbitration and
+queue management. They do not establish sustained system throughput or
+eliminate downstream AXI backpressure; the previously observed one stall per
+burst can remain. The extra buffering also adds startup latency to very short
+bursts compared with the former direct RAM-to-W path.
+
+Hardware build completed with `STATS_DDR=1 STATS_DEBUG=1` in the isolated
+`build/r5/ingress_pipeline_vivado/` project. Final setup WNS is +0.018 ns,
+hold WHS +0.010 ns, TNS/THS zero under the existing constraints. Utilization:
+29,873 LUTs, 37,738 registers, 51.5 BRAM tiles. No debug cores were inserted.
+The bitstream and XSA are `build/r5/ingress_pipeline_validation/kr260_ingress_pipeline.bit`
+and `.xsa`; reports, source/artifact hashes and simulation evidence are in
+that directory. The optimized bitstream was subsequently downloaded and passed the board
+checks recorded above.
+
+## 2026-09-22 separate timeout counters
+
+Added software Counter32 totals for mailbox-release deadline expiry and
+hardware snapshot-response timeout, while preserving the existing combined
+timeout total and retry behavior. SNMP health scalars 10 and 11 and the
+reader script expose the split; no hardware change was required.
+
+- Host statistics tests distinguish a stuck BUSY-release path from a DATA
+  timeout and verify that the combined total equals the two classes' sum.
+  Eleven SNMP tests pass for each of the four optional-counter build combinations,
+  including the new scalar OIDs, types and values. Existing policy/DMA tests pass.
+- R5 built with `STATS_DDR=1 STATS_DEBUG=1`; ELF memory/vector audit passes.
+  Deployed ELF SHA-256:
+  `ab5a9381bd60b6357456243a7bd7ffae08b9298f32f692ec78b34d4c041c8b03`.
+- Loaded through the existing JTAG boot flow with the unchanged all-counter
+  bitstream; flash was not modified. GEM0 and SFP links came up without the
+  manual TX_DISABLE pulse needed on the earlier boot. Initial DHCP failed;
+  the automatic minute retry acquired `10.0.1.214`.
+- Live SNMP reads verified both new fields. Seven samples during simultaneous
+  full-MTU pings showed total/release/response timeout counts all zero;
+  availability was true, with zero late polls and saturated reads.
+- Full-MTU pings passed 50/50 to the R5 and 50/50 to endpoint `10.0.1.140`.
+
+The reload reset all accumulated totals, including the previous 21 timeouts.
+No natural timeout occurred during the initial short validation. Subsequently,
+while the same deployed image was running and the ingress pipeline build was
+underway, SNMP reported total=1, mailbox_release_timeouts=0 and
+snapshot_response_timeouts=1. This confirms at least one hardware DATA-response
+timeout, rather than a software BUSY-release deadline. It does not establish
+the affected source domain or root cause. Bank/index logging remains
+unimplemented. Local firmware, UART/boot logs, samples and test results are
+preserved under `build/r5/timeout_validation/`.
+
 ## 2026-09-21 live SNMP counter observation
 
 The reader script sampled `10.0.1.214` seven times at five-second intervals,

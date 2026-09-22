@@ -1,5 +1,55 @@
 # Design inventory and pending development
 
+## 2026-09-22 R5 web management
+
+`software/r5/src/web_task.c` serves HTTP port 80; `web_protocol.c` provides
+bounded request parsing and snapshot JSON serialization. The embedded
+`software/r5/web/index.html` has separate configuration/statistics pages,
+unauthenticated port controls, and one-second statistics refresh. The link
+task combines an administrative mask with observed PHY/PCS links and controls
+MAC receive enables. Settings are volatile. See [web-interface.md](web-interface.md).
+
+Deployed at `http://10.0.1.214/`. Browser polling, GEM0 disable/enable,
+management continuity over SFP, and restored endpoint pings passed. The user
+confirmed the SFP uplink and GEM0 endpoint connections are unchanged. All ports
+were left enabled. Persistent configuration and automatic SFP startup recovery
+remain future work.
+
+## 2026-09-22 timeout location diagnostics
+
+Added per-bank/slot counters for both timeout classes and the latest snapshot
+index plus release active/target indices. SNMP provides a two-index timeout
+table and three new health scalars; the reader script labels nonzero locations.
+Host tests verify attribution when active and next indices differ, a nonzero
+DDR bank/slot response timeout, retry behavior, and table walking for all build
+options. The all-counter R5 application is built and deployed on the existing
+bitstream; live SNMP queries and full-MTU pings pass. Hardware signal capture
+and root-cause diagnosis remain future work.
+
+## 2026-09-22 physical ingress DMA pipeline
+
+The shared physical-port write DMA now overlaps packet-RAM reads and AXI writes
+using a two-word buffer with explicit reservation for in-flight reads. It
+sustains one accepted 128-bit beat per cycle after fill with WREADY high,
+while retaining one outstanding frame burst. The dedicated
+`tb_ingress_dma_pipeline.sv` covers all 1–2,048-byte lengths, five ports,
+backpressure, delayed AW/B handshakes and reset recovery. Existing ingress,
+switch forwarding and statistics regressions pass before hardware build.
+The all-counter bitstream and XSA are built with WNS +0.018 ns and WHS
++0.010 ns. The optimized image is now loaded and passed DHCP, SNMP, and
+100/100 full-MTU pings to each of the R5 and GEM0 endpoint. See
+[verification](verification.md) for measured cycle counts and build results.
+
+## 2026-09-22 timeout diagnostics
+
+The R5 collector now separates mailbox-release wait timeouts from hardware
+snapshot-response timeouts, preserving the combined total. Both are exposed
+as additional SNMP health scalars and by the reader script. Timeout bank/index
+logging is now implemented (see the location diagnostics above); root-cause
+diagnosis remains pending. A later live query recorded
+one snapshot-response timeout and zero mailbox-release timeouts. This firmware change requires
+no FPGA rebuild and does not alter the deadlines or retry behavior.
+
 ## 2026-09-21 SNMP management
 
 Read-only SNMPv2c now exposes all compiled-in counters, collection health,
@@ -13,7 +63,7 @@ The current all-counter firmware passed repeated walks and full-MTU pings.
 Follow up the SFP negotiation stall after JTAG boot (recovered with a
 TX_DISABLE pulse) and recurring statistics mailbox timeouts (2 since restart
 at the latest observation, with no increase during the 30-second sample).
-Add timeout bank/index and reason diagnostics; short samples show no packet
+Timeout bank/index and reason diagnostics are now implemented; short samples show no packet
 or AXI errors, but sustained-load validation remains pending. SNMPv3 and traps remain unimplemented; the example PEN is for
 this lab only. See [verification](verification.md).
 
@@ -31,10 +81,10 @@ sustained-load and fault-injection validation remain pending. Earlier
 board-test results below apply to the previous image.
 
 
-Baseline: 2026-09-21. The repository contains **63 SystemVerilog files under
-`rtl/`** (59 logical modules, including four simulation-only behavioral models --
+Baseline: 2026-09-22. The repository contains **67 SystemVerilog files under
+`rtl/`** (63 logical modules, including four simulation-only behavioral models --
 GTH, RGMII, PL Ethernet clock generation, and MDIO -- and four packages),
-**31 testbenches** (30 portable and one XSim-only), one AXI memory BFM, three Vivado IP `.xci` configurations
+**35 testbenches** (34 portable and one XSim-only), one AXI memory BFM, three Vivado IP `.xci` configurations
 (GTH, PL Ethernet clocks and SFP PCS clocks), four XDC constraint files,
 seven Vivado Tcl scripts, a paired-ILA capture analyzer, one synthesis source list and `sim/Makefile`. The inventory follows actual module instantiations and
 interfaces; some source comments describe older stages of development.
@@ -124,7 +174,7 @@ The following development and verification remain incomplete.
 | Pending component | Required work / integration boundary |
 | --- | --- |
 | FreeRTOS firmware and boot flow | Initial R5 startup, TTC tick/timestamp, DMA network interface, 250 ms link service and DHCP minute retry are implemented and cross-linked. JTAG boot, UART, timer progress, DHCP acquisition and ping through all four copper ports are demonstrated. R5 D-cache now uses cacheable application DDR plus a reserved non-cacheable DMA region. Package FSBL/PMU/bitstream/application, measure cache-enabled performance and add fault restart. |
-| Management and status plane | MAC/MDIO/DMA, SFP IIC and RX/SFP diagnostics are connected. Still needed: forwarding policy, complete PCS configuration, counters and software drivers. Link status/events and flush controls now exist. Default age remains constant; PCS sync/link still drive LEDs. |
+| Management and status plane | MAC/MDIO/DMA, SFP IIC and RX/SFP diagnostics are connected. Counters, sensors, SNMP, and HTTP port configuration/statistics are implemented. Still needed: persistent configuration, broader forwarding policy and complete PCS configuration. Link status/events and flush controls now exist. Default age remains constant; PCS sync/link still drive LEDs. |
 | DMA descriptor and buffer cache policy | Current R5 implementation keeps descriptors and bounce buffers non-cacheable. Revisit descriptor and payload policies separately after measuring CPU cost and throughput. Cached DMA storage would require explicit ownership-based cache maintenance, cache-line isolation, and ring-reuse/reset/error-recovery validation. |
 | PS/DDR and CPU DMA verification | HP0 carries the three switch memory interfaces; HP1 carries the CPU AXI DMA masters. Verify generated address windows, arbitration, reset behavior, sustained throughput, descriptor/cache ownership and AXI error recovery. Basic DHCP/ping traffic is demonstrated; sustained bandwidth and fault recovery remain unverified. |
 | PL RGMII timing and PHY setup | Automatic PL PHY setup, I/O delays and RX elastic buffering now exist. Validate fitted-board reset behavior, delay variation and trace skew; review IDELAY calibration readiness and abnormal receive recovery. FPGA RX clock-delay branch remains unplaceable. |

@@ -14,7 +14,7 @@ ifneq ($(filter-out 0 1,$(STATS_DDR) $(STATS_DEBUG)),)
 $(error STATS_DDR and STATS_DEBUG must be 0 or 1)
 endif
 CFLAGS := -mcpu=cortex-r5 -mfloat-abi=hard -mfpu=vfpv3-d16 -marm -O2 -g3 -ffunction-sections -fdata-sections -Wall -Wextra -DSDT -DARMR5 -D__FREERTOS__
-CPPFLAGS := -DSTATS_DDR=$(STATS_DDR) -DSTATS_DEBUG=$(STATS_DEBUG) -Iinclude -I$(BSP)/include -I$(KERNEL)/include -I$(PORT) -I$(TCP)/include -I$(TCP)/portable/Compiler/GCC
+CPPFLAGS := -DSTATS_DDR=$(STATS_DDR) -DSTATS_DEBUG=$(STATS_DEBUG) -Iinclude -Iout -I$(BSP)/include -I$(KERNEL)/include -I$(PORT) -I$(TCP)/include -I$(TCP)/portable/Compiler/GCC
 APP := $(wildcard src/*.c) src/vectors.S
 LIBSRC := $(KERNEL)/tasks.c $(KERNEL)/queue.c $(KERNEL)/list.c $(KERNEL)/timers.c $(KERNEL)/event_groups.c $(KERNEL)/stream_buffer.c $(KERNEL)/portable/MemMang/heap_4.c $(PORT)/port.c $(PORT)/portASM.S $(wildcard $(TCP)/*.c) $(TCP)/portable/BufferManagement/BufferAllocation_2.c
 # Flatten unique upstream basenames; fail if a future addition creates a collision.
@@ -29,6 +29,9 @@ out/stats_config: FORCE | out
 	@printf '%s\n' 'STATS_DDR=$(STATS_DDR) STATS_DEBUG=$(STATS_DEBUG)' > out/stats_config.tmp
 	@cmp -s out/stats_config.tmp $@ || cp out/stats_config.tmp $@
 $(OBJECTS): out/stats_config
+out/web_page.h: web/index.html web/embed.py | out
+	python3 web/embed.py $< $@
+out/web_task.c.o: out/web_page.h
 all: out/kr260_r5.elf
 out:
 	mkdir -p $@
@@ -41,7 +44,7 @@ out/kr260_r5.elf: $(OBJECTS) linker.ld verify_elf.py $(BSP)/lib/libxil.a $(BSP)/
 	$(CC) $(CFLAGS) -nostartfiles -Wl,--gc-sections,--wrap=outbyte,-Map,out/kr260_r5.map -Wl,-T,linker.ld $(OBJECTS) -L$(BSP)/lib -Wl,--start-group -lxil -lxilstandalone -lxiltimer -lc -lm -lgcc -Wl,--end-group -o $@
 	$(SIZE) $@
 	python3 verify_elf.py $@ $(NM)
-test: test-snmp | out
+test: test-snmp test-web | out
 	cc -std=c11 -Wall -Wextra -Werror -Iinclude src/policy.c tests/test_policy.c -o out/test_policy
 	./out/test_policy
 	cc -std=c11 -Wall -Wextra -Werror -fno-pie -no-pie -Itests/fakes src/fabric_dma.c tests/test_dma.c -o out/test_dma
@@ -53,11 +56,20 @@ test: test-snmp | out
 	./out/test_statistics 1
 	./out/test_statistics 2
 	./out/test_statistics 3
+	./out/test_statistics 4
 test-snmp: | out
 	@set -e; for ddr in 0 1; do for debug in 0 1; do \
 	  cc -shared -fPIC -std=c11 -Wall -Wextra -Werror -DSTATS_DDR=$$ddr -DSTATS_DEBUG=$$debug -Iinclude src/snmp_protocol.c src/snmp_mib.c tests/snmp_fixture.c -o out/test_snmp_$$ddr$$debug.so; \
 	  python3 tests/test_snmp.py out/test_snmp_$$ddr$$debug.so $$((1 + 2*ddr + 4*debug)); \
 	done; done
 clean:
-	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_statistics out/test_snmp*.so
+	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_statistics out/test_snmp*.so out/test_web out/test_web.json out/web_page.h
 -include $(OBJECTS:.o=.d)
+
+.PHONY: test-web
+test-web: | out
+	@set -e; for ddr in 0 1; do for debug in 0 1; do \
+	  cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -DSTATS_DDR=$$ddr -DSTATS_DEBUG=$$debug -Iinclude src/web_protocol.c tests/test_web.c -o out/test_web; \
+	  ./out/test_web > out/test_web.json; \
+	  python3 -c 'import json; s=json.load(open("out/test_web.json")); assert s["ports"][0][0]=="18446744073709551615"; assert len(s["timeouts"])==208; assert ("ddr" in s)==bool('$$ddr'); assert ("debug" in s)==bool('$$debug')'; \
+	done; done

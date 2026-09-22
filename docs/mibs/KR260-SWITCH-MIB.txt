@@ -5,7 +5,7 @@ IMPORTS
     Gauge32, enterprises FROM SNMPv2-SMI;
 
 kr260Switch MODULE-IDENTITY
-    LAST-UPDATED "202609210000Z"
+    LAST-UPDATED "202609220000Z"
     ORGANIZATION "Open Ethernet Switch project"
     CONTACT-INFO "https://github.com/GhlHub/open_ethernet_switch"
     DESCRIPTION
@@ -15,6 +15,8 @@ kr260Switch MODULE-IDENTITY
          processor-accumulated totals since R5 restart; retrieval does not
          clear them. A walk spans multiple collection intervals. Check
          collection health and sensor validity before interpreting values."
+    REVISION "202609220000Z"
+    DESCRIPTION "Separate timeout causes and add per-bank/slot counts and latest indices."
     REVISION "202609210000Z"
     DESCRIPTION "Initial lab implementation."
     ::= { enterprises 32473 1 }
@@ -84,6 +86,48 @@ krStatsBuildFlags OBJECT-TYPE
     STATUS current
     DESCRIPTION "Firmware options: bit 0 port, bit 1 DDR, bit 2 debug. Optional tables follow the firmware build."
     ::= { krHealth 9 }
+
+krStatsMailboxReleaseTimeouts OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "R5 waits for BUSY to clear before selecting a counter.
+        Counts waits exceeding the approximately 100 microsecond software
+        deadline, which includes any task preemption. Included in krStatsReadTimeouts."
+    ::= { krHealth 10 }
+
+krStatsSnapshotResponseTimeouts OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "DATA reads returning the hardware timeout sentinel.
+        The snapshot acknowledgment deadline is approximately 27.3 microseconds.
+        The pending index is retried on the next poll. Included in krStatsReadTimeouts."
+    ::= { krHealth 11 }
+
+krStatsLastReleaseIndex OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Active INDEX register at the most recent mailbox-release timeout. Index = bank * 16 + slot.
+        Value 4294967295 means no event since R5 restart."
+    ::= { krHealth 12 }
+
+krStatsLastReleaseTargetIndex OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Counter firmware wanted to select at the most recent mailbox-release timeout; may differ from the active INDEX. Index = bank * 16 + slot.
+        Value 4294967295 means no event since R5 restart."
+    ::= { krHealth 13 }
+
+krStatsLastResponseIndex OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Selected index at the most recent hardware snapshot-response timeout. Index = bank * 16 + slot.
+        Value 4294967295 means no event since R5 restart."
+    ::= { krHealth 14 }
 
 krPortTable OBJECT-TYPE
     SYNTAX SEQUENCE OF KrPortEntry
@@ -440,5 +484,63 @@ krSomPower OBJECT-TYPE
     STATUS current
     DESCRIPTION "INA260 SOM supply power, not whole carrier-board power; valid-mask bit 2."
     ::= { krSensors 14 }
+
+krTimeoutTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF KrTimeoutEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Timeout totals for each implemented hardware counter, indexed
+        by zero-based bank and slot. Optional banks follow firmware build flags.
+        Release timeouts are attributed to the active INDEX, not the next target.
+        Counts reset with R5 restart and count attempts, including repeated retries."
+    ::= { kr260Switch 6 }
+
+krTimeoutEntry OBJECT-TYPE
+    SYNTAX KrTimeoutEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "One counter location."
+    INDEX { krTimeoutBank, krTimeoutSlot }
+    ::= { krTimeoutTable 1 }
+
+KrTimeoutEntry ::= SEQUENCE {
+    krTimeoutReleaseCount Counter32,
+    krTimeoutResponseCount Counter32,
+    krTimeoutBank Integer32,
+    krTimeoutSlot Integer32
+}
+
+krTimeoutReleaseCount OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Software BUSY-release deadline timeouts attributed to this
+        active hardware counter index. See krStatsLastReleaseTargetIndex for
+        the last counter that firmware was attempting to select."
+    ::= { krTimeoutEntry 1 }
+
+krTimeoutResponseCount OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Hardware DATA snapshot-response timeouts for this index."
+    ::= { krTimeoutEntry 2 }
+
+krTimeoutBank OBJECT-TYPE
+    SYNTAX Integer32 (0..12)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Hardware bank: 0 GEM0 RX, 1 GEM0 TX, 2 GEM1 RX, 3 GEM1 TX,
+        4 PL0, 5 PL1, 6 SFP, 7 CPU, 8 physical DDR write, 9 physical DDR read,
+        10 CPU DDR write, 11 CPU DDR read, 12 debug."
+    ::= { krTimeoutEntry 3 }
+
+krTimeoutSlot OBJECT-TYPE
+    SYNTAX Integer32 (0..15)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Slot within the hardware bank; see statistics.md for definitions.
+        Banks 0-3 implement 0-3; banks 4-11 implement 0-7; bank 12 implements 0-15."
+    ::= { krTimeoutEntry 4 }
 
 END

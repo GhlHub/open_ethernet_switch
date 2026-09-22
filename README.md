@@ -41,6 +41,7 @@ hardware validation remain pending.**
 - [Memory map, cache policy and ownership](docs/memory-map.md)
 - [Statistics and environmental monitoring](docs/statistics.md)
 - [SNMP counter and sensor access](docs/snmp.md)
+- [Web port configuration and live statistics](docs/web-interface.md)
 - [R5 FreeRTOS startup, timers and networking](software/r5/README.md)
 - [Source inventory and development backlog](docs/inventory.md)
 - [Board wiring, clock plan, and integration gaps](docs/board-integration.md)
@@ -49,6 +50,16 @@ hardware validation remain pending.**
 - [Simulation and lint results](docs/verification.md)
 - [CDC review and remaining assumptions](docs/cdc-review.md)
 - [Imported source and license notices](docs/source-notices.md)
+
+## Current management interface
+
+The deployed R5 firmware serves [port configuration](http://10.0.1.214/configuration)
+and [live statistics](http://10.0.1.214/statistics) without login. Statistics
+refresh every second; port settings reset to enabled on reboot. The same
+accumulated counters remain available over SNMP, including timeout bank/slot
+diagnostics. The deployed FPGA uses the pipelined physical ingress DMA. See
+[verification](docs/verification.md) for build and board evidence and remaining
+SFP startup-negotiation/statistics-timeout investigations.
 
 ## Source layout
 
@@ -66,7 +77,7 @@ hardware validation remain pending.**
 | `rtl/cpu_port/` | CPU stream port and dedicated switch-pool DMA |
 | `rtl/common/` | FIFOs, reset and port-link synchronizers, and round-robin arbitration |
 | `constraints/` | PL RGMII and SFP pins, primary clocks, and implementation CDC path bounds |
-| `tb/` | Twenty-six testbenches (one requires XSim) and an AXI memory model |
+| `tb/` | Portable and XSim testbenches, including DMA pipeline/statistics regressions, and an AXI memory model |
 | `build/` | Vivado block-design/synthesis/implementation scripts and digital-switch source list |
 | `third_party/` | FreeRTOS-LTS Git submodule, branch `202604-LTS`; used by the R5 kernel and TCP stack |
 | `sim/Makefile` | Icarus simulation, Verilator lint, and XSim targets |

@@ -41,3 +41,6 @@ build/reports_*.txt
 /build/r5/
 /software/r5/out/
 /build/gem1_debug/
+
+# Vivado GUI schematic viewer log
+/nlviewcommon.logfile

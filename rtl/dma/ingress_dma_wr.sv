@@ -4,7 +4,7 @@
 // ports. Arbitrates among the ports' "frame_ready" requests (round-robin);
 // once a winner is picked, that port is latched as the active port for
 // the whole multi-beat transfer (no re-arbitration mid-burst) -- reads
-// that port's local frame_ram one beat at a time and streams it out as a
+// that port's local frame_ram with pipelined reads and streams it out as a
 // single AXI4 INCR burst sized exactly to the frame's actual length.
 //
 // Single-outstanding: this engine only has one AXI4 write transaction in
@@ -118,8 +118,46 @@ module ingress_dma_wr
     end
   end
 
-  typedef enum logic [2:0] {S_IDLE, S_GRANT, S_AW, S_RD_ISSUE, S_W, S_BRESP, S_DONE} state_t;
+  typedef enum logic [2:0] {S_IDLE, S_GRANT, S_AW, S_W, S_BRESP, S_DONE} state_t;
   state_t state_q, state_d;
+
+  // Two queued words plus explicit accounting for the synchronous RAM read
+  // in flight. Reserve a slot before issuing each read: its response cannot
+  // be backpressured. With WREADY high, push/pop/read overlap every cycle.
+  logic [AXI_DATA_W-1:0] data0_q, data1_q;
+  logic read_ptr_q, write_ptr_q, read_pending_q;
+  logic [1:0] queued_q;
+  logic [BEAT_IDX_W:0] issued_q;
+  wire write_fire = (state_q == S_W) && (queued_q != 0) && m_axi_wready;
+  wire [2:0] reserved = {1'b0,queued_q} + {2'b0,read_pending_q};
+  wire issue_read = (state_q == S_W) && (issued_q < num_beats_q) &&
+                    ((reserved < 3'd2) || write_fire);
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      read_ptr_q <= 0; write_ptr_q <= 0; queued_q <= 0;
+      read_pending_q <= 0; issued_q <= 0;
+    end else begin
+      read_pending_q <= issue_read;
+      if (state_q == S_IDLE) begin
+        read_ptr_q <= 0; write_ptr_q <= 0; queued_q <= 0;
+        read_pending_q <= 0; issued_q <= 0;
+      end else begin
+        if (issue_read) issued_q <= issued_q + 1'b1;
+        if (read_pending_q) begin
+          if (write_ptr_q) data1_q <= rd_data_muxed;
+          else             data0_q <= rd_data_muxed;
+          write_ptr_q <= !write_ptr_q;
+        end
+        if (write_fire) read_ptr_q <= !read_ptr_q;
+        case ({read_pending_q,write_fire})
+          2'b10: queued_q <= queued_q + 1'b1;
+          2'b01: queued_q <= queued_q - 1'b1;
+          default: ;
+        endcase
+      end
+    end
+  end
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -146,8 +184,8 @@ module ingress_dma_wr
     state_d = state_q;
 
     frame_gnt_o      = '0;
-    frame_rd_en_o    = '0;
-    frame_rd_addr_o  = beat_idx_q[BEAT_IDX_W-1:0];
+    frame_rd_en_o    = issue_read ? (NUM_PHYS_PORTS'(1) << active_port_q) : '0;
+    frame_rd_addr_o  = issued_q[BEAT_IDX_W-1:0];
     frame_dma_done_o = '0;
 
     m_axi_awid    = AXI_ID_W'(0);
@@ -157,7 +195,7 @@ module ingress_dma_wr
     m_axi_awburst = 2'b01; // INCR
     m_axi_awvalid = 1'b0;
 
-    m_axi_wdata  = rd_data_muxed;
+    m_axi_wdata  = read_ptr_q ? data1_q : data0_q;
     m_axi_wstrb  = last_beat ? ((last_bytes_q == 4'd0) ? {AXI_STRB_W{1'b1}} : (AXI_STRB_W'(1) << last_bytes_q) - AXI_STRB_W'(1))
                               : {AXI_STRB_W{1'b1}};
     m_axi_wlast  = last_beat;
@@ -178,20 +216,11 @@ module ingress_dma_wr
       end
       S_AW: begin
         m_axi_awvalid = 1'b1;
-        if (m_axi_awready) state_d = S_RD_ISSUE;
-      end
-      S_RD_ISSUE: begin
-        // the frame RAM's registered output is valid the cycle after this read,
-        // i.e. in S_W: one issue cycle + one write cycle = 2 cycles per beat
-        frame_rd_en_o = NUM_PHYS_PORTS'(1) << active_port_q;
-        state_d = S_W;
+        if (m_axi_awready) state_d = S_W;
       end
       S_W: begin
-        m_axi_wvalid = 1'b1;
-        if (m_axi_wready) begin
-          if (last_beat) state_d = S_BRESP;
-          else             state_d = S_RD_ISSUE;
-        end
+        m_axi_wvalid = (queued_q != 0);
+        if (write_fire && last_beat) state_d = S_BRESP;
       end
       S_BRESP: begin
         m_axi_bready = 1'b1;

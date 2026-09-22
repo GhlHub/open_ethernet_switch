@@ -121,6 +121,20 @@ class SnmpTests(unittest.TestCase):
         vals=decode(respond(request(names)))[3]
         self.assertEqual([v[2] for v in vals],[ROOT,100,FLAGS])
 
+    def test_timeout_classes(self):
+        vals=decode(respond(request([ROOT+(1,i,0) for i in (6,10,11)])))[3]
+        self.assertEqual([v[1] for v in vals],[0x41]*3)
+        self.assertEqual([v[2] for v in vals],[18,7,11])
+
+    def test_timeout_indices(self):
+        names=[ROOT+(1,i,0) for i in (12,13,14)] + [ROOT+(6,1,1,3,2), ROOT+(6,1,2,0,1)]
+        vals=decode(respond(request(names)))[3]
+        self.assertEqual([v[2] for v in vals],[0x32,0x33,1,7,11])
+        # Two-part table indices still distinguish absent instances/objects.
+        vals=decode(respond(request([ROOT+(6,1,1),ROOT+(6,1,1,99,0),ROOT+(6,1,9)])))[3]
+        self.assertEqual([v[1] for v in vals],[0x81,0x81,0x80])
+        self.assertEqual(decode(respond(request([ROOT+(6,1,1)],op=0xa1)))[3][0][0],ROOT+(6,1,1,0,0))
+
     def test_exceptions(self):
         names=[ROOT+(2,1,3,99),ROOT+(99,0),ROOT+(1,1)]
         vals=decode(respond(request(names)))[3]
@@ -130,14 +144,14 @@ class SnmpTests(unittest.TestCase):
     def test_walk_sorted_unique_complete(self):
         cursor=(0,0)
         walk=[]
-        for _ in range(200):
+        for _ in range(400):
             val=decode(respond(request([cursor],op=0xa1)))[3][0]
             if val[1]==0x82:
                 break
             self.assertGreater(val[0],cursor)
             cursor=val[0]
             walk.append(val)
-        expected=87+(36 if FLAGS&2 else 0)+(32 if FLAGS&4 else 0)
+        expected=188+(100 if FLAGS&2 else 0)+(64 if FLAGS&4 else 0)
         self.assertEqual(len(walk),expected)
         for group,bit in [(3,2),(4,4)]:
             self.assertEqual(any(v[0][:9]==ROOT+(group,) for v in walk), bool(FLAGS&bit))
