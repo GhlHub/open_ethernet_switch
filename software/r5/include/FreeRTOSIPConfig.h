@@ -5,6 +5,7 @@ void network_dhcp_result(int leased);
 #define ipconfigBYTE_ORDER pdFREERTOS_LITTLE_ENDIAN
 #define ipconfigUSE_IPv4 1
 #define ipconfigUSE_IPv6 0
+#define ipconfigUDP_MAX_RX_PACKETS 8
 #define ipconfigUSE_TCP 1
 #define ipconfigUSE_DHCP 1
 #define ipconfigUSE_DHCP_HOOK 0

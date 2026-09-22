@@ -17,7 +17,7 @@
 //     are tied to 0 and AW/AR IDs left open;
 //   - AXI cache/lock/prot/qos, which the RTL does not drive, are tied to 0.
 
-module kr260_top (
+module kr260_top #(parameter bit STATS_DDR=0, STATS_DEBUG=0) (
   input  wire pl0_ref_clk_25m,
   output wire [3:0] pl0_rgmii_txd,
   output wire pl0_rgmii_tx_ctl,
@@ -541,7 +541,7 @@ module kr260_top (
     .sfp_s_axi_wvalid (sfp_s_axi_wvalid)
   );
 
-  kr260_pl_top u_pl (
+  kr260_pl_top #(.STATS_DDR(STATS_DDR),.STATS_DEBUG(STATS_DEBUG)) u_pl (
     .ps_rst_n (ps_rst_n),
     .freerun_clk (freerun_clk),
     .fabric_clk_o (fabric_clk_o),

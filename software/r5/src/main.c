@@ -1,10 +1,15 @@
 #include "board.h"
+#include "statistics.h"
+#include "snmp.h"
 #include "FreeRTOS.h"
 #include "task.h"
 static void startup(void *arg)
 {
     (void)arg;
+    configASSERT(xTaskCreate(statistics_task,"stats",1024,NULL,3,NULL)==pdPASS);
+    configASSERT(xTaskCreate(sensors_task,"sensors",1024,NULL,1,NULL)==pdPASS);
     network_start();
+    configASSERT(xTaskCreate(snmp_task,"snmp",4096,NULL,1,NULL)==pdPASS);
     configASSERT(xTaskCreate(board_link_task,"links",2048,NULL,2,NULL)==pdPASS);
     vTaskDelete(NULL);
 }

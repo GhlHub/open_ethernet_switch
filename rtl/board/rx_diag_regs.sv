@@ -41,7 +41,16 @@
 
 //   0x20 PCS_STATUS read-only {bit3 remote fault, bit2 full duplex,
 //                         bit1 negotiation link, bit0 PCS sync}.
-module rx_diag_regs (
+// Statistics extension: 0x24 ABI/capabilities, 0x28 indirect index (RW),
+// 0x2c read/clear DATA, 0x30 mailbox busy, 0x34 fabric frequency.
+// DATA timeout returns ffffffff without canceling the outstanding request.
+// Retry the SAME index; late snapshots are retained, never silently discarded.
+module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
+                      parameter integer STATS_TIMEOUT=4095) (
+  output logic stats_request,
+  output logic [7:0] stats_index,
+  input wire stats_ack,
+  input wire [31:0] stats_value,
   input  logic        clk,
   input  logic        rst_n,
 
@@ -152,18 +161,42 @@ module rx_diag_regs (
   end
   assign s_axi_bresp = 2'b00;
 
+  (* ASYNC_REG = "TRUE" *) logic [1:0] stats_ack_sync;
+  logic [31:0] stats_wait;
   logic [7:0] ar_hold;
   logic       ar_valid_q;
   assign s_axi_arready = rst_n && !ar_valid_q && !s_axi_rvalid;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
+      stats_request <= 0; stats_index <= 0; stats_wait <= 0; stats_ack_sync <= 0;
       ar_valid_q   <= 1'b0;
       s_axi_rvalid <= 1'b0;
       s_axi_rdata  <= '0;
     end else begin
+      stats_ack_sync <= {stats_ack_sync[0], stats_ack};
+      if (write_fire && aw_hold == 8'h28 && wstrb_hold[0] &&
+          !stats_request && !stats_ack_sync[1] && !ar_valid_q && !s_axi_rvalid)
+        stats_index <= w_hold[7:0];
       if (s_axi_arready && s_axi_arvalid) begin ar_hold <= s_axi_araddr; ar_valid_q <= 1'b1; end
-      if (ar_valid_q && !s_axi_rvalid) begin
+      if (ar_valid_q && !s_axi_rvalid && ar_hold == 8'h2c) begin
+        if (!stats_request && !stats_ack_sync[1]) begin
+          stats_request <= 1;
+          stats_wait <= 0;
+        end else if (stats_request && stats_ack_sync[1]) begin
+          s_axi_rdata <= stats_value;
+          s_axi_rvalid <= 1;
+          ar_valid_q <= 0;
+          stats_request <= 0;
+          stats_wait <= 0;
+        end else if (stats_wait >= STATS_TIMEOUT) begin
+          s_axi_rdata <= 32'hffffffff;
+          s_axi_rvalid <= 1;
+          ar_valid_q <= 0;
+          stats_wait <= 0;
+        end else stats_wait <= stats_wait + 1'b1;
+      end
+      if (ar_valid_q && !s_axi_rvalid && ar_hold != 8'h2c) begin
         ar_valid_q   <= 1'b0;
         s_axi_rvalid <= 1'b1;
         case (ar_hold)
@@ -173,6 +206,10 @@ module rx_diag_regs (
           8'h14:   s_axi_rdata <= {20'd0, phy_link_i, 1'b0, flush_busy_s[1], 2'b00, link_up_o};
           8'h18:   s_axi_rdata <= {26'd0, event_q};
           8'h1C:   s_axi_rdata <= {26'd0, event_en_q};
+          8'h24:   s_axi_rdata <= 32'h53540101 | (32'(STATS_DDR)<<1) | (32'(STATS_DEBUG)<<2);
+          8'h28:   s_axi_rdata <= {24'd0,stats_index};
+          8'h30:   s_axi_rdata <= {30'd0,stats_ack_sync[1],stats_request};
+          8'h34:   s_axi_rdata <= 100000000;
           8'h20:   s_axi_rdata <= {28'd0, sfp_pcs_status_i};
           default: s_axi_rdata <= 32'd0;
         endcase

@@ -190,6 +190,11 @@ inside an aperture are not allocatable memory.
 | `0x800C0000–0x800FFFFF` | 256 KiB | SFP MAC registers | R5 initializes MAC; hardware updates counters/status |
 | `0x80100000–0x8010FFFF` | 64 KiB | Fabric diagnostics and link control | R5 link task controls port admission/flush; PL supplies status/events |
 
+Statistics extend this aperture at offsets `0x24–0x34`; the R5 statistics
+task exclusively owns read/clear DATA. Accumulated totals and sensor snapshots
+are normal cacheable R5 BSS, with no new fixed DDR reservation. See
+[statistics.md](statistics.md) for the protocol and software access rules.
+
 Diagnostic offsets include LINK_SET `+0x0C`, LINK_CLR `+0x10`,
 LINK_STATUS `+0x14`, and PCS_STATUS `+0x20`. See
 [rx_diag_regs.sv](../rtl/board/rx_diag_regs.sv) for the register contract.
@@ -202,6 +207,8 @@ This table lists bases or individual registers, not entire reserved RAM regions.
 
 | Address | Resource | Usage / owner |
 | --- | --- | --- |
+| `0xFF030000` | PS I2C1 base | R5 sensor task; INA260 SOM power monitor at I2C address `0x40` |
+| `0xFFA50000` | AMS / PS and PL SYSMON | R5 sensor task; temperature and voltage sequencing/readout |
 | `0xFF010000` | UART1 base | R5 console, connected to the board UART bridge |
 | `0xFF0B0000` | GEM0 base | R5 configures PS MAC and external FIFO operation |
 | `0xFF0C0000` | GEM1 base | R5 configures MAC; shared MDIO bus serves both PS PHYs |

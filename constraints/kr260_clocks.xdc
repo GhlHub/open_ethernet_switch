@@ -60,3 +60,14 @@ set_max_delay -datapath_only -from [get_clocks pl0_rgmii_rxc] -to [get_clocks cl
 set_max_delay -datapath_only -from [get_clocks pl1_rgmii_rxc] -to [get_clocks clk_pl_0] 7.000
 set_max_delay -datapath_only -from [get_clocks clk_pl_0] -to [get_clocks pl0_rgmii_rxc] 7.000
 set_max_delay -datapath_only -from [get_clocks clk_pl_0] -to [get_clocks pl1_rgmii_rxc] 7.000
+
+# Statistics: request/select and held snapshot data use a four-phase mailbox.
+# Ack/request synchronizers carry ASYNC_REG; bundled data settles before ack.
+set_max_delay -datapath_only -from [get_clocks clk_pl_0] -to [get_clocks clk_gem0_rx_0] 7.000
+set_max_delay -datapath_only -from [get_clocks clk_gem0_rx_0] -to [get_clocks clk_pl_0] 7.000
+set_max_delay -datapath_only -from [get_clocks clk_pl_0] -to [get_clocks clk_gem0_tx_0] 7.000
+set_max_delay -datapath_only -from [get_clocks clk_gem0_tx_0] -to [get_clocks clk_pl_0] 7.000
+set_max_delay -datapath_only -from [get_clocks clk_pl_0] -to [get_clocks clk_gem1_rx_0] 7.000
+set_max_delay -datapath_only -from [get_clocks clk_gem1_rx_0] -to [get_clocks clk_pl_0] 7.000
+set_max_delay -datapath_only -from [get_clocks clk_pl_0] -to [get_clocks clk_gem1_tx_0] 7.000
+set_max_delay -datapath_only -from [get_clocks clk_gem1_tx_0] -to [get_clocks clk_pl_0] 7.000

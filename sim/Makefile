@@ -106,7 +106,7 @@ ASYNC_FIFO_TB   := $(TB_DIR)/tb_async_fifo.sv
 
 PL_GMII_DIR := ../rtl/pl_gmii
 
-PL_GMII_SRCS := \
+PL_GMII_SRCS := ../rtl/stats/stats_bank.sv \
 	$(COMMON_DIR)/async_fifo.sv \
 	$(PL_GMII_DIR)/open_eth_mac_1g_switch.sv \
 	$(PL_GMII_DIR)/mac_rxd_to_switch_ingress.sv \
@@ -122,10 +122,10 @@ PL_GMII_ADAPT_SRCS := \
 
 PL_GMII_TB := $(TB_DIR)/tb_pl_gmii_adapters.sv
 
-MAC_RESET_SRCS := $(PL_GMII_DIR)/open_eth_mac_1g_switch.sv
+MAC_RESET_SRCS := ../rtl/stats/stats_bank.sv $(PL_GMII_DIR)/open_eth_mac_1g_switch.sv
 MAC_RESET_TB   := $(TB_DIR)/tb_mac_reset_reclock.sv
 
-SFP_PORT_SRCS := \
+SFP_PORT_SRCS := ../rtl/stats/stats_bank.sv \
 	$(COMMON_DIR)/async_fifo.sv \
 	$(SFP_PCS_DIR)/sfp_pcs_pkg.sv \
 	$(SFP_PCS_DIR)/gmii_1000base_x_tx.sv \
@@ -166,7 +166,7 @@ MAC_FWD_SRCS := \
 
 MAC_FWD_TB := $(TB_DIR)/tb_mac_forwarding_top.sv
 
-SWITCH_TOP_SRCS := \
+SWITCH_TOP_SRCS := $(wildcard ../rtl/stats/*.sv) \
 	$(COMMON_DIR)/port_link_ctrl.sv \
 	$(BUFMGR_DIR)/buf_mgr_pkg.sv \
 	$(MAC_DIR)/mac_table_pkg.sv \
@@ -681,3 +681,12 @@ sim-sfp-tx-alignment:
 sim-sfp-tx-idle:
 	iverilog -g2012 -s tb_sfp_tx_idle -o tb_sfp_tx_idle.vvp $(SFP_PCS_SRCS) $(TB_DIR)/tb_sfp_tx_idle.sv
 	vvp tb_sfp_tx_idle.vvp
+
+.PHONY: sim-statistics
+sim-statistics:
+	iverilog -g2012 -s tb_statistics -o tb_statistics.vvp ../rtl/stats/stats_bank.sv ../rtl/board/rx_diag_regs.sv $(TB_DIR)/tb_statistics.sv
+	vvp tb_statistics.vvp
+	iverilog -g2012 -s tb_statistics_axi -o tb_statistics_axi.vvp ../rtl/stats/stats_bank.sv ../rtl/stats/stats_axi.sv $(TB_DIR)/tb_statistics_axi.sv
+	vvp tb_statistics_axi.vvp
+	iverilog -g2012 -s tb_statistics_ports -o tb_statistics_ports.vvp ../rtl/stats/stats_gem.sv ../rtl/stats/stats_axis.sv $(TB_DIR)/tb_statistics_ports.sv
+	vvp tb_statistics_ports.vvp

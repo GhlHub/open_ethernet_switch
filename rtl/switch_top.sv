@@ -57,12 +57,18 @@ module switch_top
   // age_tick's clock divider (see below); overridable so a testbench can
   // use a small value instead of the real ~4Hz-at-100MHz divide count,
   // which is far too slow to usefully simulate
+  parameter bit STATS_DDR = 0,
+  parameter bit STATS_DEBUG = 0,
   parameter int AGE_TICK_DIVIDE_COUNT = 100_000_000 / 4,
   // Simulation defaults; the board top supplies the 125 MHz timer values.
   parameter int SFP_AN_BREAK_LINK_CYCLES = 8,
   parameter int SFP_AN_LINK_TIMER_CYCLES = 8,
   parameter int SFP_AN_IDLE_DETECT_CYCLES = 8
 ) (
+  input wire stats_request,
+  input wire [7:0] stats_index,
+  output wire stats_ack,
+  output wire [31:0] stats_value,
   input  logic clk,      // fabric clock (100 MHz) -- shared by everything
   input  logic rst_n,
 
@@ -344,6 +350,9 @@ module switch_top
   input  logic                  m_axi_cpu_rvalid,
   output logic                  m_axi_cpu_rready
 );
+
+  wire [12:0] stats_req, stats_acks;
+  wire [12:0][31:0] stats_values;
 
   // =========================================================================
   // age_tick: free-running clock divider off the fabric clock (clk,
@@ -729,6 +738,8 @@ module switch_top
   // PL GMII0 (port 2) / PL GMII1 (port 3)
   // =========================================================================
   pl_gmii_mac_top u_pl_gmii0 (
+    .stats_request(stats_req[4]), .stats_select(stats_index[3:0]),
+    .stats_ack(stats_acks[4]), .stats_value(stats_values[4]),
     .clk               (clk),
     .rst_n             (rst_n),
     .axis_clk          (axis_clk),
@@ -774,6 +785,8 @@ module switch_top
   );
 
   pl_gmii_mac_top u_pl_gmii1 (
+    .stats_request(stats_req[5]), .stats_select(stats_index[3:0]),
+    .stats_ack(stats_acks[5]), .stats_value(stats_values[5]),
     .clk               (clk),
     .rst_n             (rst_n),
     .axis_clk          (axis_clk),
@@ -826,6 +839,8 @@ module switch_top
     .AN_LINK_TIMER_CYCLES(SFP_AN_LINK_TIMER_CYCLES),
     .AN_IDLE_DETECT_CYCLES(SFP_AN_IDLE_DETECT_CYCLES)
   ) u_sfp0 (
+    .stats_request(stats_req[6]), .stats_select(stats_index[3:0]),
+    .stats_ack(stats_acks[6]), .stats_value(stats_values[6]),
     .clk              (clk),
     .rst_n            (rst_n),
     .axis_clk         (axis_clk),
@@ -877,5 +892,95 @@ module switch_top
     .interrupt        (sfp_interrupt),
     .mac_irq          (sfp_mac_irq)
   );
+
+
+  // Statistics mailbox selects one source bank. Select is held throughout
+  // the four-phase CDC handshake by rx_diag_regs.
+  for (genvar k=0;k<13;k=k+1) begin : stats_decode
+    assign stats_req[k] = stats_request && stats_index[7:4] == k;
+  end
+  assign stats_ack = stats_index[7:4] < 13 ? stats_acks[stats_index[7:4]] : stats_request;
+  assign stats_value = stats_index[7:4] < 13 ? stats_values[stats_index[7:4]] : 0;
+  wire [3:0][31:0] stats_gem0_rx_inc;
+  stats_gem_rx stats_gem0_rx (.clk(gem_rx_clk_ps0),.rst_n(gem_rx_rst_n_ps0),
+    .wr(gem0_rx_w_wr_i),.sop(gem0_rx_w_sop_i),.eop(gem0_rx_w_eop_i),.error(gem0_rx_w_err_i),.flush(gem0_rx_w_flush_i),.overflow(gem0_rx_w_overflow_o),.increment(stats_gem0_rx_inc));
+  stats_bank #(.N(4)) stats_bank0 (.clk(gem_rx_clk_ps0),.rst_n(gem_rx_rst_n_ps0),
+    .increment(stats_gem0_rx_inc),.request(stats_req[0]),.select(stats_index[3:0]),.ack(stats_acks[0]),.value(stats_values[0]));
+  wire [3:0][31:0] stats_gem0_tx_inc;
+  stats_gem_tx stats_gem0_tx (.clk(gem_tx_clk_ps0),.rst_n(gem_tx_rst_n_ps0),
+    .valid(gem0_tx_r_valid_o),.sop(gem0_tx_r_sop_o),.error(gem0_tx_r_err_o),.underflow(gem0_tx_r_underflow_o),.complete_toggle(gem0_dma_tx_end_tog_i),.status(gem0_tx_r_status_i),.increment(stats_gem0_tx_inc));
+  stats_bank #(.N(4)) stats_bank1 (.clk(gem_tx_clk_ps0),.rst_n(gem_tx_rst_n_ps0),
+    .increment(stats_gem0_tx_inc),.request(stats_req[1]),.select(stats_index[3:0]),.ack(stats_acks[1]),.value(stats_values[1]));
+  wire [3:0][31:0] stats_gem1_rx_inc;
+  stats_gem_rx stats_gem1_rx (.clk(gem_rx_clk_ps1),.rst_n(gem_rx_rst_n_ps1),
+    .wr(gem1_rx_w_wr_i),.sop(gem1_rx_w_sop_i),.eop(gem1_rx_w_eop_i),.error(gem1_rx_w_err_i),.flush(gem1_rx_w_flush_i),.overflow(gem1_rx_w_overflow_o),.increment(stats_gem1_rx_inc));
+  stats_bank #(.N(4)) stats_bank2 (.clk(gem_rx_clk_ps1),.rst_n(gem_rx_rst_n_ps1),
+    .increment(stats_gem1_rx_inc),.request(stats_req[2]),.select(stats_index[3:0]),.ack(stats_acks[2]),.value(stats_values[2]));
+  wire [3:0][31:0] stats_gem1_tx_inc;
+  stats_gem_tx stats_gem1_tx (.clk(gem_tx_clk_ps1),.rst_n(gem_tx_rst_n_ps1),
+    .valid(gem1_tx_r_valid_o),.sop(gem1_tx_r_sop_o),.error(gem1_tx_r_err_o),.underflow(gem1_tx_r_underflow_o),.complete_toggle(gem1_dma_tx_end_tog_i),.status(gem1_tx_r_status_i),.increment(stats_gem1_tx_inc));
+  stats_bank #(.N(4)) stats_bank3 (.clk(gem_tx_clk_ps1),.rst_n(gem_tx_rst_n_ps1),
+    .increment(stats_gem1_tx_inc),.request(stats_req[3]),.select(stats_index[3:0]),.ack(stats_acks[3]),.value(stats_values[3]));
+  wire [7:0][31:0] stats_cpu_inc;
+  stats_axis stats_cpu_s (.clk(clk),.rst_n(rst_n),.valid(cpu_s_axis_tvalid),.ready(cpu_s_axis_tready),
+    .last(cpu_s_axis_tlast),.bad(1'b0),.keep(cpu_s_axis_tkeep),.increment(stats_cpu_inc[0 +: 4]));
+  stats_axis stats_cpu_m (.clk(clk),.rst_n(rst_n),.valid(cpu_m_axis_tvalid),.ready(cpu_m_axis_tready),
+    .last(cpu_m_axis_tlast),.bad(1'b0),.keep(cpu_m_axis_tkeep),.increment(stats_cpu_inc[4 +: 4]));
+  stats_bank stats_cpu_bank (.clk(clk),.rst_n(rst_n),.increment(stats_cpu_inc),
+    .request(stats_req[7]),.select(stats_index[3:0]),.ack(stats_acks[7]),.value(stats_values[7]));
+  generate if (STATS_DDR) begin : ddr_statistics
+    stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b1)) monitor8 (.clk(clk),.rst_n(rst_n),
+      .address_valid(m_axi_ing_awvalid),.address_ready(m_axi_ing_awready),
+      .data_valid(m_axi_ing_wvalid),.data_ready(m_axi_ing_wready),
+      .strobe(m_axi_ing_wstrb),
+      .response_valid(m_axi_ing_bvalid),.response_ready(m_axi_ing_bready),
+      .response_last(1'b1),.response(m_axi_ing_bresp),
+      .request(stats_req[8]),.select(stats_index[3:0]),.ack(stats_acks[8]),.value(stats_values[8]));
+    stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b0)) monitor9 (.clk(clk),.rst_n(rst_n),
+      .address_valid(m_axi_egr_arvalid),.address_ready(m_axi_egr_arready),
+      .data_valid(m_axi_egr_rvalid),.data_ready(m_axi_egr_rready),
+      .strobe({AXI_STRB_W{1'b1}}),
+      .response_valid(m_axi_egr_rvalid),.response_ready(m_axi_egr_rready),
+      .response_last(m_axi_egr_rlast),.response(m_axi_egr_rresp),
+      .request(stats_req[9]),.select(stats_index[3:0]),.ack(stats_acks[9]),.value(stats_values[9]));
+    stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b1)) monitor10 (.clk(clk),.rst_n(rst_n),
+      .address_valid(m_axi_cpu_awvalid),.address_ready(m_axi_cpu_awready),
+      .data_valid(m_axi_cpu_wvalid),.data_ready(m_axi_cpu_wready),
+      .strobe(m_axi_cpu_wstrb),
+      .response_valid(m_axi_cpu_bvalid),.response_ready(m_axi_cpu_bready),
+      .response_last(1'b1),.response(m_axi_cpu_bresp),
+      .request(stats_req[10]),.select(stats_index[3:0]),.ack(stats_acks[10]),.value(stats_values[10]));
+    stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b0)) monitor11 (.clk(clk),.rst_n(rst_n),
+      .address_valid(m_axi_cpu_arvalid),.address_ready(m_axi_cpu_arready),
+      .data_valid(m_axi_cpu_rvalid),.data_ready(m_axi_cpu_rready),
+      .strobe({AXI_STRB_W{1'b1}}),
+      .response_valid(m_axi_cpu_rvalid),.response_ready(m_axi_cpu_rready),
+      .response_last(m_axi_cpu_rlast),.response(m_axi_cpu_rresp),
+      .request(stats_req[11]),.select(stats_index[3:0]),.ack(stats_acks[11]),.value(stats_values[11]));
+  end else begin : no_ddr_statistics
+    assign stats_acks[11:8] = stats_req[11:8];
+    assign stats_values[11:8] = '0;
+  end endgenerate
+  generate if (STATS_DEBUG) begin : debug_statistics
+    wire [15:0][31:0] inc;
+    for (genvar k=0;k<5;k=k+1) begin : stalls
+      assign inc[k] = 32'(phy_s_axis_tvalid[k] && !phy_s_axis_tready[k]);
+      assign inc[k+5] = 32'(phy_m_axis_tvalid[k] && !phy_m_axis_tready[k]);
+    end
+    assign inc[10] = 32'(cpu_s_axis_tvalid && !cpu_s_axis_tready);
+    assign inc[11] = 32'(cpu_m_axis_tvalid && !cpu_m_axis_tready);
+    assign inc[12] = 32'(cpu_alloc_req && !cpu_alloc_gnt);
+    assign inc[13] = 32'(cpu_enqueue_req && !cpu_enqueue_gnt);
+    assign inc[14] = 32'(link_flush_busy_o);
+    assign inc[15] = 32'(m_axi_ing_bvalid && m_axi_ing_bready && m_axi_ing_bresp[1]) +
+                     32'(m_axi_egr_rvalid && m_axi_egr_rready && m_axi_egr_rresp[1]) +
+                     32'(m_axi_cpu_bvalid && m_axi_cpu_bready && m_axi_cpu_bresp[1]) +
+                     32'(m_axi_cpu_rvalid && m_axi_cpu_rready && m_axi_cpu_rresp[1]);
+    stats_bank #(.N(16),.WIDTH(28)) bank (.clk(clk),.rst_n(rst_n),.increment(inc),
+      .request(stats_req[12]),.select(stats_index[3:0]),.ack(stats_acks[12]),.value(stats_values[12]));
+  end else begin : no_debug_statistics
+    assign stats_acks[12] = stats_req[12];
+    assign stats_values[12] = 0;
+  end endgenerate
 
 endmodule

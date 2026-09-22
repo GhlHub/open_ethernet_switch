@@ -1,5 +1,36 @@
 # Design inventory and pending development
 
+## 2026-09-21 SNMP management
+
+Read-only SNMPv2c now exposes all compiled-in counters, collection health,
+link status and environmental readings. Added a bounded BER engine, R5 UDP
+agent, custom [MIB](mibs/KR260-SWITCH-MIB.txt), [query guide](snmp.md), and
+host tests for all four counter builds. The
+[reader script](../scripts/read_snmp_counters.py) provides labeled snapshots,
+periodic polling and JSON output. Net-SNMP GET, GETNEXT and GETBULK
+work on the board; SET is rejected. All sensors report valid samples.
+The current all-counter firmware passed repeated walks and full-MTU pings.
+Follow up the SFP negotiation stall after JTAG boot (recovered with a
+TX_DISABLE pulse) and recurring statistics mailbox timeouts (2 since restart
+at the latest observation, with no increase during the 30-second sample).
+Add timeout bank/index and reason diagnostics; short samples show no packet
+or AXI errors, but sustained-load validation remains pending. SNMPv3 and traps remain unimplemented; the example PEN is for
+this lab only. See [verification](verification.md).
+
+## 2026-09-21 statistics extension
+
+Added standard per-port read/clear packet/byte counters; optional `STATS_DDR`
+and `STATS_DEBUG` monitors; R5 250 ms collection into 64-bit DDR totals; and
+PS/PL SYSMON plus INA260 SOM power sampling. Definitions, build options and
+register ownership are in [statistics.md](statistics.md). This extension is
+implemented through place-and-route/bitstream generation with all counters
+enabled (WNS +0.018 ns, WHS +0.010 ns), with matching R5 firmware built;
+JTAG deployment, DHCP and full-MTU ping checks passed. SNMP now verifies
+live increasing totals and numerical sensor readings; detailed accuracy,
+sustained-load and fault-injection validation remain pending. Earlier
+board-test results below apply to the previous image.
+
+
 Baseline: 2026-09-21. The repository contains **63 SystemVerilog files under
 `rtl/`** (59 logical modules, including four simulation-only behavioral models --
 GTH, RGMII, PL Ethernet clock generation, and MDIO -- and four packages),

@@ -194,3 +194,24 @@ Register references: [AMD GEM external FIFO register](https://docs.amd.com/r/en-
 [AMD TTC driver](https://xilinx.github.io/embeddedsw.github.io/ttcps/doc/html/api/index.html),
 and the generated BSP headers/configuration tables. The upstream kernel/TCP
 sources in `third_party` define the RTOS port and network-interface contracts.
+
+## SNMP
+
+Read-only SNMPv2c on UDP 161 exposes all compiled-in counters and environmental
+readings. Default lab community: `public`; example PEN: `32473`. Configure
+`include/snmp.h`; see [SNMP documentation](../../docs/snmp.md) and the supplied
+[MIB](../../docs/mibs/KR260-SWITCH-MIB.txt). `make test` exercises the BER engine
+and MIB with all four statistics build combinations.
+
+## Statistics and sensors
+
+The standard firmware reads per-port packet/byte counters every 250 ms and
+accumulates 64-bit totals. `STATS_DDR=1` and `STATS_DEBUG=1` enable the optional
+DDR and debug collectors; use matching FPGA synthesis options. An ABI/options
+mismatch disables collection with a UART diagnostic. A separate task samples
+PS/PL SYSMON and the carrier's INA260 SOM power monitor every second.
+
+See [statistics.md](../../docs/statistics.md) for the counter definitions,
+register protocol, widths, ownership, snapshot API, build examples and
+validation limits. The all-counter build was loaded through JTAG on 2026-09-21;
+DHCP and full-MTU pings to the R5 and forwarded endpoint passed.

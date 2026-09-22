@@ -1,5 +1,193 @@
 # Design inventory verification
 
+## 2026-09-21 live SNMP counter observation
+
+The reader script sampled `10.0.1.214` seven times at five-second intervals,
+from 21:40:53 through 21:41:23 America/Los_Angeles, under existing background
+traffic plus the SNMP queries. No additional load was generated for this check.
+
+- Collection remained available with all counter groups enabled. Polls advanced
+  from 2,870 to 2,990: exactly four scans per second. Late polls and saturated
+  reads remained zero.
+- **Mailbox read timeouts totaled 2**, increased from 1 in the earlier SNMP
+  validation. The total stayed at 2 during this observation. Collection
+  continued; current diagnostics cannot identify the bank/index or distinguish
+  a mailbox-release wait timeout from a DATA-response timeout. Add those
+  diagnostics before attributing this to a specific clock domain or mechanism.
+- All ports reported zero bad packets and zero bad bytes, in both directions.
+  GEM0, SFP and CPU remained up. GEM1, PL0 and PL1 remained down with zero
+  traffic. Packet deltas (RX/TX) were GEM0 80/279, SFP 375/178, CPU 98/296.
+  Flooding and the CPU-facing filter mean these are not expected to match
+  one-to-one across ports.
+- All four DDR error-response counters and the combined AXI-error counter
+  remained zero. Measured completed-burst latency is below; maxima are since
+  R5 restart, not just this interval.
+
+| DDR path | Completed bursts in interval | Mean latency in interval | Maximum since restart |
+| --- | ---: | ---: | ---: |
+| Physical ingress write | 455 | 0.529 us | 2.270 us |
+| Physical egress read | 457 | 0.557 us | 2.280 us |
+| CPU write | 98 | 0.887 us | 3.200 us |
+| CPU read | 296 | 0.488 us | 1.740 us |
+
+Physical ingress writes added 455 data-stall cycles, one per completed burst;
+other DDR address/data stall counts did not increase. CPU enqueue waiting
+added 590 fabric cycles (5.9 us total). These small waits are backpressure,
+not evidence of packet loss. Historical GEM0 egress stalls (18,780 cycles),
+SFP ingress stalls (46) and link-flush busy cycles (2,561) did not increase.
+CPU allocation waiting remained zero.
+
+All sensor samples had validity mask 7 and error count 0. PS temperature
+ranged 30.505–32.712 C; PL 29.790–31.189 C. SOM voltage was 5.060 V,
+current 0.82625–0.82750 A, and power 4.18–4.19 W. Rail readings were present;
+this check does not establish voltage tolerance or external calibration.
+
+The main observed issue is the recurring statistics mailbox timeout. No
+ongoing packet-error problem was observed, but this short, lightly loaded
+sample does not validate line-rate behavior or long-term reliability.
+Raw samples are retained locally in
+`build/r5/snmp_validation/counter_observation.jsonl` (generated evidence,
+not committed). Reproduce with:
+
+```sh
+python3 scripts/read_snmp_counters.py --interval 5 --count 7 --json
+```
+
+## 2026-09-21 SNMP agent validation
+
+R5 firmware with read-only SNMPv2c was built with `STATS_DDR=1 STATS_DEBUG=1`
+and loaded through JTAG using the existing `kr260_all_counters.bit`.
+No FPGA source or bitstream change was needed for SNMP, and flash was unchanged.
+The deployed ELF SHA-256 is
+`251140e87f79e2fb59e4c3bf8f79dc28f39a037731694b86f32837597c6157b5`.
+The previous statistics-only firmware remains preserved separately.
+
+- `make -C software/r5 test` passes: existing policy, DMA and statistics
+  tests plus ten SNMP tests for each of four counter build combinations.
+  Tests include full unsigned 64-bit values, negative sensor values,
+  lexicographic walks, GETBULK layout/truncation, malformed BER, invalid
+  community/version, SET rejection, response bounds and request ID limits.
+- An additional 100,000 random datagrams passed under address/undefined
+  behavior sanitizers; 10,000 structured-message mutations also passed with
+  undefined-behavior instrumentation. These are bounded checks, not a claim
+  of exhaustive protocol/security validation.
+- Net-SNMP 5.9.4 parsed the supplied MIB and interoperated with both the host
+  fixture and the board. Numeric and symbolic GETs, GETNEXT walks and
+  GETBULK walks succeeded. SET returned `notWritable`.
+- The all-counter tree exposes 151 project instances, plus four standard
+  system scalars. Thirty complete GETBULK walks passed in 6.42 seconds.
+- Live port totals increased on GEM0, SFP and CPU; disconnected ports stayed
+  at zero during the measured interval. Inspected port, DDR and debug values
+  were nondecreasing. This verifies readout and activity, not exact accounting
+  under line-rate traffic.
+- Full-MTU pings: R5 `10.0.1.214` 100/100, endpoint `10.0.1.140` 100/100;
+  another R5 run concurrent with repeated walks passed 200/200.
+- Sensors reported validity mask 7, errors 0. One sample: PS 33.971 C,
+  PL 31.888 C; PS LP/FP/AUX 0.839859/0.845718/1.802124 V;
+  PL INT/AUX/BRAM 0.716629/1.791046/0.847229 V;
+  SOM 5.060 V, 0.830 A, 4.200 W. These are device readings, not externally
+  calibrated measurements, and SOM power excludes carrier-board loads.
+
+Two follow-ups were exposed during deployment:
+
+1. After JTAG reconfiguration the SFP had PCS sync but no negotiated link
+   (`PCS_STATUS=1`), while GEM0 remained up. The operator confirmed unchanged
+   cabling. A one-second pulse of SFP_CONTROL.TX_DISABLE restored PCS status 7
+   and links 0x31; the existing DHCP retry then acquired `10.0.1.214`.
+   No automatic recovery change was added. Determine why negotiation can
+   stall across reconfiguration before claiming unattended restart reliability.
+2. `krStatsReadTimeouts` rose from 0 to 1 during the initial traffic test.
+   Collection continued, and the count remained 1 through repeated walks.
+   Late-poll and saturation counts remained zero. The existing collector
+   retries pending reads, but this observation does not identify the timed-out
+   bank or establish the root cause. Add diagnosis if it recurs.
+
+Local evidence and the deployed firmware copy are under
+`build/r5/snmp_validation/`: UART/boot logs, before/after walks, GETNEXT walk,
+symbolic queries, SET rejection, repeated walks, ping logs and manifest.
+See [SNMP usage](snmp.md) and [MIB](mibs/KR260-SWITCH-MIB.txt).
+
+## 2026-09-21 statistics and sensor extension
+
+This extension has completed synthesis, place-and-route and bitstream generation
+with all counters enabled, and was downloaded through JTAG on 2026-09-21.
+DHCP and initial full-MTU ping checks passed. Subsequent SNMP validation
+above verifies numerical sensor values and increasing live totals; prolonged
+load and quantitative counter-accuracy testing remain pending.
+
+- `make -C sim sim-statistics`: three new benches pass. Coverage includes
+  asynchronous read/clear, simultaneous increments, overflow saturation,
+  AXI response backpressure, stopped-clock timeout and late-snapshot retry;
+  DDR byte strobes, latency sum/max, address/data stalls, error responses and
+  a burst spanning a polling interval; GEM RX error/flush, GEM TX completion
+  status/padding, and CPU AXI-stream backpressure/length classification.
+- `sim-pl-linerate`: existing three line-rate cases pass, now also verifying
+  exact RX/TX packet and byte counts, read/clear, and an injected bad-RX frame.
+  This target now propagates simulator failures instead of filtering them out
+  through a `grep` pipeline.
+- Existing `sim-rx-diag`, `sim-switch-top`, `sim-sfp-port` and `sim-mac-reset`
+  regressions pass after statistics wiring/source-list changes.
+- All four R5 combinations of `STATS_DDR`/`STATS_DEBUG` compile and pass the
+  ELF memory/vector audit. The current ELF is built with both options enabled.
+- `make -C software/r5 test`: existing policy and DMA ownership tests pass;
+  new statistics tests verify accumulation beyond 32 bits, maximum aggregation,
+  saturation reporting, build-capability mismatch, delayed-read retry, and a stuck mailbox release.
+- Vivado 2026.1 synthesized the complete board with both optional categories
+  enabled, using an isolated copy under `build/r5/statistics_vivado/`.
+  No synthesis errors or critical warnings. Post-synthesis use is 34,114 LUTs,
+  42,476 registers and 51.5 BRAM tiles. These are synthesis figures, not routed
+  utilization or a timing result.
+- Out-of-context synthesis also checks the switch with both optional groups
+  enabled and with both disabled; the standard netlist excludes the optional
+  monitor instances. Reports are under ignored `build/reports/stats_*.rpt`.
+
+The hard SYSMON/INA260 collector compiles against the generated BSP. The
+subsequent SNMP checks above verify sensor presence and numerical readings.
+Conversion freshness under faults, I2C error recovery, externally calibrated
+accuracy and sustained live polling under load remain validation items,
+including processor delays longer than 500 ms. See
+[statistics.md](statistics.md) for measurement boundaries and counter ownership.
+
+### All-counter implementation and firmware build
+
+Place-and-route and bitstream generation completed on 2026-09-21 with
+`STATS_DDR=1 STATS_DEBUG=1`. The implementation caught an unsupported `foreach`
+in the statistics XDC; it was replaced by explicit clock-pair constraints and
+implementation was restarted. The successful run has no errors or critical
+warnings, and the reopened routed design has no debug/ILA cores.
+
+Final `report_timing_summary` results: WNS **+0.018 ns**, WHS **+0.010 ns**,
+TNS/THS zero, with no failing setup/hold endpoints. These final values supersede
+the router's intermediate +0.016/+0.002 ns estimates. Timing passes with narrow
+margins. Routed utilization is 30,692 LUTs (26.21%), 37,466 registers (15.99%)
+and 51.5 BRAM tiles (35.76%). Reports are `build/reports/stats_impl_*.rpt`.
+
+The matching R5 firmware was rebuilt with both options enabled; host tests and
+ELF vector/memory checks passed. The PS peripheral map and clocks are unchanged,
+so the build uses the existing generated BSP. Preserved local artifacts:
+
+- `build/r5/statistics_artifacts/kr260_all_counters.bit`
+- `build/r5/statistics_artifacts/kr260_all_counters.xsa`
+- `build/r5/statistics_artifacts/kr260_statistics_r5.elf`
+- `build/r5/statistics_artifacts/kr260_statistics_r5.map`
+- `build/r5/statistics_artifacts/manifest.json` (options, timing, SHA-256 hashes)
+
+The XSA's embedded bitstream was byte-compared with the generated BIT file.
+Expected counter capability word is `0x53540107`. The original normal-build
+project and bitstream remain separate; use the paths above for this all-counter
+image.
+
+The image and preserved matching R5 ELF were loaded through JTAG on 2026-09-21
+(hw_server `10.0.1.109:3121`). UART confirmed D-cache enabled, capability word
+`0x53540107` matching firmware, 250 ms statistics polling, both AMS blocks
+available and PS I2C1 ready. DHCP assigned `10.0.1.214`. Concurrent full-MTU
+(1472-byte payload) pings passed: R5 **100/100**, forwarded endpoint
+`10.0.1.140` **50/50**. LINK_STATUS was `0x31`, PCS_STATUS `0x7`, and DMA status
+was MM2S `0x1100A` / S2MM `0x11008`. This confirms basic boot/connectivity,
+not numerical counter accuracy or actual sensor readings. Evidence is in
+`build/r5/statistics_validation/`. No flash write was performed.
+
+
 Inventory date: 2026-09-20. The full regression on 2026-09-19 rebuilt **25 portable testbenches through 23 Icarus
 targets**, reran 16 distinct lint targets and ran six XSim targets. The new
 IDELAY primitive bench brings the total to 26 distinct testbenches.

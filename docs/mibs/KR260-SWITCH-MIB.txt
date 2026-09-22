@@ -1,0 +1,444 @@
+KR260-SWITCH-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Counter32, Counter64,
+    Gauge32, enterprises FROM SNMPv2-SMI;
+
+kr260Switch MODULE-IDENTITY
+    LAST-UPDATED "202609210000Z"
+    ORGANIZATION "Open Ethernet Switch project"
+    CONTACT-INFO "https://github.com/GhlHub/open_ethernet_switch"
+    DESCRIPTION
+        "Read-only statistics for the KR260 R5 switch. Enterprise 32473
+         is the RFC 5612 example number, used by agreement for this lab.
+         Replace it with an assigned PEN before deployment. Counters are
+         processor-accumulated totals since R5 restart; retrieval does not
+         clear them. A walk spans multiple collection intervals. Check
+         collection health and sensor validity before interpreting values."
+    REVISION "202609210000Z"
+    DESCRIPTION "Initial lab implementation."
+    ::= { enterprises 32473 1 }
+
+krHealth OBJECT IDENTIFIER ::= { kr260Switch 1 }
+krSensors OBJECT IDENTIFIER ::= { kr260Switch 5 }
+
+krStatsAvailable OBJECT-TYPE
+    SYNTAX INTEGER { available(1), unavailable(2) }
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "True only when the hardware capability word matches the firmware. Unavailable totals are not valid."
+    ::= { krHealth 1 }
+
+krStatsCapabilities OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Raw hardware ABI and capability word; expected ABI 0x53540100 with bits 0 port, 1 DDR, 2 debug."
+    ::= { krHealth 2 }
+
+krStatsPolls OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Attempted collection scans since restart, including scans stopped by a timeout."
+    ::= { krHealth 3 }
+
+krStatsLatePolls OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Collection intervals exceeding half a second."
+    ::= { krHealth 4 }
+
+krStatsSaturatedReads OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Hardware reads with saturation set. Nonzero means accumulated values may undercount."
+    ::= { krHealth 5 }
+
+krStatsReadTimeouts OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Mailbox read or busy timeouts. Pending reads are retried by the collector."
+    ::= { krHealth 6 }
+
+krStatsAgeMs OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Age of the collection loop start timestamp, not an atomic successful snapshot. 4294967295 means unknown or saturated."
+    ::= { krHealth 7 }
+
+krTimestampHz OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Free-running PS timestamp timer frequency in hertz. DDR cycle metrics instead use the 100 MHz fabric clock."
+    ::= { krHealth 8 }
+
+krStatsBuildFlags OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Firmware options: bit 0 port, bit 1 DDR, bit 2 debug. Optional tables follow the firmware build."
+    ::= { krHealth 9 }
+
+krPortTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF KrPortEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "All six fabric ports; totals since R5 restart."
+    ::= { kr260Switch 2 }
+
+krPortEntry OBJECT-TYPE
+    SYNTAX KrPortEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "One switch port row."
+    INDEX { krPortIndex }
+    ::= { krPortTable 1 }
+
+KrPortEntry ::= SEQUENCE {
+    krPortName OCTET STRING (SIZE (0..64)),
+    krPortLink INTEGER,
+    krPortRxGoodPackets Counter64,
+    krPortRxBadPackets Counter64,
+    krPortRxGoodBytes Counter64,
+    krPortRxBadBytes Counter64,
+    krPortTxGoodPackets Counter64,
+    krPortTxBadPackets Counter64,
+    krPortTxGoodBytes Counter64,
+    krPortTxBadBytes Counter64,
+    krPortIndex Integer32
+}
+
+krPortName OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (0..64))
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Port name. Rows 1 GEM0 right upper, 2 GEM1 right lower, 3 PL0 left upper, 4 PL1 left lower, 5 SFP, 6 CPU."
+    ::= { krPortEntry 1 }
+
+krPortLink OBJECT-TYPE
+    SYNTAX INTEGER { up(1), down(2) }
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Fabric link-enable status; CPU is a logical port. Physical status follows the 250 ms PHY poll."
+    ::= { krPortEntry 2 }
+
+krPortRxGoodPackets OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated RX GoodPackets. RX means toward the fabric; CPU RX is R5 to fabric. TX means away from fabric. Bytes exclude FCS, preamble and IFG. See docs/statistics.md for MAC-specific error and length semantics. These are project counters, not IF-MIB unicast or discard counters."
+    ::= { krPortEntry 3 }
+
+krPortRxBadPackets OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated RX BadPackets. RX means toward the fabric; CPU RX is R5 to fabric. TX means away from fabric. Bytes exclude FCS, preamble and IFG. See docs/statistics.md for MAC-specific error and length semantics. These are project counters, not IF-MIB unicast or discard counters."
+    ::= { krPortEntry 4 }
+
+krPortRxGoodBytes OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated RX GoodBytes. RX means toward the fabric; CPU RX is R5 to fabric. TX means away from fabric. Bytes exclude FCS, preamble and IFG. See docs/statistics.md for MAC-specific error and length semantics. These are project counters, not IF-MIB unicast or discard counters."
+    ::= { krPortEntry 5 }
+
+krPortRxBadBytes OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated RX BadBytes. RX means toward the fabric; CPU RX is R5 to fabric. TX means away from fabric. Bytes exclude FCS, preamble and IFG. See docs/statistics.md for MAC-specific error and length semantics. These are project counters, not IF-MIB unicast or discard counters."
+    ::= { krPortEntry 6 }
+
+krPortTxGoodPackets OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated TX GoodPackets. RX means toward the fabric; CPU RX is R5 to fabric. TX means away from fabric. Bytes exclude FCS, preamble and IFG. See docs/statistics.md for MAC-specific error and length semantics. These are project counters, not IF-MIB unicast or discard counters."
+    ::= { krPortEntry 7 }
+
+krPortTxBadPackets OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated TX BadPackets. RX means toward the fabric; CPU RX is R5 to fabric. TX means away from fabric. Bytes exclude FCS, preamble and IFG. See docs/statistics.md for MAC-specific error and length semantics. These are project counters, not IF-MIB unicast or discard counters."
+    ::= { krPortEntry 8 }
+
+krPortTxGoodBytes OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated TX GoodBytes. RX means toward the fabric; CPU RX is R5 to fabric. TX means away from fabric. Bytes exclude FCS, preamble and IFG. See docs/statistics.md for MAC-specific error and length semantics. These are project counters, not IF-MIB unicast or discard counters."
+    ::= { krPortEntry 9 }
+
+krPortTxBadBytes OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated TX BadBytes. RX means toward the fabric; CPU RX is R5 to fabric. TX means away from fabric. Bytes exclude FCS, preamble and IFG. See docs/statistics.md for MAC-specific error and length semantics. These are project counters, not IF-MIB unicast or discard counters."
+    ::= { krPortEntry 10 }
+
+krPortIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..6)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "One-based row index; encoded in the instance OID."
+    ::= { krPortEntry 11 }
+
+krDdrTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF KrDdrEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Present only in STATS_DDR builds."
+    ::= { kr260Switch 3 }
+
+krDdrEntry OBJECT-TYPE
+    SYNTAX KrDdrEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "One DDR direction row."
+    INDEX { krDdrIndex }
+    ::= { krDdrTable 1 }
+
+KrDdrEntry ::= SEQUENCE {
+    krDdrName OCTET STRING (SIZE (0..64)),
+    krDdrBytes Counter64,
+    krDdrBursts Counter64,
+    krDdrLatencyCycles Counter64,
+    krDdrMaxLatencyCycles Gauge32,
+    krDdrAddressStallCycles Counter64,
+    krDdrDataStallCycles Counter64,
+    krDdrErrorResponses Counter64,
+    krDdrOutstandingCycles Counter64,
+    krDdrIndex Integer32
+}
+
+krDdrName OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (0..64))
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Rows 1 physical ingress write, 2 physical egress read, 3 CPU write, 4 CPU read. HP0 fabric packet pool, excluding HP1 AXI DMA."
+    ::= { krDdrEntry 1 }
+
+krDdrBytes OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accepted bytes: write byte strobes; read full 16-byte beats."
+    ::= { krDdrEntry 2 }
+
+krDdrBursts OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Completed AXI bursts."
+    ::= { krDdrEntry 3 }
+
+krDdrLatencyCycles OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Sum of completed burst latencies, accepted address through response inclusive, at 100 MHz. Divide delta by completed-burst delta for mean latency."
+    ::= { krDdrEntry 4 }
+
+krDdrMaxLatencyCycles OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Maximum completed burst latency since R5 restart, in 100 MHz cycles. This is a maximum, not an additive counter."
+    ::= { krDdrEntry 5 }
+
+krDdrAddressStallCycles OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Address valid without ready, in 100 MHz cycles."
+    ::= { krDdrEntry 6 }
+
+krDdrDataStallCycles OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Data valid without ready, in 100 MHz cycles."
+    ::= { krDdrEntry 7 }
+
+krDdrErrorResponses OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "AXI error responses."
+    ::= { krDdrEntry 8 }
+
+krDdrOutstandingCycles OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Cycles with an outstanding burst, at 100 MHz."
+    ::= { krDdrEntry 9 }
+
+krDdrIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..4)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "One-based row index; encoded in the instance OID."
+    ::= { krDdrEntry 10 }
+
+krDebugTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF KrDebugEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Present only in STATS_DEBUG builds. Rows 1-5 physical ingress stalls, 6-10 physical egress stalls, 11 CPU-to-fabric stall, 12 fabric-to-CPU stall, 13 CPU allocation wait, 14 CPU enqueue wait, 15 link flush busy, 16 combined AXI error responses."
+    ::= { kr260Switch 4 }
+
+krDebugEntry OBJECT-TYPE
+    SYNTAX KrDebugEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "One debug event row."
+    INDEX { krDebugIndex }
+    ::= { krDebugTable 1 }
+
+KrDebugEntry ::= SEQUENCE {
+    krDebugName OCTET STRING (SIZE (0..64)),
+    krDebugCount Counter64,
+    krDebugIndex Integer32
+}
+
+krDebugName OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (0..64))
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Event label."
+    ::= { krDebugEntry 1 }
+
+krDebugCount OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated event count. Stall and wait events count cycles in their source clock domain, not packets. See statistics.md."
+    ::= { krDebugEntry 2 }
+
+krDebugIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..16)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "One-based row index; encoded in the instance OID."
+    ::= { krDebugEntry 3 }
+
+krSensorValidMask OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Validity of this sample: bit 0 PS AMS, bit 1 PL AMS, bit 2 INA260. Values whose bit is clear must not be used; they may be zero or retained."
+    ::= { krSensors 1 }
+
+krSensorErrors OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Accumulated sensor acquisition errors."
+    ::= { krSensors 2 }
+
+krSensorAgeMs OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "milliseconds"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Age of sensor task timestamp; does not prove every sensor succeeded. 4294967295 means unknown or saturated."
+    ::= { krSensors 3 }
+
+krPsTemperature OBJECT-TYPE
+    SYNTAX Integer32
+    UNITS "millidegrees Celsius"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "PS temperature; valid-mask bit 0."
+    ::= { krSensors 4 }
+
+krPlTemperature OBJECT-TYPE
+    SYNTAX Integer32
+    UNITS "millidegrees Celsius"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "PL temperature; valid-mask bit 1."
+    ::= { krSensors 5 }
+
+krPsLpVoltage OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "microvolts"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "AMS supply voltage; valid-mask bit 0."
+    ::= { krSensors 6 }
+
+krPsFpVoltage OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "microvolts"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "AMS supply voltage; valid-mask bit 0."
+    ::= { krSensors 7 }
+
+krPsAuxVoltage OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "microvolts"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "AMS supply voltage; valid-mask bit 0."
+    ::= { krSensors 8 }
+
+krPlIntVoltage OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "microvolts"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "AMS supply voltage; valid-mask bit 1."
+    ::= { krSensors 9 }
+
+krPlAuxVoltage OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "microvolts"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "AMS supply voltage; valid-mask bit 1."
+    ::= { krSensors 10 }
+
+krPlBramVoltage OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "microvolts"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "AMS supply voltage; valid-mask bit 1."
+    ::= { krSensors 11 }
+
+krSomCurrent OBJECT-TYPE
+    SYNTAX Integer32
+    UNITS "microamperes"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "INA260 signed SOM supply current; valid-mask bit 2."
+    ::= { krSensors 12 }
+
+krSomVoltage OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "microvolts"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "INA260 SOM supply voltage; valid-mask bit 2."
+    ::= { krSensors 13 }
+
+krSomPower OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "microwatts"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "INA260 SOM supply power, not whole carrier-board power; valid-mask bit 2."
+    ::= { krSensors 14 }
+
+END

@@ -1,3 +1,7 @@
+../rtl/stats/stats_bank.sv
+../rtl/stats/stats_axis.sv
+../rtl/stats/stats_gem.sv
+../rtl/stats/stats_axi.sv
 ../rtl/buf_mgr/buf_mgr_pkg.sv
 ../rtl/mac_table/mac_table_pkg.sv
 ../rtl/dma/axi_dma_pkg.sv

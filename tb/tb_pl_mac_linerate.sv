@@ -26,6 +26,7 @@ module tb_pl_mac_linerate;
   always #4.0 gtx_clk = ~gtx_clk;      // 125 MHz
   logic rst_n = 0, axis_rst_n = 0;
 
+  logic inject_bad=0;
   wire [7:0] gmii_txd; wire gmii_tx_en, gmii_tx_er;
 
   // switch ingress stream (from MAC) and egress stream (to MAC)
@@ -37,9 +38,21 @@ module tb_pl_mac_linerate;
   logic [31:0] axi_wdata; logic [3:0] axi_wstrb; logic [17:0] axi_araddr;
   wire axi_awready, axi_wready, axi_bvalid, axi_arready, axi_rvalid; wire [1:0] axi_bresp, axi_rresp; wire [31:0] axi_rdata;
 
+  logic stats_request=0;
+  logic [3:0] stats_select=0;
+  wire stats_ack;
+  wire [31:0] stats_value;
+  task automatic stats_check(input integer index, expected);
+    @(negedge axis_clk); stats_select=index; stats_request=1;
+    wait(stats_ack); #1;
+    if (stats_value !== expected) $fatal(1,"MAC stat %0d = %0d expected %0d",index,stats_value,expected);
+    @(negedge axis_clk); stats_request=0;
+    wait(!stats_ack); repeat(4) @(posedge axis_clk);
+  endtask
   pl_gmii_mac_top dut (
+    .stats_request(stats_request),.stats_select(stats_select),.stats_ack(stats_ack),.stats_value(stats_value),
     .clk (clk), .rst_n (rst_n), .axis_clk (axis_clk), .axis_rst_n (axis_rst_n), .gtx_clk (gtx_clk), .clk_en (1'b1),
-    .gmii_rxd (gmii_txd), .gmii_rx_dv (gmii_tx_en), .gmii_rx_er (gmii_tx_er),      // loopback
+    .gmii_rxd (gmii_txd), .gmii_rx_dv (gmii_tx_en), .gmii_rx_er (gmii_tx_er | inject_bad),      // loopback
     .gmii_txd (gmii_txd), .gmii_tx_en (gmii_tx_en), .gmii_tx_er (gmii_tx_er),
     .m_axis_tdata (in_tdata), .m_axis_tkeep (in_tkeep), .m_axis_tvalid (in_tvalid), .m_axis_tlast (in_tlast),
     .m_axis_tuser (in_tuser), .m_axis_tready (in_tready),
@@ -158,8 +171,20 @@ module tb_pl_mac_linerate;
     run_case("A 12 x 1518 B", 12, 1518, 16);
     run_case("B 24 x 64 B", 24, 64, 16);
     run_case("C 60 x 100 B", 60, 100, 16);   // many descriptor-ring wraps
+    repeat(100) @(posedge gtx_clk);
+    stats_check(0,96); stats_check(4,96);
+    stats_check(2,12*1518+24*64+60*100); stats_check(6,12*1518+24*64+60*100);
+    stats_check(1,0); stats_check(3,0); stats_check(5,0); stats_check(7,0);
+    stats_check(0,0); stats_check(2,0);
+    inject_bad=1;
+    send_frames(1,64);
+    repeat(2000) @(posedge gtx_clk);
+    inject_bad=0;
+    stats_check(0,0); stats_check(1,1); stats_check(2,0); stats_check(3,64);
+    stats_check(4,1); stats_check(6,64); stats_check(1,0); stats_check(3,0);
+    if (errors) $fatal(1,"MAC line rate failures");
     $display("%s: errors=%0d", errors == 0 ? "PASS" : "FAIL", errors);
     $finish;
   end
-  initial begin #40_000_000; $display("FAIL: global timeout (rx_count=%0d)", rx_count); $finish; end
+  initial begin #40_000_000; $fatal(1,"global timeout (rx_count=%0d)", rx_count); end
 endmodule

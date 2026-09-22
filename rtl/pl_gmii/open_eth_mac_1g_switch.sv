@@ -42,6 +42,11 @@
 // register subset are intentionally compatible with the no-checksum-offload
 // configuration of AMD AXI Ethernet.
 module open_eth_mac_1g_switch (
+  input wire stats_request,
+  input wire [3:0] stats_select,
+  output wire stats_ack,
+  output wire [31:0] stats_value,
+
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axis_clk CLK" *)
     (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME axis_clk, ASSOCIATED_BUSIF s_axis_txd:s_axis_txc:m_axis_rxd:m_axis_rxs, ASSOCIATED_RESET axi_txd_arstn:axi_txc_arstn:axi_rxd_arstn:axi_rxs_arstn, FREQ_HZ 150000000" *)
     input  wire axis_clk,
@@ -964,4 +969,28 @@ always @(posedge axis_clk) begin
     end
 end
 
+// Standard per-port read/clear statistics, independent of legacy registers.
+wire [7:0][31:0] stats_inc;
+wire stats_rx_done = gtx_rx_resetn && clk_en && rx_state == RX_FRAME && !gmii_rx_dv;
+reg [26:0] stats_rx_length;
+always @(posedge gtx_clk) begin
+  if (!gtx_rx_resetn) stats_rx_length <= 0;
+  else if (clk_en) begin
+    if (rx_state != RX_FRAME || !gmii_rx_dv) stats_rx_length <= 0;
+    else if (!(&stats_rx_length)) stats_rx_length <= stats_rx_length + 1'b1;
+  end
+end
+wire stats_rx_good = rx_accepted && rx_store_frame && !rx_error_seen && rx_crc == CRC_RESIDUE &&
+                    stats_rx_length >= RX_MIN_WIRE_BYTES && stats_rx_length <= RX_MAX_DMA_BYTES + 4;
+wire [31:0] stats_rx_bytes = stats_rx_length >= 4 ? 32'(stats_rx_length)-4 : 32'(stats_rx_length);
+assign stats_inc[0] = 32'(stats_rx_done && stats_rx_good);
+assign stats_inc[1] = 32'(stats_rx_done && !stats_rx_good);
+assign stats_inc[2] = stats_rx_done && stats_rx_good ? stats_rx_bytes : 0;
+assign stats_inc[3] = stats_rx_done && !stats_rx_good ? stats_rx_bytes : 0;
+assign stats_inc[4] = 32'(gtx_tx_resetn && clk_en && tx_state == TX_FCS3);
+assign stats_inc[5] = 0; // Store/forward TX cannot underrun; rejects never reach GMII.
+assign stats_inc[6] = stats_inc[4] != 0 ? (tx_length_gmii < 60 ? 32'd60 : 32'(tx_length_gmii)) : 0;
+assign stats_inc[7] = 0;
+stats_bank port_statistics (.clk(gtx_clk),.rst_n(gtx_rx_resetn && gtx_tx_resetn),
+ .increment(stats_inc),.request(stats_request),.select(stats_select),.ack(stats_ack),.value(stats_value));
 endmodule

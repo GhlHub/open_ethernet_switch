@@ -22,6 +22,16 @@ foreach x {sfp_pcs/ip/gth_sfp_ip.xci sfp_pcs/ip/sfp_pcs_clk_gen_ip.xci pl_gmii/i
 
 set_property board_part xilinx.com:kr260_som:part0:2.0 [current_project]
 set_property target_language Verilog [current_project]
+# Optional instrumentation. Standard packet counters are always present.
+set stats_generics {}
+foreach option {STATS_DDR STATS_DEBUG} {
+  set value 0
+  if {[info exists ::env($option)]} {set value $::env($option)}
+  if {$value ni {0 1}} {error "$option must be 0 or 1"}
+  lappend stats_generics "$option=$value"
+}
+set_property generic $stats_generics [current_fileset]
+
 set_property XPM_LIBRARIES {XPM_MEMORY XPM_CDC} [current_project]
 
 # ---- RTL (synthesizable sources only: no *_sim_model.sv) ----

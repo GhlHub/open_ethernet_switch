@@ -28,7 +28,7 @@ module kr260_pl_top
   import buf_mgr_pkg::*;
   import axi_dma_pkg::*;
   import mac_table_pkg::*;
-(
+#(parameter bit STATS_DDR=0, STATS_DEBUG=0) (
   // ---- from the PS block design ----
   input  logic ps_rst_n,          // async, e.g. pl_resetn0
   input  logic freerun_clk,       // 50 MHz, GTH reset controller / DRP
@@ -358,7 +358,11 @@ module kr260_pl_top
   end
   logic [15:0] sfp_sb_status;
   logic        sfp_sb_force, sfp_sb_clr_fault, sfp_sb_clr_removed, sfp_sb_clr_lockout;
-  rx_diag_regs u_rx_diag (
+  wire stats_request, stats_ack;
+  wire [7:0] stats_index;
+  wire [31:0] stats_value;
+  rx_diag_regs #(.STATS_DDR(STATS_DDR),.STATS_DEBUG(STATS_DEBUG)) u_rx_diag (
+    .stats_request(stats_request),.stats_index(stats_index),.stats_ack(stats_ack),.stats_value(stats_value),
     .clk (axis_clk), .rst_n (axis_rst_n),
     .s_axi_awaddr (diag_s_axi_awaddr), .s_axi_awvalid (diag_s_axi_awvalid), .s_axi_awready (diag_s_axi_awready),
     .s_axi_wdata (diag_s_axi_wdata), .s_axi_wstrb (diag_s_axi_wstrb), .s_axi_wvalid (diag_s_axi_wvalid), .s_axi_wready (diag_s_axi_wready),
@@ -518,11 +522,13 @@ module kr260_pl_top
   // the switch
   // ---------------------------------------------------------------------
   switch_top #(
+    .STATS_DDR(STATS_DDR),.STATS_DEBUG(STATS_DEBUG),
     // PCS clock is 125 MHz: 10 ms 1000BASE-X restart/acknowledge/idle timers.
     .SFP_AN_BREAK_LINK_CYCLES(1_250_000),
     .SFP_AN_LINK_TIMER_CYCLES(1_250_000),
     .SFP_AN_IDLE_DETECT_CYCLES(1_250_000)
   ) u_switch (
+    .stats_request(stats_request),.stats_index(stats_index),.stats_ack(stats_ack),.stats_value(stats_value),
     .clk (fab_clk), .rst_n (fab_rst_n),
     .gtx_clk_pl0 (gtx_clk_pl0), .gtx_clk_pl1 (gtx_clk_pl1),
     .gtx_clk_sfp (gtx_clk_sfp), .gtx_rst_n_sfp (gtx_rst_n_sfp),
