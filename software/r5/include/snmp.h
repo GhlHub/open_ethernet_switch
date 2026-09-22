@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "statistics.h"
+#include "ports.h"
 /* RFC 5612 example PEN: replace for deployment outside this lab. */
 #ifndef SNMP_ENTERPRISE
 #define SNMP_ENTERPRISE 32473u
@@ -23,7 +24,7 @@ struct snmp_object {
 struct snmp_mib { struct snmp_object object[SNMP_OBJECT_MAX]; size_t count; };
 void snmp_mib_build(struct snmp_mib *, const struct statistics_snapshot *,
                     const struct sensor_snapshot *, uint64_t now, uint32_t hz,
-                    uint32_t uptime_cs, uint32_t links);
+                    uint32_t uptime_cs, uint32_t links, const struct port_snapshot *ports);
 /* Pure, bounded BER engine; returns zero for discarded requests. */
 size_t snmp_respond(const uint8_t *, size_t, uint8_t *, size_t,
                     const char *community, const struct snmp_mib *);

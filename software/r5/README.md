@@ -222,3 +222,8 @@ The firmware serves `/configuration` and `/statistics` on HTTP port 80 without
 login. Configure the five physical ports and view all available statistics and
 sensors; statistics refresh every second. Port settings reset on reboot.
 See [web interface](../../docs/web-interface.md) for API, behavior, and tests.
+
+GEM1 (right lower, RGMII) supports 10/100/1000 full duplex with selectable
+PHY advertisement on the web page. GEM0 (right upper, PS SGMII) remains
+1000-only due to the PS interface restriction. Both interfaces report
+physical speed via HTTP and SNMP. See [PS speeds](../../docs/ps-ethernet-speeds.md).

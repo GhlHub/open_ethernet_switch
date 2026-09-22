@@ -121,6 +121,12 @@ class SnmpTests(unittest.TestCase):
         vals=decode(respond(request(names)))[3]
         self.assertEqual([v[2] for v in vals],[ROOT,100,FLAGS])
 
+    def test_port_speeds_and_advertisement(self):
+        names=[ROOT+(2,1,12,i) for i in range(1,7)] + [ROOT+(2,1,13,i) for i in range(1,7)]
+        vals=decode(respond(request(names)))[3]
+        self.assertEqual([v[2] for v in vals],[1000,100,0,0,1000,0,4,3,0,0,0,0])
+        self.assertEqual([v[1] for v in vals],[0x42]*12)
+
     def test_timeout_classes(self):
         vals=decode(respond(request([ROOT+(1,i,0) for i in (6,10,11)])))[3]
         self.assertEqual([v[1] for v in vals],[0x41]*3)
@@ -151,7 +157,7 @@ class SnmpTests(unittest.TestCase):
             self.assertGreater(val[0],cursor)
             cursor=val[0]
             walk.append(val)
-        expected=188+(100 if FLAGS&2 else 0)+(64 if FLAGS&4 else 0)
+        expected=200+(100 if FLAGS&2 else 0)+(64 if FLAGS&4 else 0)
         self.assertEqual(len(walk),expected)
         for group,bit in [(3,2),(4,4)]:
             self.assertEqual(any(v[0][:9]==ROOT+(group,) for v in walk), bool(FLAGS&bit))

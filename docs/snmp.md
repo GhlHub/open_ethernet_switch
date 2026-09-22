@@ -222,3 +222,11 @@ timeout was observed before these location diagnostics were deployed; its
 location cannot be recovered retrospectively.
 See [live counter observations](verification.md#2026-09-21-live-snmp-counter-observation)
 for packet, latency, backpressure and sensor results and their limits.
+
+## Negotiated PS Ethernet speeds
+
+Port-table column 12 reports supported physical link speed in Mb/s (0, 10,
+100, 1000); column 13 reports requested PS advertisement bits (1=10FD,
+2=100FD, 4=1000FD; other ports return zero). Column 11 remains the inaccessible
+index. See [PS speed selection](ps-ethernet-speeds.md). All-counter builds now
+expose 364 total objects, including four standard system objects.

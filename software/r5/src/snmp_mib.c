@@ -40,7 +40,7 @@ static uint32_t age(uint64_t now,uint64_t then,uint32_t hz)
 }
 void snmp_mib_build(struct snmp_mib *m,const struct statistics_snapshot *s,
                     const struct sensor_snapshot *v,uint64_t now,uint32_t hz,
-                    uint32_t uptime_cs,uint32_t links)
+                    uint32_t uptime_cs,uint32_t links,const struct port_snapshot *port_state)
 {
     static const char *ports[]={"GEM0 right upper","GEM1 right lower",
         "PL0 left upper","PL1 left lower","SFP","CPU"};
@@ -76,6 +76,11 @@ void snmp_mib_build(struct snmp_mib *m,const struct statistics_snapshot *s,
         add(m,2,col,row+1,col==1?STRING:col==2?INTEGER:COUNTER64,
             col==1?0:col==2?((links>>row)&1?1:2):s->port[row][col-3],
             col==1?ports[row]:NULL);
+/* Column 11 is the existing not-accessible row index; preserve its OID. */
+    for (unsigned row=0;row<6;row++)
+        add(m,2,12,row+1,GAUGE,port_state->speed_mbps[row],NULL);
+    for (unsigned row=0;row<6;row++)
+        add(m,2,13,row+1,GAUGE,row<2?port_state->advertise[row]:0,NULL);
 #if STATS_DDR
     for (unsigned col=1;col<=9;col++) for (unsigned row=0;row<4;row++)
         add(m,3,col,row+1,col==1?STRING:col==5?GAUGE:COUNTER64,

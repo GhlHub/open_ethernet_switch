@@ -42,6 +42,7 @@ hardware validation remain pending.**
 - [Statistics and environmental monitoring](docs/statistics.md)
 - [SNMP counter and sensor access](docs/snmp.md)
 - [Web port configuration and live statistics](docs/web-interface.md)
+- [PS Ethernet speeds and full-duplex advertisement](docs/ps-ethernet-speeds.md)
 - [R5 FreeRTOS startup, timers and networking](software/r5/README.md)
 - [Source inventory and development backlog](docs/inventory.md)
 - [Board wiring, clock plan, and integration gaps](docs/board-integration.md)

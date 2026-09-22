@@ -12,9 +12,8 @@
 #define PCS_STATUS 0x20
 #define CPU_PORT_MASK 0x20u
 #define PHYSICAL_PORT_MASK 0x1fu
-static inline uint32_t mmio_read(uintptr_t p) { return *(volatile uint32_t *)p; }
-static inline void barrier(void) { __asm volatile("dsb sy" ::: "memory"); }
-static inline void mmio_write(uintptr_t p, uint32_t v) { *(volatile uint32_t *)p=v; barrier(); }
+uint32_t mmio_read(uintptr_t);
+void mmio_write(uintptr_t,uint32_t);
 void board_console_init(void);
 void board_init(void);
 uint64_t board_timestamp(void);

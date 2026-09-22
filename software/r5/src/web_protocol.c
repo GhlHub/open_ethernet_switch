@@ -27,7 +27,7 @@ int web_parse(const char *data,size_t length,struct web_request *out)
         if (!strcmp(p,"content-length")) {
             if (seen++ || !isdigit((unsigned char)*value)) return -1;
             char *tail; unsigned long n=strtoul(value,&tail,10);
-            if (*tail || n>32) return -1;
+            if (*tail || n>64) return -1;
             body=(unsigned)n;
         }
         if (!strcmp(p,"x-kr260-request") && !strcmp(value,"1")) marker=1;
@@ -36,12 +36,28 @@ int web_parse(const char *data,size_t length,struct web_request *out)
     if (length<header+body) return 0;
     if (length!=header+body) return -1;
     if (!strcmp(r.method,"POST")) {
-        if (!marker || !seen || body<6 || strncmp(buf+header,"mask=",5)) return -1;
-        char *tail; const char *v=buf+header+5;
-        if (!isdigit((unsigned char)*v)) return -1;
-        unsigned long mask=strtoul(v,&tail,10);
-        if (*tail || mask>31) return -1;
-        r.mask=(unsigned)mask;
+        if (!marker || !seen || !body) return -1;
+        unsigned fields=0;
+        for (char *p=buf+header;*p;) {
+            char *eq=strchr(p,'='); if (!eq) return -1;
+            *eq=0; unsigned field;
+            if (!strcmp(p,"mask")) field=1;
+            else if (!strcmp(p,"adv0")) field=2;
+            else if (!strcmp(p,"adv1")) field=4;
+            else return -1;
+            if (fields&field) return -1;
+            fields|=field;
+            char *value=eq+1, *tail;
+            if (!isdigit((unsigned char)*value)) return -1;
+            unsigned long n=strtoul(value,&tail,10);
+            if (*tail && *tail!='&') return -1;
+            if (field==1) {if (n>31) return -1; r.mask=(unsigned)n;}
+            else {if (!n || n>7) return -1;r.advertise[field==2?0:1]=(uint8_t)n;}
+            if (*tail=='&' && !tail[1]) return -1;
+            p=*tail?tail+1:tail;
+        }
+        if (fields!=1 && fields!=7) return -1;
+        if (fields==7 && r.advertise[0]!=4) return -1;
     } else if (body) return -1;
     *out=r; return 1;
 }
@@ -65,13 +81,14 @@ static void values(struct writer *w,const uint64_t *v,unsigned rows,unsigned col
     put(w,"]");
 }
 size_t web_stats(char *out,size_t size,const struct statistics_snapshot *s,
-                 const struct sensor_snapshot *v,uint32_t hz,uint64_t now)
+                 const struct sensor_snapshot *v,uint32_t hz,uint64_t now,const struct port_snapshot *ports)
 {
     struct writer w={out,size,0,0};
     put(&w,"{\"available\":%s,\"capabilities\":%u,\"polls\":%u,\"late_polls\":%u,\"saturated_reads\":%u,\"read_timeouts\":%u,\"release_timeouts\":%u,\"response_timeouts\":%u,\"last_release_index\":%u,\"last_release_target_index\":%u,\"last_response_index\":%u,\"age_ms\":%llu,\"ports\":",
         s->available?"true":"false",s->capabilities,s->polls,s->late_polls,s->saturated_reads,s->read_timeouts,s->mailbox_release_timeouts,s->snapshot_response_timeouts,s->last_release_index,s->last_release_target_index,s->last_response_index,
         (unsigned long long)((hz && s->timestamp && now>=s->timestamp)?(now-s->timestamp)*1000/hz:UINT32_MAX));
     values(&w,&s->port[0][0],6,8);
+    put(&w,",\"speed_mbps\":[%u,%u,%u,%u,%u,%u]",ports->speed_mbps[0],ports->speed_mbps[1],ports->speed_mbps[2],ports->speed_mbps[3],ports->speed_mbps[4],ports->speed_mbps[5]);
 #if STATS_DDR
     put(&w,",\"ddr\":"); values(&w,&s->ddr[0][0],4,8);
 #endif
@@ -85,5 +102,12 @@ size_t web_stats(char *out,size_t size,const struct statistics_snapshot *s,
     put(&w,"],\"sensors\":{\"valid_mask\":%u,\"errors\":%u,\"age_ms\":%llu,\"temperature_mc\":[%ld,%ld],\"voltage_uv\":[%u,%u,%u,%u,%u,%u],\"som_current_ua\":%ld,\"som_voltage_uv\":%u,\"som_power_uw\":%u}}",
         v->valid_mask,v->errors,(unsigned long long)((hz && v->timestamp && now>=v->timestamp)?(now-v->timestamp)*1000/hz:UINT32_MAX),
         (long)v->temperature_mc[0],(long)v->temperature_mc[1],v->voltage_uv[0][0],v->voltage_uv[0][1],v->voltage_uv[0][2],v->voltage_uv[1][0],v->voltage_uv[1][1],v->voltage_uv[1][2],(long)v->som_current_ua,v->som_voltage_uv,v->som_power_uw);
+    return w.failed?0:w.used;
+}
+
+size_t web_ports(char *out,size_t size,const struct port_snapshot *p)
+{
+    struct writer w={out,size,0,0};
+    put(&w,"{\"admin\":%u,\"physical\":%u,\"forwarding\":%u,\"advertise\":[%u,%u],\"applied\":[%u,%u],\"speed_mbps\":[%u,%u,%u,%u,%u,%u]}",p->admin,p->physical,p->forwarding,p->advertise[0],p->advertise[1],p->applied[0],p->applied[1],p->speed_mbps[0],p->speed_mbps[1],p->speed_mbps[2],p->speed_mbps[3],p->speed_mbps[4],p->speed_mbps[5]);
     return w.failed?0:w.used;
 }

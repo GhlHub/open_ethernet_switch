@@ -35,7 +35,7 @@
 
 `timescale 1ns/1ps
 
-module tb_ps_gem_axis_bridge;
+module tb_ps_gem_axis_bridge #(parameter integer GEM_HALF_NS = 4);
 
   localparam int RX_FIFO_WORDS = 128; // gem_rx_w_to_axis default (16-bit words)
   localparam int START_WORDS   = 128; // axis_to_gem_tx_r default
@@ -46,7 +46,7 @@ module tb_ps_gem_axis_bridge;
 
   logic gem_clk = 0;
   logic gem_rst_n = 0;
-  always #4 gem_clk = ~gem_clk; // 125 MHz-equivalent (GEM side)
+  always #(GEM_HALF_NS) gem_clk = ~gem_clk; // 125 MHz-equivalent (GEM side)
 
   // ---- RX (GEM push) side signals, gem_clk domain ----
   logic [7:0]  rx_w_data;
@@ -390,14 +390,14 @@ module tb_ps_gem_axis_bridge;
     tx_r_rd        = 1'b0;
     dma_tx_end_tog = 1'b0;
 
-    repeat (5) @(posedge clk);
+    repeat ((5)*((GEM_HALF_NS+3)/4)) @(posedge clk);
     rst_n = 1'b1;
     repeat (5) @(posedge gem_clk);
     gem_rst_n = 1'b1;
     // xpm_fifo_async (SYNTHESIS build) reports busy for a while after reset
     // and drops writes meanwhile; the behavioral model does not, so this
     // wait costs nothing there
-    repeat (100) @(posedge clk);
+    repeat ((100)*((GEM_HALF_NS+3)/4)) @(posedge clk);
 
     // ---- test A: normal RX push, random downstream backpressure ----
     capture_axis_reset();
@@ -408,7 +408,7 @@ module tb_ps_gem_axis_bridge;
       for (int i = 0; i < 40; i++) data[i] = byte'(i + 8'h10);
       gem_push_frame(data, 1'b0);
     end
-    repeat (40) @(posedge clk); // let the CDC FIFO + packer drain
+    repeat ((40)*((GEM_HALF_NS+3)/4)) @(posedge clk); // let the CDC FIFO + packer drain
     bp_mode = 0;
 
     if (rxd_bytes.size() != 40) begin
@@ -460,7 +460,7 @@ module tb_ps_gem_axis_bridge;
     end
     // drain at full speed; the truncated frame must be closed as a bad one
     bp_mode = 2;
-    repeat (2 * RX_FIFO_WORDS + 60) @(posedge clk);
+    repeat ((2 * RX_FIFO_WORDS + 60)*((GEM_HALF_NS+3)/4)) @(posedge clk);
     bp_mode = 0;
     if (rxd_tlast_idx < 0 || rxd_tuser_at_tlast !== 1'b1 || rxd_bytes.size() < 64 || rxd_bytes[rxd_bytes.size()-1] !== 8'h00) begin
       $display("FAIL: testB truncated frame not closed as a bad frame (tlast_idx=%0d tuser=%0b bytes=%0d)", rxd_tlast_idx, rxd_tuser_at_tlast, rxd_bytes.size());
@@ -480,7 +480,7 @@ module tb_ps_gem_axis_bridge;
       for (int i = 0; i < 20; i++) data[i] = byte'(8'hC0 + i);
       gem_push_frame(data, 1'b0);
     end
-    repeat (40) @(posedge clk);
+    repeat ((40)*((GEM_HALF_NS+3)/4)) @(posedge clk);
     bp_mode = 0;
     begin
       bit ok;
@@ -513,7 +513,7 @@ module tb_ps_gem_axis_bridge;
         rx_w_flush <= 1'b0;
       end
     join
-    repeat (30) @(posedge clk);
+    repeat ((30)*((GEM_HALF_NS+3)/4)) @(posedge clk);
     if (rxd_tlast_idx < 0 || rxd_tuser_at_tlast !== 1'b1 || rxd_bytes.size() > 8 || rxd_bytes[rxd_bytes.size()-1] !== 8'h00) begin
       $display("FAIL: testC flushed frame not closed as a bad frame (tlast_idx=%0d tuser=%0b bytes=%0d)", rxd_tlast_idx, rxd_tuser_at_tlast, rxd_bytes.size());
       errors++;
@@ -527,7 +527,7 @@ module tb_ps_gem_axis_bridge;
       for (int i = 0; i < 16; i++) data[i] = byte'(8'h30 + i);
       gem_push_frame(data, 1'b0);
     end
-    repeat (40) @(posedge clk);
+    repeat ((40)*((GEM_HALF_NS+3)/4)) @(posedge clk);
     bp_mode = 0;
     begin
       bit ok;
@@ -599,7 +599,7 @@ module tb_ps_gem_axis_bridge;
       fork
         begin
           drive_axis_slice(data, 0, 320);
-          repeat (600) @(posedge clk);  // upstream stalls; the GEM runs dry
+          repeat ((600)*((GEM_HALF_NS+3)/4)) @(posedge clk);  // upstream stalls; the GEM runs dry
           begin
             byte tail[];
             tail = new[80];
@@ -725,7 +725,7 @@ module tb_ps_gem_axis_bridge;
             gem_push_frame(data, 1'b0);
             begin
               for (int k = 0; k < 90; k++) begin
-                repeat (15) @(posedge clk);
+                repeat ((15)*((GEM_HALF_NS+3)/4)) @(posedge clk);
                 bp_mode = 0; @(posedge clk); bp_mode = 2;
               end
             end
@@ -734,7 +734,7 @@ module tb_ps_gem_axis_bridge;
           gem_push_frame(data, 1'b0);
         end
         bp_mode = 2;
-        repeat (400) @(posedge clk);
+        repeat ((400)*((GEM_HALF_NS+3)/4)) @(posedge clk);
         bp_mode = 0;
         begin
           bit ok;
@@ -756,7 +756,7 @@ module tb_ps_gem_axis_bridge;
   end
 
   initial begin
-    #2_000_000;
+    #(2_000_000*((GEM_HALF_NS+3)/4));
     $display("FAIL: global testbench timeout");
     $finish;
   end

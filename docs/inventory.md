@@ -1,5 +1,17 @@
 # Design inventory and pending development
 
+## 2026-09-22 PS Ethernet speed control
+
+R5 firmware now supports selectable 10/100/1000 full-duplex advertisement on
+GEM1 (right lower, RGMII), speed-aware MAC/clock changes after a port flush,
+and physical speed reporting in HTTP/SNMP. GEM0 remains 1000-only: the PS
+SGMII path does not support lower rates. The web page disables unsupported
+GEM0 options and validates that GEM1 retains at least one advertised speed.
+Sensor voltages and current display three decimal places and temperatures one.
+GEM1 passed full-MTU pings at all three speeds using the managed-switch
+uplink; GEM0 connects to the gigabit-only endpoint and SFP is disconnected.
+See [PS speed implementation and limitations](ps-ethernet-speeds.md).
+
 ## 2026-09-22 R5 web management
 
 `software/r5/src/web_task.c` serves HTTP port 80; `web_protocol.c` provides
@@ -11,7 +23,8 @@ MAC receive enables. Settings are volatile. See [web-interface.md](web-interface
 
 Deployed at `http://10.0.1.214/`. Browser polling, GEM0 disable/enable,
 management continuity over SFP, and restored endpoint pings passed. The user
-confirmed the SFP uplink and GEM0 endpoint connections are unchanged. All ports
+confirmed the SFP uplink and GEM0 endpoint connections were unchanged at
+that validation; the later speed tests above moved the uplink to GEM1. All ports
 were left enabled. Persistent configuration and automatic SFP startup recovery
 remain future work.
 

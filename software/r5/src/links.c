@@ -6,16 +6,28 @@
 #define GEM0 0xff0b0000UL
 #define GEM1 0xff0c0000UL
 static bool ps_ready[2];
-static uint8_t admin_mask=PHYSICAL_PORT_MASK, physical_mask, forwarding_mask;
-void board_ports_set(uint8_t mask)
+static struct port_snapshot ports={.admin=PHYSICAL_PORT_MASK,
+    .advertise={4,PS_ADV_ALL}};
+static uint16_t configured_speed[2];
+static struct link_policy link_state;
+void board_ports_snapshot(struct port_snapshot *out)
 {
-    taskENTER_CRITICAL(); admin_mask=mask & PHYSICAL_PORT_MASK; taskEXIT_CRITICAL();
+    taskENTER_CRITICAL(); *out=ports; taskEXIT_CRITICAL();
 }
+bool board_ports_configure(uint8_t mask,const uint8_t advertise[2])
+{
+    if (mask>PHYSICAL_PORT_MASK || (advertise &&
+        (advertise[0]!=4 || !advertise[1] || advertise[1]>7))) return false;
+    taskENTER_CRITICAL();
+    ports.admin=mask;
+    if (advertise) {ports.advertise[0]=advertise[0];ports.advertise[1]=advertise[1];}
+    taskEXIT_CRITICAL(); return true;
+}
+void board_ports_set(uint8_t mask) { (void)board_ports_configure(mask,NULL); }
 void board_ports_get(uint8_t *admin,uint8_t *physical,uint8_t *forwarding)
 {
-    taskENTER_CRITICAL();
-    *admin=admin_mask; *physical=physical_mask; *forwarding=forwarding_mask;
-    taskEXIT_CRITICAL();
+    struct port_snapshot p; board_ports_snapshot(&p);
+    *admin=p.admin; *physical=p.physical; *forwarding=p.forwarding;
 }
 /* Verified on the development carrier by DP83867 ID reads (2000:a231).
  * GEM1 responds at address 9, not the previously assumed address 8. */
@@ -40,7 +52,7 @@ static bool mmd(unsigned phy,unsigned reg,bool write,uint16_t *value)
     return phy_write(phy,13,0x1f) && phy_write(phy,14,(uint16_t)reg) &&
            phy_write(phy,13,0x401f) && mdio(phy,14,write,value);
 }
-static bool phy_init(unsigned port)
+static bool phy_init(unsigned port,unsigned advertise)
 {
     unsigned phy=ps_phy_addr[port]; uint16_t id1,id2,v;
     if (!mdio(phy,2,false,&id1) || !mdio(phy,3,false,&id2) ||
@@ -55,8 +67,9 @@ static bool phy_init(unsigned port)
         v=0x67; /* 1.75 ns TX / 2.00 ns RX; validate on carrier */
         if (!mmd(phy,0x86,true,&v)) return false;
     }
-    /* This first firmware supports only 1000BASE-T full duplex. */
-    if (!phy_write(phy,4,1) || !phy_write(phy,9,0x0200)) return false;
+    /* Never advertise half duplex or pause; copper AN remains enabled. */
+    if (!phy_write(phy,4,ps_phy_advertisement(advertise)) ||
+        !phy_write(phy,9,(advertise&4u)?0x0200u:0)) return false;
     return phy_write(phy,0,0x1200); /* enable and restart autonegotiation */
 }
 static void mac_init(void)
@@ -91,12 +104,12 @@ bool board_phy_mask(uint8_t *mask)
     uint8_t up=0;
     for (unsigned i=0;i<2;i++) {
         uint16_t status=0; unsigned phy=ps_phy_addr[i];
-        if (!ps_ready[i]) ps_ready[i]=phy_init(i);
-        bool valid=ps_ready[i] && mdio(phy,0x11,false,&status);
+                bool valid=ps_ready[i] && mdio(phy,0x11,false,&status);
         if (!valid) ps_ready[i]=false;
-        bool link=valid && (status&0xe400u)==0xa400u;
-        if (link) up |= 1u<<i;
-        mmio_write((i?GEM1:GEM0),(link && (admin_mask & (1u<<i)))?0x1cu:0x10u);
+        ports.speed_mbps[i]=valid?ps_phy_speed(status):0;
+        unsigned ability=ports.speed_mbps[i]==1000?4:ports.speed_mbps[i]==100?2:1;
+        if (!(ports.applied[i]&ability)) ports.speed_mbps[i]=0;
+        if (ports.speed_mbps[i]) up |= 1u<<i;
     }
     uint32_t calibrated=mmio_read(DIAG_BASE);
     for (unsigned i=0;i<2;i++) {
@@ -107,31 +120,62 @@ bool board_phy_mask(uint8_t *mask)
     }
     uint32_t sb=mmio_read(DIAG_BASE+4), pcs=mmio_read(DIAG_BASE+PCS_STATUS);
     if (!(sb&0x1fu) && (pcs&0xfu)==7u) up |= 0x10;
+    for (unsigned i=2;i<5;i++) ports.speed_mbps[i]=(up&(1u<<i))?1000:0;
     *mask=up; return true;
+}
+/* Single owner of all MAC/PHY changes. Called at 250 ms intervals. */
+static void link_poll(void)
+{
+    struct port_snapshot request; board_ports_snapshot(&request);
+    uint8_t observed; board_phy_mask(&observed);
+    uint8_t desired=observed & request.admin;
+    uint32_t now=(uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS);
+    bool busy=(mmio_read(DIAG_BASE+LINK_STATUS)&0x100u)!=0;
+    for (unsigned i=0;i<2;i++) {
+        bool change=!ps_ready[i] || ports.applied[i]!=request.advertise[i] ||
+                    configured_speed[i]!=ports.speed_mbps[i];
+        if (change) desired &= (uint8_t)~(1u<<i);
+        /* Quiesce before queue flush, clock changes or PHY restart. */
+        mmio_write(i?GEM1:GEM0,(desired&(1u<<i))?0x1cu:0x10u);
+    }
+    const uintptr_t macs[]={0x80040000UL,0x80080000UL,0x800c0000UL};
+    for (unsigned i=0;i<3;i++)
+        mmio_write(macs[i]+0x404,(request.admin&(1u<<(i+2)))?0x12000000u:0x02000000u);
+    if (!fabric_dma_healthy()) desired=0;
+    struct link_action a=link_update(&link_state,desired,busy,now);
+    if (a.clear) mmio_write(DIAG_BASE+LINK_CLR,a.clear);
+    if (a.set) mmio_write(DIAG_BASE+LINK_SET,a.set);
+    if (a.clear || a.set) xil_printf("Fabric physical links: %02x\r\n",link_state.enabled);
+    /* Wait at least one polling interval after removal, and for flush idle.
+     * Reconfigured ports cannot be added until a later poll. */
+    if (!busy && (uint32_t)(now-link_state.last_clear_ms)>=250u) {
+        for (unsigned i=0;i<2;i++) if (!(link_state.enabled&(1u<<i))) {
+            if (!ps_ready[i] || ports.applied[i]!=request.advertise[i]) {
+                ps_ready[i]=phy_init(i,request.advertise[i]);
+                if (ps_ready[i]) ports.applied[i]=request.advertise[i];
+                configured_speed[i]=0; ports.speed_mbps[i]=0;
+                observed &= (uint8_t)~(1u<<i);
+            } else if (configured_speed[i]!=ports.speed_mbps[i]) {
+                unsigned speed=ports.speed_mbps[i];
+                if (speed) {
+                    uintptr_t ref=0xff5e0050UL+i*4, gem=i?GEM1:GEM0;
+                    if (i) mmio_write(ref,ps_gem_clock(mmio_read(ref),speed));
+                    mmio_write(gem+4,ps_gem_config(mmio_read(gem+4),speed));
+                    xil_printf("GEM%u: %u Mb/s full duplex\r\n",i,speed);
+                }
+                configured_speed[i]=(uint16_t)speed;
+            }
+        }
+    }
+    ports.physical=observed; ports.forwarding=link_state.enabled;
+    network_link_changed(link_state.enabled!=0);
 }
 void board_link_task(void *unused)
 {
     (void)unused; mac_init();
-    struct link_policy state={0,0};
+    /* Divisors below assume the checked-in 1 GHz integer IOPLL preset. */
+    for (unsigned i=0;i<2;i++)
+        configASSERT((mmio_read(0xff5e0050UL+i*4)&0x003f3f07u)==0x00010800u);
     TickType_t wake=xTaskGetTickCount();
-    for (;;) {
-        uint8_t desired; board_phy_mask(&desired);
-        physical_mask=desired;
-        desired &= admin_mask;
-        /* Stop RX at each MAC as well as removing fabric destinations. PHYs
-         * remain active so physical link state is still observable. */
-        const uintptr_t macs[]={0x80040000UL,0x80080000UL,0x800c0000UL};
-        for (unsigned i=0;i<3;i++)
-            mmio_write(macs[i]+0x404,(admin_mask & (1u<<(i+2)))?0x12000000u:0x02000000u);
-        if (!fabric_dma_healthy()) desired=0;
-        struct link_action a=link_update(&state,desired,
-            (mmio_read(DIAG_BASE+LINK_STATUS)&0x100u)!=0,
-            (uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS));
-        if (a.clear) mmio_write(DIAG_BASE+LINK_CLR,a.clear);
-        if (a.set) mmio_write(DIAG_BASE+LINK_SET,a.set);
-        if (a.clear || a.set) xil_printf("Fabric physical links: %02x\r\n",state.enabled);
-        forwarding_mask=state.enabled;
-        network_link_changed(state.enabled!=0);
-        vTaskDelayUntil(&wake,pdMS_TO_TICKS(250));
-    }
+    for (;;) {link_poll();vTaskDelayUntil(&wake,pdMS_TO_TICKS(250));}
 }

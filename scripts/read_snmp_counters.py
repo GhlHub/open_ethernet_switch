@@ -52,6 +52,8 @@ def collect(args, executable):
         port = {'index': row, 'name': values.get((2, 1, 1, row), f'port {row}'),
                 'link': {1: 'up', 2: 'down'}.get(values.get((2, 1, 2, row)), 'unknown')}
         port.update({name: values.get((2, 1, col, row)) for col, name in enumerate(PORT, 3)})
+        port['speed_mbps'] = values.get((2, 1, 12, row), 0)
+        port['advertise'] = values.get((2, 1, 13, row), 0)
         ports.append(port)
     ddr = []
     for row in range(1, 5):
@@ -102,6 +104,7 @@ def display(data):
         print('WARNING: saturation recorded; totals may undercount.')
     if h['read_timeouts']:
         print('NOTE: mailbox timeouts recorded; collection may have partial updates.')
+    print('Link speeds (Mb/s): ' + ', '.join(f"{p['name']}={p['speed_mbps']}" for p in data['ports']))
     print('Timeout locations (bank and slot are zero-based):')
     for key in ('last_release_index', 'last_release_target_index', 'last_response_index'):
         index = h.get(key)

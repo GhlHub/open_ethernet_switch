@@ -33,14 +33,16 @@ static void serve(Socket_t socket)
         if (!strcmp(r.method,"GET") && (!strcmp(r.path,"/") || !strcmp(r.path,"/statistics") || !strcmp(r.path,"/configuration"))) {
             body=web_page;size=sizeof(web_page)-1;type="text/html; charset=utf-8";status="200 OK";
         } else if ((!strcmp(r.method,"GET") || !strcmp(r.method,"POST")) && !strcmp(r.path,"/api/ports")) {
-            if (!strcmp(r.method,"POST")) board_ports_set((uint8_t)r.mask);
-            uint8_t a,p,f; board_ports_get(&a,&p,&f);
-            size=(size_t)snprintf(response,sizeof(response),"{\"admin\":%u,\"physical\":%u,\"forwarding\":%u}",a,p,f);
+            if (!strcmp(r.method,"POST"))
+                (void)board_ports_configure((uint8_t)r.mask,r.advertise[0]?r.advertise:NULL);
+            struct port_snapshot p; board_ports_snapshot(&p);
+            size=web_ports(response,sizeof(response),&p);
             body=response;type="application/json";status="200 OK";
         } else if (!strcmp(r.method,"GET") && !strcmp(r.path,"/api/statistics")) {
             struct statistics_snapshot s; struct sensor_snapshot v;
             statistics_get(&s); sensors_get(&v);
-            size=web_stats(response,sizeof(response),&s,&v,board_timestamp_hz(),board_timestamp());
+            struct port_snapshot p; board_ports_snapshot(&p);
+            size=web_stats(response,sizeof(response),&s,&v,board_timestamp_hz(),board_timestamp(),&p);
             body=response;type="application/json";status=size?"200 OK":"500 Internal Server Error";
         } else {status="404 Not Found";body="Not found\n";size=strlen(body);}
     }

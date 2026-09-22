@@ -33,7 +33,8 @@ void snmp_task(void *unused)
             uint64_t now=board_timestamp(); uint32_t hz=board_timestamp_hz();
             uint64_t elapsed=now-started;
             uint32_t uptime=(uint32_t)((elapsed/hz)*100u+(elapsed%hz)*100u/hz);
-            snmp_mib_build(&mib,&s,&v,now,hz,uptime,mmio_read(DIAG_BASE+LINK_STATUS));
+            struct port_snapshot p; board_ports_snapshot(&p);
+            snmp_mib_build(&mib,&s,&v,now,hz,uptime,mmio_read(DIAG_BASE+LINK_STATUS),&p);
             size_t size=snmp_respond(request,(size_t)n,reply,sizeof(reply),SNMP_COMMUNITY,&mib);
             if (size) (void)FreeRTOS_sendto(socket,reply,size,0,&peer,peerlen);
         }

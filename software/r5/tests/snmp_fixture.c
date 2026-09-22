@@ -17,8 +17,9 @@ size_t fixture_respond(const uint8_t *in,size_t n,uint8_t *out,size_t cap)
 #endif
     v.timestamp=950; v.valid_mask=7; v.temperature_mc[0]=-12345;
     v.som_current_ua=-1250;
-    snmp_mib_build(&mib,&s,&v,1000,1000,9876,0x31);
-    assert(mib.count==188+100*STATS_DDR+64*STATS_DEBUG);
+    struct port_snapshot p={.speed_mbps={1000,100,0,0,1000,0},.advertise={4,3}};
+    snmp_mib_build(&mib,&s,&v,1000,1000,9876,0x31,&p);
+    assert(mib.count==200+100*STATS_DDR+64*STATS_DEBUG);
     return snmp_respond(in,n,out,cap,"public",&mib);
 }
 #ifdef FUZZ_MAIN

@@ -1,5 +1,71 @@
 # Design inventory verification
 
+## 2026-09-22 current display precision update
+
+The web page now renders SOM current with exactly three decimal places, such
+as `0.800 A`, matching voltage precision. Temperatures retain one decimal place.
+Only display formatting changed; raw sensor readings and SNMP/API units are
+unchanged. The R5 application was rebuilt, passed the ELF memory/vector audit,
+and loaded with the existing pipelined-ingress bitstream. Live Chromium
+verified `SOM current 0.825 A`. No boot flash was written.
+
+Currently deployed firmware SHA-256:
+`8b3447e383e644796c9e0a9d3cad06dfebb5dcc72f2a17e32a9eeb99106a122e`.
+Build/boot logs, firmware copy and browser result are retained under
+`build/r5/current_format_validation/`. Speed-test wiring remains GEM0 to the
+endpoint, GEM1 to the managed switch, and SFP disconnected. Defaults remain
+all ports enabled, GEM0 advertising 1000FD, and GEM1 advertising 10/100/1000FD.
+
+## 2026-09-22 PS link speeds and web sensor precision
+
+Implemented 10/100/1000 full-duplex advertisement/configuration for GEM1
+(right lower, RGMII), plus speed reporting in HTTP/SNMP and web capability
+controls. GEM0 remains 1000-only: AMD UG1087 explicitly excludes 10/100 from
+the PS SGMII path. Experimental GEM0 100 Mb/s copper negotiation did not
+produce working forwarding, but that test also used the gigabit-only endpoint
+and cannot isolate the cause. The GEM0 restriction follows AMD documentation;
+the final firmware rejects unsupported lower-speed GEM0 settings. No production RTL or FPGA bitstream change was needed.
+
+The first GEM1 100 Mb/s test used endpoint `10.0.1.140`; its PHY negotiated
+100, but pings failed. The user confirmed that endpoint's MAC/firmware is
+currently gigabit-only. Restoring GEM1 to 1000-only recovered 5/5 pings.
+For valid lower-speed tests, the user moved the endpoint back to GEM0 and
+connected the managed-switch uplink to GEM1, leaving SFP disconnected.
+
+At each of GEM1's 100FD-only, 10FD-only, 1000FD-only and all-speed settings:
+
+- The PHY resolved to the expected 100, 10, 1000, and 1000 Mb/s respectively.
+- Both R5 `10.0.1.214` and forwarded endpoint `10.0.1.140` passed 20/20
+  full-MTU pings (1472-byte ICMP payload) per setting.
+- HTTP remained available after renegotiation; SNMP reported the matching
+  physical speed and advertisement mask.
+- Final samples at each setting had zero bad packets/bytes, statistics
+  timeouts, late polls and saturation. These are light-traffic checks, not
+  sustained overload or lossless speed-transition qualification.
+
+Host firmware tests pass, including real link-service sequencing against a
+register/MDIO model, half-duplex rejection, unsupported advertisement rejection,
+SNMP object walking and HTTP parsing with all four counter build options.
+The GEM FIFO bridge bench passes at 125, 25 and 2.5 MHz. Browser fixture tests
+verify speed/capability controls and exact voltage/temperature formatting.
+The final web page additionally refreshes link/speed cells every second
+without replacing unsaved checkbox edits. Voltages use three decimal places;
+temperatures use one. Raw API/SNMP sensor values are unchanged.
+
+Evidence and exact firmware images are under `build/r5/multirate_validation/`.
+`tested_rates_r5.elf` is the rate-tested image; `kr260_r5.elf` includes the
+subsequent configuration-page status refresh. Both use the existing
+pipelined-ingress bitstream. See [PS speed details](ps-ethernet-speeds.md).
+
+Firmware SHA-256 before the current-format update below:
+`7dfcc8fbd16719aae35517625137c38454da3df0363520d6ad08784a5a5553ff`.
+After the final reload, live Chromium verified voltage/temperature formatting
+and disabled GEM0 lower-speed controls; SNMP reported GEM0/GEM1 at 1000 Mb/s
+with advertisement masks 4/7. Endpoint full-MTU pings passed 10/10.
+Current wiring is GEM0 to the endpoint, GEM1 to the managed switch, SFP
+disconnected. All five physical ports remain administratively enabled.
+
+
 ## 2026-09-22 R5 web management
 
 Added HTTP configuration/statistics pages and loaded the all-counter R5 build

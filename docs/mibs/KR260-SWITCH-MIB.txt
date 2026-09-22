@@ -155,7 +155,9 @@ KrPortEntry ::= SEQUENCE {
     krPortTxBadPackets Counter64,
     krPortTxGoodBytes Counter64,
     krPortTxBadBytes Counter64,
-    krPortIndex Integer32
+    krPortIndex Integer32,
+    krPortSpeedMbps Gauge32,
+    krPortAdvertise Gauge32
 }
 
 krPortName OBJECT-TYPE
@@ -234,6 +236,21 @@ krPortIndex OBJECT-TYPE
     STATUS current
     DESCRIPTION "One-based row index; encoded in the instance OID."
     ::= { krPortEntry 11 }
+
+krPortSpeedMbps OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "Mb/s"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Resolved supported full-duplex physical link speed: 10, 100 or 1000. Zero means no supported link or CPU virtual port. Physical speed can remain nonzero when administratively disabled."
+    ::= { krPortEntry 12 }
+
+krPortAdvertise OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Requested PS PHY advertisement: bit0 10FD, bit1 100FD, bit2 1000FD. GEM0 is restricted to 1000FD (4); GEM1 accepts 1..7. Other port rows return zero. Applied by the link task; changing this via HTTP restarts negotiation."
+    ::= { krPortEntry 13 }
 
 krDdrTable OBJECT-TYPE
     SYNTAX SEQUENCE OF KrDdrEntry

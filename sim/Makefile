@@ -703,3 +703,13 @@ sim-ingress-pipeline-verilator: $(BUFMGR_DIR)/buf_mgr_pkg.sv $(DMA_DIR)/axi_dma_
 	mkdir -p obj_dir/ingress_pipeline
 	verilator --binary --timing -Wno-TIMESCALEMOD --top-module tb_ingress_dma_pipeline --Mdir obj_dir/ingress_pipeline -j 4 $^
 	./obj_dir/ingress_pipeline/Vtb_ingress_dma_pipeline
+
+# Same self-checking bridge tests with 125/25/2.5 MHz GEM clocks.
+.PHONY: sim-ps-eth-multirate
+sim-ps-eth-multirate:
+	@set -e; for half in 4 20 200; do \
+	  iverilog -g2012 -s tb_ps_gem_axis_bridge -Ptb_ps_gem_axis_bridge.GEM_HALF_NS=$$half -o tb_ps_gem_multirate.vvp $(PS_ETH_SRCS) $(PS_ETH_TB); \
+	  vvp tb_ps_gem_multirate.vvp > ps_multirate_$$half.log; \
+	  cat ps_multirate_$$half.log; \
+	  ! grep -Eq 'FAIL|FATAL|ERROR' ps_multirate_$$half.log; \
+	done
