@@ -18,8 +18,8 @@
 //   A. from reset, both sides converge to an_link_up_o, resolved
 //      duplex_full/pause/remote_fault matching (both sides advertise
 //      the same default ability here)
-//   B. a GMII frame from A reaches B byte-for-byte after link-up
-//   C. a GMII frame from B reaches A byte-for-byte (other direction)
+//   B/C. frames in both directions and both start alignments preserve
+//      the alignment-dependent preamble, SFD and every payload byte
 //   D. one side's sync_ok is corrupted (injected RXNOTINTABLE) -> both
 //      sides' an_link_up_o eventually drop and re-negotiation restarts
 //      once corruption stops -- exercises the restart-on-sync-loss path
@@ -115,42 +115,71 @@ module tb_autoneg_1000base_x;
     if (b_gmii_rx_dv) b_rxd_bytes.push_back(byte'(b_gmii_rxd));
   end
 
-  task automatic drive_frame_a(input byte payload[]);
-    byte data[];
-    int n;
-    n = 8 + payload.size();
-    data = new[n];
-    for (int i = 0; i < 7; i++) data[i] = 8'h55;
-    data[7] = 8'hD5;
-    for (int i = 0; i < payload.size(); i++) data[8+i] = payload[i];
-    for (int i = 0; i < n; i++) begin
-      a_gmii_txd   <= data[i];
-      a_gmii_tx_en <= 1'b1;
-      @(posedge clk);
-    end
-    a_gmii_tx_en <= 1'b0;
-    @(posedge clk);
-  endtask
+  int rx_errors = 0;
+  always @(posedge clk) begin
+    if (a_gmii_rx_er || b_gmii_rx_er) rx_errors++;
+  end
 
-  task automatic drive_frame_b(input byte payload[]);
-    byte data[];
-    int n;
-    n = 8 + payload.size();
-    data = new[n];
-    for (int i = 0; i < 7; i++) data[i] = 8'h55;
-    data[7] = 8'hD5;
-    for (int i = 0; i < payload.size(); i++) data[8+i] = payload[i];
-    for (int i = 0; i < n; i++) begin
-      b_gmii_txd   <= data[i];
-      b_gmii_tx_en <= 1'b1;
-      @(posedge clk);
+  task automatic check_frame(input bit from_a, input bit even_start);
+    byte payload[];
+    byte actual, expected;
+    int preamble, received, errors_before, rx_errors_before;
+    payload = new[from_a ? 16 : 10];
+    for (int i = 0; i < payload.size(); i++)
+      payload[i] = byte'((from_a ? 8'h60 : 8'hc0) + i);
+    // /S/ replaces one preamble byte on even starts. Odd starts first
+    // finish the idle pair, consuming one additional preamble byte.
+    preamble = even_start ? 6 : 5;
+    errors_before = errors;
+    rx_errors_before = rx_errors;
+    @(negedge clk);
+    while ((from_a ? dut_a.u_tx.idle_comma_q : dut_b.u_tx.idle_comma_q)
+           !== even_start) @(negedge clk);
+    a_rxd_bytes.delete();
+    b_rxd_bytes.delete();
+    // Drive away from the sampling edge; the selected parity is that of
+    // the symbol sampled on the next rising edge.
+    for (int i = 0; i < 8 + payload.size(); i++) begin
+      if (from_a) begin
+        a_gmii_tx_en = 1'b1;
+        a_gmii_txd = i < 7 ? 8'h55 : i == 7 ? 8'hd5 : payload[i-8];
+      end else begin
+        b_gmii_tx_en = 1'b1;
+        b_gmii_txd = i < 7 ? 8'h55 : i == 7 ? 8'hd5 : payload[i-8];
+      end
+      @(negedge clk);
     end
-    b_gmii_tx_en <= 1'b0;
-    @(posedge clk);
+    a_gmii_tx_en = 1'b0;
+    b_gmii_tx_en = 1'b0;
+    // Drain the related-clock gearbox and sample after the RX monitor.
+    repeat (16) @(negedge clk);
+    received = from_a ? b_rxd_bytes.size() : a_rxd_bytes.size();
+    if (received != preamble + 1 + payload.size()) begin
+      $display("FAIL: from_a=%0b even_start=%0b received %0d bytes, expected %0d",
+               from_a, even_start, received, preamble + 1 + payload.size());
+      errors++;
+    end else begin
+      for (int i = 0; i < received; i++) begin
+        actual = from_a ? b_rxd_bytes[i] : a_rxd_bytes[i];
+        expected = i < preamble ? 8'h55 : i == preamble ? 8'hd5 : payload[i-preamble-1];
+        if (actual !== expected) begin
+          $display("FAIL: from_a=%0b even_start=%0b byte %0d got %02x expected %02x",
+                   from_a, even_start, i, actual, expected);
+          errors++;
+        end
+      end
+    end
+    if (rx_errors != rx_errors_before) begin
+      $display("FAIL: RX error during frame transfer");
+      errors++;
+    end
+    if (errors == errors_before)
+      $display("PASS: from_a=%0b even_start=%0b: %0d preamble bytes, SFD and %0d payload bytes exact",
+               from_a, even_start, preamble, payload.size());
   endtask
 
   initial begin
-    repeat (5) @(posedge clk);
+    repeat (5) @(negedge clk);
     rst_n     = 1'b1;
     gth_rst_n = 1'b1;
 
@@ -178,63 +207,11 @@ module tb_autoneg_1000base_x;
     end
     wait_cycles(10);
 
-    // ---- test B: A -> B frame ----
-    begin
-      byte payload[];
-      byte expected[];
-      payload = new[16];
-      for (int i = 0; i < 16; i++) payload[i] = byte'(8'h60 + i);
-      expected = new[23];
-      for (int i = 0; i < 6; i++) expected[i] = 8'h55;
-      expected[6] = 8'hD5;
-      for (int i = 0; i < 16; i++) expected[7+i] = payload[i];
-
-      b_rxd_bytes.delete();
-      drive_frame_a(payload);
-      wait_cycles(10);
-
-      if (b_rxd_bytes.size() != 23) begin
-        $display("FAIL: testB B received %0d bytes, expected 23", b_rxd_bytes.size());
-        errors++;
-      end else begin
-        bit ok = 1'b1;
-        for (int i = 0; i < 23; i++) if (b_rxd_bytes[i] !== expected[i]) ok = 1'b0;
-        if (ok) $display("PASS: testB frame sent by A reached B byte-for-byte after negotiation");
-        else begin
-          $display("FAIL: testB content mismatch");
-          errors++;
-        end
-      end
-    end
-
-    // ---- test C: B -> A frame ----
-    begin
-      byte payload[];
-      byte expected[];
-      payload = new[10];
-      for (int i = 0; i < 10; i++) payload[i] = byte'(8'hC0 + i);
-      expected = new[17];
-      for (int i = 0; i < 6; i++) expected[i] = 8'h55;
-      expected[6] = 8'hD5;
-      for (int i = 0; i < 10; i++) expected[7+i] = payload[i];
-
-      a_rxd_bytes.delete();
-      drive_frame_b(payload);
-      wait_cycles(10);
-
-      if (a_rxd_bytes.size() != 17) begin
-        $display("FAIL: testC A received %0d bytes, expected 17", a_rxd_bytes.size());
-        errors++;
-      end else begin
-        bit ok = 1'b1;
-        for (int i = 0; i < 17; i++) if (a_rxd_bytes[i] !== expected[i]) ok = 1'b0;
-        if (ok) $display("PASS: testC frame sent by B reached A byte-for-byte after negotiation");
-        else begin
-          $display("FAIL: testC content mismatch");
-          errors++;
-        end
-      end
-    end
+    // ---- tests B/C: both directions, both start alignments ----
+    check_frame(1'b1, 1'b1);
+    check_frame(1'b1, 1'b0);
+    check_frame(1'b0, 1'b1);
+    check_frame(1'b0, 1'b0);
 
     // ---- test D: sync loss on B's RX drops both sides' link, then
     // re-negotiation completes once corruption stops ----
@@ -269,14 +246,13 @@ module tb_autoneg_1000base_x;
     end
 
     if (errors == 0) $display("=== ALL TESTS PASSED ===");
-    else              $display("=== %0d TEST(S) FAILED ===", errors);
+    else              $fatal(1, "=== %0d TEST(S) FAILED ===", errors);
     $finish;
   end
 
   initial begin
     #2_000_000;
-    $display("FAIL: global testbench timeout");
-    $finish;
+    $fatal(1, "FAIL: global testbench timeout");
   end
 
 endmodule

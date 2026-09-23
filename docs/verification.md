@@ -1,5 +1,25 @@
 # Design inventory verification
 
+## 2026-09-23 autonegotiation regression expectation corrected
+
+Resolved the previously recorded `sim-autoneg` test-C failure (16 received
+bytes versus 17 expected). Its fixed expectation assumed six post-/S/
+preamble bytes, but an odd-position GMII start produces five. The SFD and
+all ten payload bytes were intact, with no RX errors. This was a testbench
+expectation defect; no production RTL change was required.
+
+`tb_autoneg_1000base_x.sv` now explicitly drives both even and odd start
+positions in both directions, checking the exact corresponding preamble,
+SFD, payload and absence of RX errors. Stimulus and checks use falling
+edges to avoid races with rising-edge DUT and receive-monitor sampling.
+Failures and the global timeout now use `$fatal(1)` so Make sees failure.
+
+Validation: `sim-autoneg`, `sim-sfp-rx-preamble` and `sim-sfp-tx-alignment`
+all pass. Temporary in-memory mutations of the preamble expectation,
+received payload and timeout each failed with exit status 1. Negotiation,
+link loss and renegotiation still pass. No hardware rebuild or download
+was needed for this simulation-only correction.
+
 ## 2026-09-23 SNMP observation (01:26:29–01:26:59 PDT)
 
 Seven snapshots at five-second intervals from `10.0.1.214` showed GEM0 and
@@ -34,7 +54,8 @@ STATS_DEBUG=1`), ELF memory/vector audit, all firmware host tests, and
 plus the standalone `tb_ctrl_value_xdomain` behavioral test. The browser
 regression also passed navigation, polling, precision and speed controls. These checks
 did not rebuild or download hardware. The previously recorded full-suite
-`sim-autoneg` failure below remains open; the affected tests above passed.
+`sim-autoneg` failure below was subsequently resolved by the testbench
+correction recorded above; the affected tests in this check-in passed.
 
 STP defaults disabled. The TX mutex protects DMA descriptors and buffers,
 but `pstate_cpu_tx_raw()` arms `CPU_TX_OVERRIDE` **before** acquiring that
