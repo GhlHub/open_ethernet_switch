@@ -31,6 +31,11 @@ module tb_rx_diag;
   logic [1:0] phy_link = 2'b00;
   logic [5:0] evt_set = '0;
   wire irq;
+  wire [5:0] fwd_en, learn_en, cpu_ovr_mask;
+  wire       cpu_ovr_go;
+  logic [2:0] rx_tag = 3'd0;
+  logic       rx_tag_valid = 1'b0;
+  wire        rx_tag_pop;
 
   rx_diag_regs dut (
     .clk (clk), .rst_n (rst_n),
@@ -43,7 +48,10 @@ module tb_rx_diag;
     .sfp_status_i (16'h0000), .sfp_pcs_status_i (4'b0111), .sfp_force_disable_o (), .sfp_clr_fault_seen_o (),
     .sfp_clr_removed_seen_o (), .sfp_clr_lockout_o (),
     .link_up_o (link_up), .link_flush_tog_o (link_tog), .link_flush_busy_i (flush_busy),
-    .phy_link_i (phy_link), .link_event_set_i (evt_set), .link_irq_o (irq));
+    .phy_link_i (phy_link), .link_event_set_i (evt_set), .link_irq_o (irq),
+    .fwd_en_o (fwd_en), .learn_en_o (learn_en),
+    .cpu_tx_ovr_mask_o (cpu_ovr_mask), .cpu_tx_ovr_go_o (cpu_ovr_go),
+    .cpu_rx_tag_i (rx_tag), .cpu_rx_tag_valid_i (rx_tag_valid), .cpu_rx_tag_pop_o (rx_tag_pop));
 
 
   int errors = 0;
@@ -137,6 +145,74 @@ module tb_rx_diag;
     repeat (2) @(posedge clk); check(irq === 1'b1, "enabled event raises irq");
     axi_write(8'h18, 32'h0000_0008, 4'h1);
     repeat (2) @(posedge clk); check(irq === 1'b0, "clearing the event drops irq");
+
+    // ---- per-port forwarding/learning control ----
+    check(fwd_en === 6'b111111 && learn_en === 6'b111111, "FWD_EN/LEARN_EN both default enabled");
+    axi_read(8'h48, r); check(r === 32'h0000_0FFF, $sformatf("PORT_CTRL_STATUS at reset = %h, expected FFF", r));
+
+    axi_write(8'h3C, 32'h0000_0004, 4'h1);            // FWD_CLR port 2
+    check(fwd_en === 6'b111011, "FWD_CLR disables forwarding on port 2 only");
+    check(link_tog === 6'b110100, "FWD_CLR also toggles port 2's flush request (like LINK_CLR)");
+    axi_write(8'h3C, 32'h0000_0000, 4'h1);            // write of 0 does nothing
+    check(fwd_en === 6'b111011 && link_tog === 6'b110100, "FWD_CLR write of 0 changes nothing");
+    axi_write(8'h38, 32'h0000_0004, 4'h1);            // FWD_SET port 2
+    check(fwd_en === 6'b111111, "FWD_SET restores forwarding on port 2");
+
+    axi_write(8'h44, 32'h0000_0010, 4'h1);            // LEARN_CLR port 4
+    check(learn_en === 6'b101111, "LEARN_CLR disables learning on port 4 only");
+    check(link_tog === 6'b100100, "LEARN_CLR also toggles port 4's flush request");
+    axi_write(8'h40, 32'h0000_0010, 4'h1);            // LEARN_SET port 4
+    check(learn_en === 6'b111111, "LEARN_SET restores learning on port 4");
+
+    axi_read(8'h48, r); check(r === 32'h0000_0FFF, "PORT_CTRL_STATUS back to all-enabled");
+
+    // ---- CPU TX destination override ----
+    check(cpu_ovr_go === 1'b0, "no override armed yet");
+    begin
+      bit saw_go;
+      saw_go = 1'b0;
+      fork
+        axi_write(8'h4C, 32'h0000_0000, 4'hF);        // bit31=0: must not arm
+        begin
+          repeat (10) begin @(posedge clk); if (cpu_ovr_go) saw_go = 1'b1; end
+        end
+      join
+      check(!saw_go, "a write with bit31=0 never pulses cpu_tx_ovr_go_o");
+    end
+    begin
+      bit saw_go;
+      saw_go = 1'b0;
+      fork
+        axi_write(8'h4C, 32'h8000_0004, 4'hF);        // bit31=1, mask=port 2
+        begin
+          repeat (10) begin @(posedge clk); if (cpu_ovr_go) saw_go = 1'b1; end
+        end
+      join
+      check(saw_go, "CPU_TX_OVERRIDE with bit31=1 pulses cpu_tx_ovr_go_o");
+    end
+    check(cpu_ovr_mask === 6'b000100, "cpu_tx_ovr_mask_o holds the armed mask");
+    axi_read(8'h4C, r); check(r === 32'h0000_0004, $sformatf("CPU_TX_OVERRIDE readback = %h, expected 4 (bit31 always 0)", r));
+
+    // ---- CPU RX ingress-port tag ----
+    axi_read(8'h50, r); check(r === 32'h0000_0000, "CPU_RX_TAG reads invalid (bit31=0) with nothing pending");
+    rx_tag = 3'd3; rx_tag_valid = 1'b1;
+    axi_read(8'h50, r); check(r === 32'h8000_0003, $sformatf("CPU_RX_TAG = %h, expected valid + port 3", r));
+    begin
+      bit saw_pop;
+      saw_pop = 1'b0;
+      fork
+        axi_read(8'h50, r);
+        begin
+          repeat (10) begin @(posedge clk); if (rx_tag_pop) saw_pop = 1'b1; end
+        end
+      join
+      check(saw_pop, "reading CPU_RX_TAG pulses cpu_rx_tag_pop_o");
+    end
+    // model the FIFO emptying in response to that pop, same as the real
+    // async_fifo in switch_top.sv would the cycle after rd_en_i
+    rx_tag_valid = 1'b0;
+    axi_read(8'h50, r); check(r[31] === 1'b0, $sformatf("CPU_RX_TAG reads invalid again after the FIFO empties (got %h)", r));
+
     $display("%s: errors=%0d", errors == 0 ? "PASS" : "FAIL", errors);
     $finish;
   end

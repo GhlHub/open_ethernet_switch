@@ -1,5 +1,201 @@
 # Design inventory verification
 
+## 2026-09-23 SNMP observation (01:26:29–01:26:59 PDT)
+
+Seven snapshots at five-second intervals from `10.0.1.214` showed GEM0 and
+GEM1 up at 1000 Mb/s; PL0, PL1 and SFP were down. This observation predates
+the STP work recorded below and does not validate that implementation.
+Raw samples are retained locally in
+`build/r5/snmp_observation_20260923/samples.jsonl` (ignored build artifact).
+
+- All accumulated bad-packet/bad-byte counters and DDR AXI error responses
+  were zero. Collection health showed zero mailbox-release or snapshot-response
+  timeouts, late polls and saturated reads over 265,102 polls (about 18.4 hours).
+- Physical ingress wrote 123,582 bytes in 852 bursts during the 30-second
+  window. Write-data stalls rose by 1,704: exactly two cycles per burst.
+  Address stalls were zero. This remains an optimization investigation;
+  the observation alone does not establish its cause.
+- GEM1 ingress/egress backpressure increased by 39/7,076 fabric cycles;
+  CPU enqueue waiting increased by 2,462 cycles across 410 packets
+  (about six cycles per packet). GEM0 ingress stalls remained zero.
+- DDR latency maxima did not increase: physical ingress 1.35 us, physical
+  egress 2.30 us, CPU write 3.20 us and CPU read 1.49 us at 100 MHz.
+- Sensor validity was `0x7`, sensor errors were zero, PS temperature was
+  31.8–33.4 C and PL temperature 30.9–32.4 C. SOM readings were approximately
+  5.060 V, 0.829 A and 4.2 W.
+
+These are light-traffic observations, not a throughput or overload test.
+
+## 2026-09-23 check-in review: remaining STP limitations
+
+Check-in validation passed: all-counter R5 build (`STATS_DDR=1
+STATS_DEBUG=1`), ELF memory/vector audit, all firmware host tests, and
+`sim-bufmgr`, `sim-ingress`, `sim-mac-fwd`, `sim-switch-top`, `sim-rx-diag`
+plus the standalone `tb_ctrl_value_xdomain` behavioral test. The browser
+regression also passed navigation, polling, precision and speed controls. These checks
+did not rebuild or download hardware. The previously recorded full-suite
+`sim-autoneg` failure below remains open; the affected tests above passed.
+
+STP defaults disabled. The TX mutex protects DMA descriptors and buffers,
+but `pstate_cpu_tx_raw()` arms `CPU_TX_OVERRIDE` **before** acquiring that
+mutex in `fabric_dma_send()`. Another sender can consume the override;
+a failed send can also leave it armed. Override selection and descriptor
+submission still need one serialized transaction with failure cleanup.
+The IP receive callback and STP task also both mutate the STP engine and
+apply actions; task ownership/serialization needs review before enabling it.
+
+The override CDC launches data and toggle together through independent
+synchronizers. Equal pipeline depths do not guarantee coherent sampling
+on silicon; behavioral simulation does not model metastability. A held-data
+handshake or asynchronous FIFO and physical CDC review remain pending.
+CPU RX tag FIFO overflow and reset/error alignment with DMA completions
+also need validation. TCN propagation/fast aging, web enable controls and
+configuration persistence remain unimplemented. Passing the triangle test
+is not a proof of general STP correctness or protocol conformance.
+
+## 2026-09-23 real bug: CPU TX race between the IP stack and STP
+
+Found on real hardware, not in simulation: shortly after connecting a real
+adjacent switch with STP enabled, the board became unreachable (ping/HTTP
+both failed). JTAG readback of `LINK_STATUS` (`0x80100014`) showed `0`
+(every port, including the CPU, de-admitted) and the AXI DMA MM2S status
+register (`0x80000004`) had bit 8 (SGIntErr) set. Root cause:
+`fabric_dma_send()`'s shared `tx[]`/`tx_data[]`/`tx_index` state was written
+from two independent FreeRTOS tasks with no serialization — the IP task
+(ordinary IP-stack output via `network.c`'s `output()`) and the new
+`stp_task` (BPDU transmission via `pstate_cpu_tx_raw()`) — a contract
+`pstate.h`'s own header already documented ("Callers must not have another
+CPU transmit in flight... serialize... e.g. by only calling it from the
+same task/context that owns fabric_dma_send()") but `stp_task.c` violated
+by calling it from its own separate task. The race could corrupt an
+in-flight TX descriptor, producing the observed SG Internal Error, which
+`network.c`'s existing DMA-fault fail-safe correctly (if drastically)
+responds to by de-admitting every port -- a real, if latent, pre-existing
+concurrency bug that a second CPU-TX caller (STP) was needed to expose.
+
+Fixed in `fabric_dma.c`: `fabric_dma_send()` now takes a FreeRTOS mutex
+(`SemaphoreHandle_t tx_lock`, created in `fabric_dma_init()`) around its
+whole body, not a critical section (the function blocks on DMA completion
+via `vTaskDelay`, which a critical section must never do). `tests/fakes/`
+gained a trivial `semphr.h`/`portMAX_DELAY` fake (single-threaded, always
+succeeds) so `test_dma` keeps building; no test behavior change, since the
+existing tests are sequential and the fakes are no-ops. Rebuilt and
+JTAG-redeployed; the board recovered and stayed reachable through a full
+STP convergence cycle with a real neighbor.
+
+## 2026-09-23 STP protocol implementation
+
+Real classic 802.1D-1998 STP now runs in firmware (`software/r5/src/stp.c`,
+`stp_task.c`) on top of the same-day hardware/software hooks below, plus one
+new hardware feature: a CPU RX ingress-port tag threaded through
+`buf_mgr_core`/`queue_mgr`'s per-buffer metadata (mirroring the existing
+`length` field) and exposed via `rx_diag_regs`'s new `CPU_RX_TAG` register
+(`0x50`).
+
+`tests/test_stp.c` (host, `make -C software/r5 test-stp`, part of `test`):
+four tests, all passing —
+
+- `test_bpdu_wire_format`: a lone bridge's transmitted Config BPDU has the
+  correct dest MAC/LLC/protocol-id/version/type bytes and root==self.
+- `test_aging_reclaims_designated`: a port whose neighbor stops advertising
+  (no clean link-down) ages out after Max Age (20 s) and is reclaimed as
+  locally designated.
+- `test_malformed_frames_ignored`: garbage, truncated, and out-of-range-port
+  BPDU calls are ignored without miscounting or crashing.
+- `test_triangle`: a bounded topology regression — three bridge instances wired A-B, B-C, C-A
+  (a real physical loop) converge to exactly one root (lowest MAC, as
+  intended) and exactly one blocked port network-wide; all role/state
+  assignments match the hand-computed expected result for that topology,
+  including the tie-break on the equal-cost B-C segment. Confirmed the test
+  actually discriminates: a mutated cost-comparison direction breaks
+  `test_triangle`'s root-election assertion (`sed`-based inline mutation,
+  reverted after).
+
+RTL: the new `enqueue_meta_i`/`dequeue_meta_o` plumbing (`queue_mgr.sv`,
+`buf_mgr_core.sv`, `ingress_top.sv`) and the new `async_fifo`/`CPU_RX_TAG`
+crossing (`switch_top.sv`, `rx_diag_regs.sv`) are covered by extensions to
+`tb_switch_top.sv` (a GEM0-sourced frame delivered to the CPU is tagged
+with ingress port 0, and popping drains it) and `tb_rx_diag.sv` (register
+format, pop-pulses-on-every-read, valid/invalid readback). Both mutation-
+tested: tying `enqueue_meta[gi]` to a wrong constant in `ingress_top.sv`
+correctly failed `tb_switch_top`'s new assertion, confirmed then reverted.
+Full `sim/Makefile` regression re-run afterward (295 PASS markers,
+the same one pre-existing unrelated `sim-autoneg` failure as the
+2026-09-23 STP-hooks entry below, still confirmed unrelated).
+
+Firmware: `make -C software/r5 -j8 all test` passes in full, including the
+real ARM cross-build/link, `verify_elf.py`, and every existing host test
+(`test_dma`'s fake `board.h` needed `DIAG_BASE`/`CPU_RX_TAG` added since
+`fabric_dma.c` now reads that register on every RX descriptor). The web
+statistics page gained an `"stp"` JSON object and a rendered table
+(bridge/root identity, per-port role/state/BPDU counters) — the way to
+visually confirm STP is running and converged on real hardware.
+
+`rtl/board/kr260_pl_top.sv`'s updated wiring (the new `cpu_rx_tag_*`
+connections between `switch_top` and `rx_diag_regs`) was validated with
+the real Vivado 2026.1 `build_kr260.tcl`/`impl_kr260.tcl` flow: bitstream
+generated successfully (0 errors throughout synthesis/implementation/
+bitgen), DRC 0 errors (the same two pre-existing DMA-IP BRAM advisories as
+every prior build, unrelated to this change), and the automated pass/fail
+check reported "Normal image verified: no debug cores; setup and hold
+timing met." WNS +0.018 ns / WHS +0.010 ns, unchanged from the prior
+baseline -- the new `async_fifo` crossing for `CPU_RX_TAG` falls inside
+the already-documented `clk_pl_0` clock pair, not a new one.
+
+## 2026-09-23 STP hardware/software hooks
+
+New/extended testbenches for the control-protocol hooks described in
+[architecture](architecture.md#control-protocol-hooks-stplacplldp-no-protocol-logic):
+
+| Target | Testbench | New coverage | Result |
+| --- | --- | --- | --- |
+| `sim-ctrl-value-xdomain` (direct `iverilog`/`vvp`, not yet a named Makefile target) | [`tb_ctrl_value_xdomain.sv`](../tb/tb_ctrl_value_xdomain.sv) | 200 random-value/random-phase single crossings; single-cycle pulse width; 100 racing-write trials at 0-3 source-clock gaps asserting no torn value | PASS |
+| `sim-mac-fwd` | [`tb_mac_forwarding_top.sv`](../tb/tb_mac_forwarding_top.sv) | Reserved-block trap to CPU-only with `ctrl_frame_o` (BPDU and LLDP addresses, plus an untrapped boundary address that still floods); trapped source MACs still learned; `fwd_en_i`/`learn_en_i` per-port gating of ordinary traffic, forwarding gate bypassed for trapped frames; learning remains gated | PASS |
+| `sim-switch-top` | [`tb_switch_top.sv`](../tb/tb_switch_top.sv) | `fwd_en_i[0]=0` drops GEM0's ordinary traffic but still delivers its BPDUs to the CPU byte-for-byte; CPU TX override sends a frame to exactly one software-chosen port then disarms, and a later un-overridden send resolves normally | PASS |
+| `sim-rx-diag` | [`tb_rx_diag.sv`](../tb/tb_rx_diag.sv) | FWD_SET/CLR and LEARN_SET/CLR register writes, verified flush-toggle deltas; PORT_CTRL_STATUS readback; CPU_TX_OVERRIDE bit31 gating (both armed and not-armed, checked cycle-by-cycle) | PASS |
+
+Each new RTL behavior above was confirmed by a targeted mutation (breaking
+the control-block trap, the `fwd_en_i`/`learn_en_i` gates, the CPU TX
+override mux, and the register flush-OR/bit31 gate) and reverted after
+confirming the corresponding test failed with a specific message.
+
+Full regression (all `sim-*` targets in `sim/Makefile`, run together) shows
+no regressions from these changes: 294 PASS markers, one FAIL —
+`sim-autoneg`'s `tb_autoneg_1000base_x.sv` testC ("A received 16 bytes,
+expected 17") — confirmed pre-existing (reproduces identically with these
+changes stashed out, on unmodified `autoneg_1000base_x.sv`/
+`sfp_1000base_x_pcs.sv`/`tb_autoneg_1000base_x.sv`), deterministic across
+repeated runs, and out of scope for this change.
+
+Firmware: `make -C software/r5 -j8 all test` passes, including the new
+`test-pstate` target (register-plumbing mutation-style checks: each
+`pstate_*` call writes/reads the exact register offset packed the way
+`rx_diag_regs.sv` expects, out-of-range port bits are masked, DMA failure
+propagates, and the default weak `fabric_ctrl_frame_rx` hook is a true
+no-op). The real ARM cross-build/link succeeds and `verify_elf.py` passes
+both its DMA-isolation and entry/vector/symbol/reserved-memory checks with
+`pstate.c` linked in.
+
+`rtl/board/kr260_pl_top.sv`'s new wiring (the one file using real UNISIM
+primitives that Icarus cannot elaborate) was validated with the real
+`build_kr260.tcl -tclargs synth` then `impl_kr260.tcl` Vivado 2026.1 flow.
+Result: bitstream generated successfully (`Bitgen Completed Successfully`,
+217 Infos/22 Warnings/0 Critical Warnings/0 Errors), DRC 0 errors (the only
+two warnings are a pre-existing DMA-IP BRAM NO_CHANGE collision advisory,
+unrelated to this change), and `impl_kr260.tcl`'s own automated pass/fail
+check (no debug cores, worst setup and hold slack both non-negative)
+reported "Normal image verified: no debug cores; setup and hold timing
+met." WNS +0.018 ns / WHS +0.010 ns, unchanged from the last recorded
+baseline in [inventory](inventory.md). `report_cdc`/`report_cdc -summary`
+show the same 13 clock-pair groups already catalogued in
+[cdc-review](cdc-review.md); the new `learn_en_i`/`fwd_en_i` synchronizer
+and the `ctrl_value_xdomain` CPU-TX-override crossing both land inside the
+already-documented `clk_pl_0` → `clk_out3_pl_eth_clk_gen_ip` pair (same
+pairing `port_link_ctrl`'s existing crossings use), not a new clock-pair
+group. `report_methodology` shows no new findings attributable to
+`rx_diag_regs.sv`, `switch_top.sv`, `ctrl_value_xdomain.sv` or
+`kr260_pl_top.sv`.
+
 ## 2026-09-22 current display precision update
 
 The web page now renders SOM current with exactly three decimal places, such
@@ -9,7 +205,7 @@ unchanged. The R5 application was rebuilt, passed the ELF memory/vector audit,
 and loaded with the existing pipelined-ingress bitstream. Live Chromium
 verified `SOM current 0.825 A`. No boot flash was written.
 
-Currently deployed firmware SHA-256:
+Firmware SHA-256 deployed for this dated validation:
 `8b3447e383e644796c9e0a9d3cad06dfebb5dcc72f2a17e32a9eeb99106a122e`.
 Build/boot logs, firmware copy and browser result are retained under
 `build/r5/current_format_validation/`. Speed-test wiring remains GEM0 to the

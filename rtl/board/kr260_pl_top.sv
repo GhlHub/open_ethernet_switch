@@ -348,6 +348,10 @@ module kr260_pl_top
 
   logic [3:0] diag_flags, diag_clr;
   logic [5:0] link_up_axi, link_tog_axi, link_event_set;
+  logic [5:0] fwd_en_axi, learn_en_axi, cpu_ovr_mask_axi;
+  logic       cpu_ovr_go_axi;
+  logic [2:0] cpu_rx_tag;
+  logic       cpu_rx_tag_valid, cpu_rx_tag_pop;
   logic [1:0] phy_link, phy_link_chg;
   logic       link_flush_busy;
   logic [1:0] idelay_rdy_raw;
@@ -374,7 +378,10 @@ module kr260_pl_top
     .phy_link_i (phy_link), .link_event_set_i (link_event_set), .link_irq_o (link_irq),
     .sfp_status_i (sfp_sb_status), .sfp_pcs_status_i (sfp_pcs_s2), .sfp_force_disable_o (sfp_sb_force),
     .sfp_clr_fault_seen_o (sfp_sb_clr_fault), .sfp_clr_removed_seen_o (sfp_sb_clr_removed),
-    .sfp_clr_lockout_o (sfp_sb_clr_lockout)
+    .sfp_clr_lockout_o (sfp_sb_clr_lockout),
+    .fwd_en_o (fwd_en_axi), .learn_en_o (learn_en_axi),
+    .cpu_tx_ovr_mask_o (cpu_ovr_mask_axi), .cpu_tx_ovr_go_o (cpu_ovr_go_axi),
+    .cpu_rx_tag_i (cpu_rx_tag), .cpu_rx_tag_valid_i (cpu_rx_tag_valid), .cpu_rx_tag_pop_o (cpu_rx_tag_pop)
   );
 
   // RX data IDELAY per port: chosen from routed setup/hold slack (PL0: 0.67/0.22 ns at 500 ps,
@@ -538,6 +545,10 @@ module kr260_pl_top
     .gem_rx_rst_n_ps1 (gem1_rx_rst_n), .gem_tx_rst_n_ps1 (gem1_tx_rst_n),
     .default_age_i (DEFAULT_AGE_RESET),
     .link_up_i (link_up_axi), .link_flush_tog_i (link_tog_axi), .link_flush_busy_o (link_flush_busy),
+    .learn_en_i (learn_en_axi), .fwd_en_i (fwd_en_axi), .ctrl_frame_o (),
+    .cpu_tx_ovr_mask_i (cpu_ovr_mask_axi), .cpu_tx_ovr_go_i (cpu_ovr_go_axi),
+    .cpu_rx_ingress_port_o (cpu_rx_tag), .cpu_rx_ingress_valid_o (cpu_rx_tag_valid),
+    .cpu_rx_ingress_pop_i (cpu_rx_tag_pop),
     .pl0_gmii_rxd (pl0_gmii_rxd), .pl0_gmii_rx_dv (pl0_gmii_rx_dv), .pl0_gmii_rx_er (pl0_gmii_rx_er),
     .pl0_gmii_txd (pl0_gmii_txd), .pl0_gmii_tx_en (pl0_gmii_tx_en), .pl0_gmii_tx_er (pl0_gmii_tx_er),
     .pl1_gmii_rxd (pl1_gmii_rxd), .pl1_gmii_rx_dv (pl1_gmii_rx_dv), .pl1_gmii_rx_er (pl1_gmii_rx_er),

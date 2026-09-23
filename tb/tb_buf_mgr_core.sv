@@ -38,12 +38,14 @@ module tb_buf_mgr_core;
   logic [NUM_PORTS-1:0][BUF_ID_W-1:0]  enqueue_bufid_i;
   logic [NUM_PORTS-1:0][LENGTH_W-1:0]  enqueue_length_i;
   logic [NUM_PORTS-1:0][NUM_PORTS-1:0] enqueue_destmask_i;
+  logic [NUM_PORTS-1:0][PORT_ID_W-1:0] enqueue_meta_i = '0; // not under test here; see tb_switch_top.sv
   logic [NUM_PORTS-1:0]                enqueue_gnt_o;
 
   logic [NUM_PORTS-1:0]               dequeue_req_i;
   logic [NUM_PORTS-1:0]               dequeue_valid_o;
   logic [NUM_PORTS-1:0][BUF_ID_W-1:0] dequeue_bufid_o;
   logic [NUM_PORTS-1:0][LENGTH_W-1:0] dequeue_length_o;
+  logic [NUM_PORTS-1:0][PORT_ID_W-1:0] dequeue_meta_o;
 
   logic [NUM_PORTS-1:0]               release_req_i;
   logic [NUM_PORTS-1:0][BUF_ID_W-1:0] release_bufid_i;

@@ -39,10 +39,10 @@ static void serve(Socket_t socket)
             size=web_ports(response,sizeof(response),&p);
             body=response;type="application/json";status="200 OK";
         } else if (!strcmp(r.method,"GET") && !strcmp(r.path,"/api/statistics")) {
-            struct statistics_snapshot s; struct sensor_snapshot v;
-            statistics_get(&s); sensors_get(&v);
+            struct statistics_snapshot s; struct sensor_snapshot v; struct stp_status st;
+            statistics_get(&s); sensors_get(&v); stp_status_get(&st);
             struct port_snapshot p; board_ports_snapshot(&p);
-            size=web_stats(response,sizeof(response),&s,&v,board_timestamp_hz(),board_timestamp(),&p);
+            size=web_stats(response,sizeof(response),&s,&v,board_timestamp_hz(),board_timestamp(),&p,&st);
             body=response;type="application/json";status=size?"200 OK":"500 Internal Server Error";
         } else {status="404 Not Found";body="Not found\n";size=strlen(body);}
     }

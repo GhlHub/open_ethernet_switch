@@ -1,5 +1,60 @@
 # Design inventory and pending development
 
+## 2026-09-23 counter observation and open issues
+
+The 30-second SNMP observation found no packet/AXI errors or collector
+timeouts; physical ingress still recorded two write-data stall cycles per
+burst. See [verification](verification.md) for measurements and the pending
+STP TX-override, task-serialization, CDC and RX-tag alignment issues. These
+remain open with STP disabled by default.
+
+## 2026-09-23 STP defaults disabled; web control and persistence pending
+
+Real-hardware testing against a genuine adjacent STP switch surfaced a real
+concurrency bug (see verification.md) and confirmed classic-BPDU interop
+works. Per direction, STP now defaults OFF (`stp_task.c`'s `stp_enabled`
+starts `false`; no hardware is touched while disabled) until web control
+and persistent configuration exist -- both explicitly noted as pending,
+not yet implemented. `stp_get_enabled()`/`stp_set_enabled()` are the entry
+point for that future work.
+
+## 2026-09-23 STP protocol implementation
+
+Building on the same-day hooks below, `software/r5/src/stp.c`/`include/stp.h`
+now implement an initial subset of classic 802.1D-1998 STP (BPDU codec, root/designated/
+blocking election, Blocking→Listening→Learning→Forwarding timers), exercised
+with a three-bridge triangle-topology host test that elects one root and
+blocks exactly one port (`tests/test_stp.c`). `stp_task.c` is the hardware
+glue (1 Hz task, drives FWD_EN/LEARN_EN and CPU TX via `pstate.c`, overrides
+`fabric_ctrl_frame_rx`). A new hardware feature was needed to make this
+correct: a per-frame CPU RX ingress-port tag (`buf_mgr_pkg`'s per-buffer
+metadata, `switch_top.sv`'s `cpu_rx_ingress_*` ports, `rx_diag_regs`'s new
+`CPU_RX_TAG` register at `0x50`) — see
+[architecture: STP implementation](architecture.md#stp-implementation-firmware-2026-09-23).
+Live status is on the web statistics page (`/api/statistics`'s `"stp"`
+object). LACP/LLDP remain unimplemented hooks only.
+
+## 2026-09-23 STP hardware/software hooks (no protocol logic)
+
+Added hardware and firmware hooks for future control-protocol support
+(STP, and generically LACP/LLDP/other 802.1D Slow Protocols), without
+implementing any protocol itself. `mac_addr_resolver.sv` now traps the
+reserved `01:80:C2:00:00:0x` block to the CPU port unconditionally;
+new per-port `fwd_en_i`/`learn_en_i` inputs (threaded through
+`mac_forwarding_top.sv` and `switch_top.sv`) add forwarding/learning gates
+independent of physical link state; trapped control frames bypass forwarding
+but source learning remains gated; a new CPU TX destination override lets firmware target one
+specific egress port for a single CPU-originated frame via a new generic
+`ctrl_value_xdomain.sv` CDC module. Six new `rx_diag_regs` registers
+(`0x38`-`0x4C`) expose these to software; `software/r5/src/pstate.c`
+provides thin register wrappers and a weak `fabric_ctrl_frame_rx` RX hook
+that `network.c` calls for reserved-block frames instead of dropping them
+in the IP stack. See
+[architecture: control-protocol hooks](architecture.md#control-protocol-hooks-stplacplldp-no-protocol-logic)
+and [cdc-review: STP/control-protocol hardware hooks](cdc-review.md#stpcontrol-protocol-hardware-hooks-2026-09-23).
+This describes the initial hooks stage. The STP implementation above now
+supersedes its original scope; LACP/LLDP algorithms remain unimplemented.
+
 ## 2026-09-22 PS Ethernet speed control
 
 R5 firmware now supports selectable 10/100/1000 full-duplex advertisement on
@@ -138,14 +193,14 @@ The optional debug scripts and historical captures remain available.
 
 | Area | Files / modules | Implemented scope and status |
 | --- | --- | --- |
-| Digital switch assembly | [`switch_top.sv`](../rtl/switch_top.sv) | Joins two GEM bridges, two PL MAC ports, one SFP MAC/PCS port, physical ingress/egress, the CPU port, and MAC forwarding. Generates the aging tick (default 4 Hz at 100 MHz). GEM0-to-CPU smoke test passes. The board top now connects its external DDR, CPU DMA, GMII and GTH boundaries. Separate GEM RX/TX clocks replace the former single-clock interface. |
-| Header parsing and forwarding | [`mac_addr_resolver.sv`](../rtl/mac_table/mac_addr_resolver.sv), [`mac_forwarding_top.sv`](../rtl/mac_table/mac_forwarding_top.sv) | Six ingress stream snoopers extract destination/source MACs, issue lookup/learning requests, and supply forwarding masks. Hits use the learned mask with the ingress port removed (zero means drop); misses flood all other ports (including CPU for physical ingress). Ports 6–7 of the eight-port table are unused. Learning/flood/short-frame and same-port-hit tests across all six ports pass; policy and error-path gaps are listed below. |
-| Common logic | [`async_fifo.sv`](../rtl/common/async_fifo.sv), [`sync_fifo.sv`](../rtl/common/sync_fifo.sv), [`rr_arbiter.sv`](../rtl/common/rr_arbiter.sv), [`rst_sync.sv`](../rtl/common/rst_sync.sv) | Async-assert/synchronous-release reset helper, dual-clock CDC FIFO (a Gray-pointer model in simulation, `xpm_fifo_async` in synthesis), synchronous FIFO, and round-robin arbitration. Pointer, tick and reset synchronizers now carry ASYNC_REG. Async FIFO has its own test; the new reset helper has no dedicated portable test. |
+| Digital switch assembly | [`switch_top.sv`](../rtl/switch_top.sv) | Joins two GEM bridges, two PL MAC ports, one SFP MAC/PCS port, physical ingress/egress, the CPU port, and MAC forwarding. Generates the aging tick (default 4 Hz at 100 MHz). GEM0-to-CPU smoke test passes. The board top now connects its external DDR, CPU DMA, GMII and GTH boundaries. Separate GEM RX/TX clocks replace the former single-clock interface. Now also synchronizes per-port `fwd_en_i`/`learn_en_i` into the fabric clock and arms a one-shot CPU TX destination override (via `ctrl_value_xdomain`) into `cpu_port_top`'s dest-mask inputs; see control-protocol hooks in [architecture](architecture.md#control-protocol-hooks-stplacplldp-no-protocol-logic). |
+| Header parsing and forwarding | [`mac_addr_resolver.sv`](../rtl/mac_table/mac_addr_resolver.sv), [`mac_forwarding_top.sv`](../rtl/mac_table/mac_forwarding_top.sv) | Six ingress stream snoopers extract destination/source MACs, issue lookup/learning requests, and supply forwarding masks. Hits use the learned mask with the ingress port removed (zero means drop); misses flood all other ports (including CPU for physical ingress). Ports 6–7 of the eight-port table are unused. Learning/flood/short-frame and same-port-hit tests across all six ports pass; policy and error-path gaps are listed below. Each resolver now traps the reserved `01:80:C2:00:00:0x` block to the CPU port unconditionally (`ctrl_frame_o`), and per-port `fwd_en_i`/`learn_en_i` gate ordinary forwarding/learning independent of link state, bypassed for trapped frames — the STP/LACP/LLDP hardware hooks; no protocol logic is implemented. |
+| Common logic | [`async_fifo.sv`](../rtl/common/async_fifo.sv), [`sync_fifo.sv`](../rtl/common/sync_fifo.sv), [`rr_arbiter.sv`](../rtl/common/rr_arbiter.sv), [`rst_sync.sv`](../rtl/common/rst_sync.sv), [`ctrl_value_xdomain.sv`](../rtl/common/ctrl_value_xdomain.sv) | Async-assert/synchronous-release reset helper, dual-clock CDC FIFO (a Gray-pointer model in simulation, `xpm_fifo_async` in synthesis), synchronous FIFO, round-robin arbitration, and a generic one-shot WIDTH-bit value+toggle crossing (data-before-flag; may lose a closely-spaced write, never tears a value). Pointer, tick and reset synchronizers now carry ASYNC_REG. Async FIFO has its own test; the new reset helper has no dedicated portable test; `ctrl_value_xdomain` has `tb_ctrl_value_xdomain.sv` (random-phase and racing-write trials). |
 | MAC table configuration | [`mac_table_pkg.sv`](../rtl/mac_table/mac_table_pkg.sv) | Four 512-row banks, 48-bit MAC keys, eight-bit destination masks, nine-bit age, and eight learning/lookup request ports. |
 | MAC table integration | [`mac_addr_table_top.sv`](../rtl/mac_table/mac_addr_table_top.sv), [`mac_table_bank.sv`](../rtl/mac_table/mac_table_bank.sv), [`bank_arbiter.sv`](../rtl/mac_table/bank_arbiter.sv) | Four-way table, bank arbitration, request FIFOs and response routing. Connected to all six ingress streams through `mac_forwarding_top`. |
 | MAC learning and aging | [`mac_learn_port.sv`](../rtl/mac_table/mac_learn_port.sv), [`learn_engine_fsm.sv`](../rtl/mac_table/learn_engine_fsm.sv), [`aging_sweep_fsm.sv`](../rtl/mac_table/aging_sweep_fsm.sv) | Learns or refreshes a source-port mask, selects replacement entries, and ages entries using an external tick. Tick generation is in `switch_top`; software configuration remains external. Port flushes remove destination bits in a bank sweep; back-to-back requests are merged. |
 | MAC lookup | [`mac_lookup_port.sv`](../rtl/mac_table/mac_lookup_port.sv), [`lookup_engine_fsm.sv`](../rtl/mac_table/lookup_engine_fsm.sv) | Queues lookup requests and returns hit/mask results using a pipelined bank read path. Connected to header extraction and miss-flood policy in `mac_addr_resolver`. |
-| Shared buffer control | [`buf_mgr_pkg.sv`](../rtl/buf_mgr/buf_mgr_pkg.sv), [`buf_mgr_core.sv`](../rtl/buf_mgr/buf_mgr_core.sv), [`free_list_mgr.sv`](../rtl/buf_mgr/free_list_mgr.sv), [`queue_mgr.sv`](../rtl/buf_mgr/queue_mgr.sv) | Six-port alloc/enqueue/dequeue/release protocol, free-ID pool, reference counts, lengths, and per-port linked lists. Supports multiple destination bits for one buffer. Link-state masks gate enqueue destinations; queued references can be flushed per port, including concurrent release races. Present and unit-tested. |
+| Shared buffer control | [`buf_mgr_pkg.sv`](../rtl/buf_mgr/buf_mgr_pkg.sv), [`buf_mgr_core.sv`](../rtl/buf_mgr/buf_mgr_core.sv), [`free_list_mgr.sv`](../rtl/buf_mgr/free_list_mgr.sv), [`queue_mgr.sv`](../rtl/buf_mgr/queue_mgr.sv) | Six-port alloc/enqueue/dequeue/release protocol, free-ID pool, reference counts, lengths, and per-port linked lists. Supports multiple destination bits for one buffer. Link-state masks gate enqueue destinations; queued references can be flushed per port, including concurrent release races. Present and unit-tested. Per-buffer metadata now also carries a 3-bit ingress-port tag alongside length (`enqueue_meta_i`/`dequeue_meta_o`), read back only by the CPU port -- see [architecture: CPU RX ingress-port tag](architecture.md#stp-implementation-firmware-2026-09-23). |
 | DMA configuration | [`axi_dma_pkg.sv`](../rtl/dma/axi_dma_pkg.sv) | Five physical ports, 128-bit AXI data, 32-bit addresses, one-bit ID, and pool base `0x10000000`. |
 | Physical ingress | [`ingress_top.sv`](../rtl/dma/ingress_top.sv), [`ingress_port_wr.sv`](../rtl/dma/ingress_port_wr.sv), [`ingress_dma_wr.sv`](../rtl/dma/ingress_dma_wr.sv) | Five stream receivers, local frame RAMs, shared DDR write engine, and an instantiated `buf_mgr_core`. Forwarding masks are inputs supplied by `mac_forwarding_top` in the assembled switch. Present and subsystem-tested; the shared physical write engine now accepts one 128-bit beat every two fabric cycles. |
 | Physical egress | [`egress_top.sv`](../rtl/dma/egress_top.sv), [`egress_port_rd.sv`](../rtl/dma/egress_port_rd.sv), [`egress_dma_rd.sv`](../rtl/dma/egress_dma_rd.sv) | Five queue consumers, shared DDR read engine, local frame RAMs, and AXI-S transmit outputs. Buffer-manager and CPU handshakes are joined in `switch_top`. Frame-RAM prefetch removes the former gap every eight stream words; continuous output and stalls are tested. |
@@ -167,7 +222,7 @@ The optional debug scripts and historical captures remain available.
 | Build entry points | [`build_kr260.tcl`](../build/build_kr260.tcl), [`impl_kr260.tcl`](../build/impl_kr260.tcl), [`synth_switch_top.tcl`](../build/synth_switch_top.tcl), [`switch_top_files.f`](../build/switch_top_files.f) | PS block design, synthesis, implementation/bitstream/reports and OOC digital-switch synthesis. Generated products are ignored. GEM1 debug-image creation, paired ILA capture and CSV analysis are described in [GEM1 debugging](gem1-debug.md). Build and artifact-validation limits are documented in board integration. |
 | PHY startup sequencer | [`phy_init_seq.sv`](../rtl/mdio/phy_init_seq.sv) | Owns each PL MDIO master during DP83867 ID/strap checks and delay setup; exposes completion/failure and polls PHYSTS about every 10 ms for link, speed and duplex. PHY addresses 2/3, RX/TX delays 2.00/1.75 ns. |
 | RX elastic buffer | [`rgmii_rx_elastic.sv`](../rtl/pl_gmii/rgmii_rx_elastic.sv), [`fifo36_async_2kx18.sv`](../rtl/common/fifo36_async_2kx18.sv) | Packet-aware idle adjustment over a 2048x18 hard FIFO36E2; separate portable model, occupancy counts and error events. |
-| Receive diagnostics | [`rx_diag_regs.sv`](../rtl/board/rx_diag_regs.sv), [`sticky_xdomain.sv`](../rtl/common/sticky_xdomain.sv) | AXI-Lite at 0x80100000; PL overflow/underrun flags, IDELAY readiness, SFP status/control, software link-state set/clear, flush busy, sticky link events and interrupt enable. Only CPU starts enabled; physical ports require software admission. Toggle clears are indications, not event counters. |
+| Receive diagnostics | [`rx_diag_regs.sv`](../rtl/board/rx_diag_regs.sv), [`sticky_xdomain.sv`](../rtl/common/sticky_xdomain.sv) | AXI-Lite at 0x80100000; PL overflow/underrun flags, IDELAY readiness, SFP status/control, software link-state set/clear, flush busy, sticky link events and interrupt enable. Only CPU starts enabled; physical ports require software admission. Toggle clears are indications, not event counters. Seven new registers (`0x38`-`0x50`) add per-port forward/learn enable set-clear (default all-enabled), a CPU TX destination override, and a CPU RX ingress-port tag readback for control-protocol hooks; see [memory-map](memory-map.md). |
 | SFP sideband | [`sfp_sideband.sv`](../rtl/sfp_pcs/sfp_sideband.sv) | Presence debounce, insertion settle, TX fault retry/lockout, CPU force-off and sticky status. LOS is informational; module management IIC is vendor IP generated by the build. |
 | RGMII I/O timing | [`kr260_rgmii_io.xdc`](../constraints/kr260_rgmii_io.xdc) | Forwarded TX clocks, both-edge input/output delays and per-port IDELAY groups. Board/PHY timing assumptions still require measurement. |
 | Port link control | [`port_link_ctrl.sv`](../rtl/common/port_link_ctrl.sv) | Synchronizes software state and flush toggles into the fabric; delays flush pulses four cycles, drives queue and MAC-table flushes, and returns combined busy. |

@@ -53,6 +53,10 @@ module ingress_top
   output logic [NUM_PORTS-1:0]               dequeue_valid_o_passthru,
   output logic [NUM_PORTS-1:0][BUF_ID_W-1:0] dequeue_bufid_o_passthru,
   output logic [NUM_PORTS-1:0][LENGTH_W-1:0] dequeue_length_o_passthru,
+  // Ingress-port tag for whichever buffer this dequeue just handed out (see
+  // buf_mgr_pkg's enqueue_meta_i/queue_mgr.sv's meta_mem); only the CPU port
+  // (index 5) is expected to have a consumer read this.
+  output logic [NUM_PORTS-1:0][PORT_ID_W-1:0] dequeue_meta_o_passthru,
   input  logic [NUM_PORTS-1:0]               release_req_i_passthru,
   input  logic [NUM_PORTS-1:0][BUF_ID_W-1:0] release_bufid_i_passthru,
   output logic [NUM_PORTS-1:0]               release_gnt_o_passthru,
@@ -83,6 +87,11 @@ module ingress_top
   logic [NUM_PORTS-1:0][BUF_ID_W-1:0]  enqueue_bufid;
   logic [NUM_PORTS-1:0][LENGTH_W-1:0]  enqueue_length;
   logic [NUM_PORTS-1:0][NUM_PORTS-1:0] enqueue_destmask;
+  // Ingress-port tag: for the 5 physical ports this is simply their own
+  // fixed PORT_ID (known at elaboration time, tied below); the CPU port's
+  // own slot is never read back (nothing dequeues port 5's queue at port
+  // 5), so it's tied to a fixed placeholder value too.
+  logic [NUM_PORTS-1:0][PORT_ID_W-1:0] enqueue_meta;
   logic [NUM_PORTS-1:0]                enqueue_gnt;
 
   buf_mgr_core u_buf_mgr (
@@ -95,11 +104,13 @@ module ingress_top
     .enqueue_bufid_i    (enqueue_bufid),
     .enqueue_length_i   (enqueue_length),
     .enqueue_destmask_i (enqueue_destmask),
+    .enqueue_meta_i     (enqueue_meta),
     .enqueue_gnt_o      (enqueue_gnt),
     .dequeue_req_i      (dequeue_req_i_passthru),
     .dequeue_valid_o    (dequeue_valid_o_passthru),
     .dequeue_bufid_o    (dequeue_bufid_o_passthru),
     .dequeue_length_o   (dequeue_length_o_passthru),
+    .dequeue_meta_o     (dequeue_meta_o_passthru),
     .release_req_i      (release_req_i_passthru),
     .release_bufid_i    (release_bufid_i_passthru),
     .release_gnt_o      (release_gnt_o_passthru),
@@ -120,6 +131,7 @@ module ingress_top
   assign enqueue_bufid[5]    = cpu_enqueue_bufid_i;
   assign enqueue_length[5]   = cpu_enqueue_length_i;
   assign enqueue_destmask[5] = cpu_enqueue_destmask_i;
+  assign enqueue_meta[5]     = PORT_ID_W'(5); // never read back; see note above
   assign cpu_enqueue_gnt_o   = enqueue_gnt[5];
 
   // ---- 5 physical ingress front-ends + shared write engine ----
@@ -134,6 +146,7 @@ module ingress_top
 
   generate
     for (gi = 0; gi < NUM_PHYS_PORTS; gi++) begin : g_ingress_ports
+      assign enqueue_meta[gi] = PORT_ID_W'(gi);
       ingress_port_wr #(.PORT_ID(gi)) u_port (
         .clk                 (clk),
         .rst_n               (rst_n),

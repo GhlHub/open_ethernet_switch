@@ -2,6 +2,7 @@
 #include "statistics.h"
 #include "snmp.h"
 #include "web.h"
+#include "stp.h"
 #include "FreeRTOS.h"
 #include "task.h"
 static void startup(void *arg)
@@ -13,6 +14,7 @@ static void startup(void *arg)
     configASSERT(xTaskCreate(snmp_task,"snmp",4096,NULL,1,NULL)==pdPASS);
     configASSERT(xTaskCreate(web_task,"http",4096,NULL,1,NULL)==pdPASS);
     configASSERT(xTaskCreate(board_link_task,"links",2048,NULL,2,NULL)==pdPASS);
+    configASSERT(xTaskCreate(stp_task,"stp",2048,NULL,2,NULL)==pdPASS);
     vTaskDelete(NULL);
 }
 int main(void)

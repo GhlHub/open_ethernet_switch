@@ -1,5 +1,6 @@
 #include "board.h"
 #include "policy.h"
+#include "pstate.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "FreeRTOS_IP.h"
@@ -80,6 +81,12 @@ static void network_service(void *arg)
         for (unsigned j=0;j<16;j++) {
             size_t n=fabric_dma_receive(frame,sizeof frame);
             if (!n) break;
+            /* IEEE 802.1D reserved block (01:80:C2:00:00:0x): STP/LACP/LLDP/etc,
+             * never IP/ARP traffic for this board's own MAC -- see pstate.h. */
+            if (n>=6 && frame[0]==0x01 && frame[1]==0x80 && frame[2]==0xc2 &&
+                frame[3]==0x00 && frame[4]==0x00 && (frame[5]&0xf0u)==0x00) {
+                fabric_ctrl_frame_rx(frame,n); continue;
+            }
             if (eConsiderFrameForProcessing(frame)!=eProcessBuffer) continue;
             NetworkBufferDescriptor_t *b=pxGetNetworkBufferWithDescriptor(n,0);
             if (!b) continue;

@@ -33,9 +33,10 @@ int main(void)
         s.release_timeout_by_index[b][i]=UINT32_MAX;s.response_timeout_by_index[b][i]=UINT32_MAX;
     }
     struct port_snapshot ports={.speed_mbps={1000,10,0,0,1000,0}};
+    struct stp_status st={.is_root=true,.root_port=STP_ROOT_NONE};
     char output[24576];
-    assert(web_stats(output,10,&s,&v,100,200,&ports)==0);
-    assert(web_stats(output,sizeof(output),&s,&v,100,200,&ports)>0);
+    assert(web_stats(output,10,&s,&v,100,200,&ports,&st)==0);
+    assert(web_stats(output,sizeof(output),&s,&v,100,200,&ports,&st)>0);
     assert(strstr(output,"\"18446744073709551615\""));
     puts(output);
     return 0;

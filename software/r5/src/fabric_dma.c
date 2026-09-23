@@ -5,6 +5,7 @@
 #include "board.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "semphr.h"
 #include <string.h>
 #define RX_COUNT 16u
 #define FRAME_BYTES 1536u
@@ -22,6 +23,15 @@ static uint8_t rx_data[RX_COUNT][FRAME_BYTES] __attribute__((section(".dma_nocac
 static uint8_t tx_data[2][FRAME_BYTES] __attribute__((section(".dma_nocache"), aligned(64)));
 static unsigned rx_index, tx_index;
 static bool ready, failed;
+static bool last_tag_valid; static uint8_t last_tag_port;
+/* fabric_dma_send() is now called from two independent tasks: the IP task
+ * (network.c's output() callback, ordinary IP-stack traffic) and
+ * stp_task.c (BPDU transmission). Both touch the same shared tx[]/tx_data[]/
+ * tx_index state with no other synchronization, so a lock is required --
+ * see pstate.h's own header on pstate_cpu_tx_raw(). A mutex, not a critical
+ * section: fabric_dma_send() blocks (vTaskDelay) waiting for DMA
+ * completion, which a critical section must never do. */
+static SemaphoreHandle_t tx_lock;
 static uint32_t address(const void *p) { return (uint32_t)(uintptr_t)p; }
 bool fabric_dma_healthy(void)
 {
@@ -31,6 +41,7 @@ bool fabric_dma_healthy(void)
 bool fabric_dma_init(void)
 {
     if (ready || failed) return fabric_dma_healthy();
+    if (!tx_lock) tx_lock = xSemaphoreCreateMutex();
     mmio_write(DMA_BASE, 4); /* reset both channels */
     uint64_t start=board_timestamp();
     while (mmio_read(DMA_BASE)&4) {
@@ -58,6 +69,7 @@ bool fabric_dma_init(void)
 bool fabric_dma_send(const uint8_t *p, size_t n)
 {
     if (!fabric_dma_healthy() || n<14 || n>1514) return false;
+    xSemaphoreTake(tx_lock, portMAX_DELAY);
     struct bd *d=&tx[tx_index];
     memcpy(tx_data[tx_index],p,n);
     /* Physical MACs pad, but padding here also keeps all virtual-port frames uniform. */
@@ -66,16 +78,20 @@ bool fabric_dma_send(const uint8_t *p, size_t n)
     d->status=0; d->control=SOF_EOF|(uint32_t)bytes;
     barrier(); mmio_write(DMA_BASE+0x10,address(d));
     TickType_t start=xTaskGetTickCount();
+    bool ok=true;
     while (!(d->status&COMPLETE)) {
         if (!fabric_dma_healthy() || xTaskGetTickCount()-start>=pdMS_TO_TICKS(100)) {
-            failed=true; return false;
+            failed=true; ok=false; break;
         }
         vTaskDelay(1);
     }
-    barrier();
-    if (d->status&ERRORS) { failed=true; return false; }
-    tx_index=(tx_index+1)%2;
-    return true;
+    if (ok) {
+        barrier();
+        if (d->status&ERRORS) { failed=true; ok=false; }
+        else tx_index=(tx_index+1)%2;
+    }
+    xSemaphoreGive(tx_lock);
+    return ok;
 }
 size_t fabric_dma_receive(uint8_t *p, size_t capacity)
 {
@@ -83,6 +99,14 @@ size_t fabric_dma_receive(uint8_t *p, size_t capacity)
     struct bd *d=&rx[rx_index]; uint32_t status=d->status;
     if (!(status&COMPLETE)) return 0;
     barrier();
+    /* Exactly one CPU_RX_TAG read per ring descriptor consumed, whether or
+     * not the frame itself turns out well-formed below -- this is the one
+     * place that decides a descriptor was consumed, so it must also be the
+     * one place that keeps the tag FIFO in lockstep with it (see
+     * rx_diag_regs.sv's 0x50 header: reads pop, and network.c's `if (!n)
+     * break` on a bad frame would otherwise desync the two streams). */
+    uint32_t tag=mmio_read(DIAG_BASE+CPU_RX_TAG);
+    last_tag_valid=(tag&0x80000000u)!=0; last_tag_port=(uint8_t)(tag&7u);
     size_t n=status&0xffffu;
     if ((status&(ERRORS|SOF_EOF))!=SOF_EOF || n<14 || n>1514 || n>capacity) n=0;
     if (n) memcpy(p,rx_data[rx_index],n);
@@ -90,4 +114,8 @@ size_t fabric_dma_receive(uint8_t *p, size_t capacity)
     mmio_write(DMA_BASE+RX_CH+0x10,address(d));
     rx_index=(rx_index+1)%RX_COUNT;
     return n;
+}
+void fabric_dma_last_rx_tag(bool *valid, uint8_t *ingress_port)
+{
+    *valid=last_tag_valid; *ingress_port=last_tag_port;
 }

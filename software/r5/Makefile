@@ -44,7 +44,7 @@ out/kr260_r5.elf: $(OBJECTS) linker.ld verify_elf.py $(BSP)/lib/libxil.a $(BSP)/
 	$(CC) $(CFLAGS) -nostartfiles -Wl,--gc-sections,--wrap=outbyte,-Map,out/kr260_r5.map -Wl,-T,linker.ld $(OBJECTS) -L$(BSP)/lib -Wl,--start-group -lxil -lxilstandalone -lxiltimer -lc -lm -lgcc -Wl,--end-group -o $@
 	$(SIZE) $@
 	python3 verify_elf.py $@ $(NM)
-test: test-snmp test-web test-links | out
+test: test-snmp test-web test-links test-pstate test-stp | out
 	cc -std=c11 -Wall -Wextra -Werror -Iinclude src/policy.c tests/test_policy.c -o out/test_policy
 	./out/test_policy
 	cc -std=c11 -Wall -Wextra -Werror -fno-pie -no-pie -Itests/fakes src/fabric_dma.c tests/test_dma.c -o out/test_dma
@@ -63,7 +63,7 @@ test-snmp: | out
 	  python3 tests/test_snmp.py out/test_snmp_$$ddr$$debug.so $$((1 + 2*ddr + 4*debug)); \
 	done; done
 clean:
-	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_statistics out/test_snmp*.so out/test_web out/test_links out/test_web.json out/web_page.h
+	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_statistics out/test_snmp*.so out/test_web out/test_links out/test_pstate out/test_stp out/test_web.json out/web_page.h
 -include $(OBJECTS:.o=.d)
 
 .PHONY: test-web
@@ -78,3 +78,13 @@ test-web: | out
 test-links: | out
 	cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/link_fakes -Iinclude src/policy.c src/port_policy.c tests/test_links.c -o out/test_links
 	./out/test_links
+
+.PHONY: test-pstate
+test-pstate: | out
+	cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/link_fakes -Iinclude tests/test_pstate.c -o out/test_pstate
+	./out/test_pstate
+
+.PHONY: test-stp
+test-stp: | out
+	cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iinclude tests/test_stp.c -o out/test_stp
+	./out/test_stp

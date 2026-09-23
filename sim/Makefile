@@ -168,6 +168,7 @@ MAC_FWD_TB := $(TB_DIR)/tb_mac_forwarding_top.sv
 
 SWITCH_TOP_SRCS := $(wildcard ../rtl/stats/*.sv) \
 	$(COMMON_DIR)/port_link_ctrl.sv \
+	$(COMMON_DIR)/ctrl_value_xdomain.sv \
 	$(BUFMGR_DIR)/buf_mgr_pkg.sv \
 	$(MAC_DIR)/mac_table_pkg.sv \
 	$(DMA_DIR)/axi_dma_pkg.sv \

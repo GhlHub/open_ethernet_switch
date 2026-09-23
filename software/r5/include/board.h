@@ -10,6 +10,13 @@
 #define LINK_CLR 0x10
 #define LINK_STATUS 0x14
 #define PCS_STATUS 0x20
+#define FWD_SET 0x38
+#define FWD_CLR 0x3c
+#define LEARN_SET 0x40
+#define LEARN_CLR 0x44
+#define PORT_CTRL_STATUS 0x48
+#define CPU_TX_OVERRIDE 0x4c
+#define CPU_RX_TAG 0x50
 #define CPU_PORT_MASK 0x20u
 #define PHYSICAL_PORT_MASK 0x1fu
 static inline uint32_t mmio_read(uintptr_t p) { return *(volatile uint32_t *)p; }
@@ -30,4 +37,10 @@ bool fabric_dma_init(void);
 bool fabric_dma_send(const uint8_t *p, size_t n);
 size_t fabric_dma_receive(uint8_t *p, size_t capacity);
 bool fabric_dma_healthy(void);
+/* The physical ingress port (0-4) of the frame just returned by the most
+ * recent fabric_dma_receive() call that actually consumed a ring
+ * descriptor (*valid follows that, not whether the frame itself was
+ * well-formed). See rtl/board/rx_diag_regs.sv's CPU_RX_TAG (0x50) header
+ * and switch_top.sv's cpu_rx_ingress_* ports for where this comes from. */
+void fabric_dma_last_rx_tag(bool *valid, uint8_t *ingress_port);
 #endif

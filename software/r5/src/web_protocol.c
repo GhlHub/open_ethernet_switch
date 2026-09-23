@@ -80,8 +80,12 @@ static void values(struct writer *w,const uint64_t *v,unsigned rows,unsigned col
     }
     put(w,"]");
 }
+static void mac_hex(struct writer *w,const uint8_t m[6])
+{ put(w,"\"%02x:%02x:%02x:%02x:%02x:%02x\"",m[0],m[1],m[2],m[3],m[4],m[5]); }
+
 size_t web_stats(char *out,size_t size,const struct statistics_snapshot *s,
-                 const struct sensor_snapshot *v,uint32_t hz,uint64_t now,const struct port_snapshot *ports)
+                 const struct sensor_snapshot *v,uint32_t hz,uint64_t now,const struct port_snapshot *ports,
+                 const struct stp_status *stp)
 {
     struct writer w={out,size,0,0};
     put(&w,"{\"available\":%s,\"capabilities\":%u,\"polls\":%u,\"late_polls\":%u,\"saturated_reads\":%u,\"read_timeouts\":%u,\"release_timeouts\":%u,\"response_timeouts\":%u,\"last_release_index\":%u,\"last_release_target_index\":%u,\"last_response_index\":%u,\"age_ms\":%llu,\"ports\":",
@@ -99,9 +103,20 @@ size_t web_stats(char *out,size_t size,const struct statistics_snapshot *s,
     for (unsigned b=0;b<13;b++) for (unsigned i=0;i<16;i++)
         if (s->release_timeout_by_index[b][i] || s->response_timeout_by_index[b][i])
             put(&w,"%s[%u,%u,%u,%u]",n++?",":"",b,i,s->release_timeout_by_index[b][i],s->response_timeout_by_index[b][i]);
-    put(&w,"],\"sensors\":{\"valid_mask\":%u,\"errors\":%u,\"age_ms\":%llu,\"temperature_mc\":[%ld,%ld],\"voltage_uv\":[%u,%u,%u,%u,%u,%u],\"som_current_ua\":%ld,\"som_voltage_uv\":%u,\"som_power_uw\":%u}}",
+    put(&w,"],\"sensors\":{\"valid_mask\":%u,\"errors\":%u,\"age_ms\":%llu,\"temperature_mc\":[%ld,%ld],\"voltage_uv\":[%u,%u,%u,%u,%u,%u],\"som_current_ua\":%ld,\"som_voltage_uv\":%u,\"som_power_uw\":%u}",
         v->valid_mask,v->errors,(unsigned long long)((hz && v->timestamp && now>=v->timestamp)?(now-v->timestamp)*1000/hz:UINT32_MAX),
         (long)v->temperature_mc[0],(long)v->temperature_mc[1],v->voltage_uv[0][0],v->voltage_uv[0][1],v->voltage_uv[0][2],v->voltage_uv[1][0],v->voltage_uv[1][1],v->voltage_uv[1][2],(long)v->som_current_ua,v->som_voltage_uv,v->som_power_uw);
+    put(&w,",\"stp\":{\"enabled\":%s,\"bridge_mac\":",stp->enabled?"true":"false"); mac_hex(&w,stp->bridge_id.mac);
+    put(&w,",\"bridge_priority\":%u,\"root_mac\":",stp->bridge_id.priority); mac_hex(&w,stp->root_id.mac);
+    put(&w,",\"root_priority\":%u,\"root_path_cost\":%u,\"is_root\":%s,\"root_port\":%d,\"topology_changes\":%u,\"tcn_rx\":%u,\"ports\":[",
+        stp->root_id.priority,stp->root_path_cost,stp->is_root?"true":"false",
+        stp->is_root?-1:(int)stp->root_port,stp->topology_change_count,stp->tcn_rx);
+    for (unsigned i=0;i<STP_NUM_PORTS;i++) {
+        const struct stp_port_status *sp=&stp->port[i];
+        put(&w,"%s{\"state\":%u,\"role\":%u,\"link_up\":%s,\"path_cost\":%u,\"bpdu_rx\":%u,\"bpdu_tx\":%u,\"role_changes\":%u}",
+            i?",":"",sp->state,sp->role,sp->link_up?"true":"false",sp->path_cost,sp->bpdu_rx,sp->bpdu_tx,sp->role_changes);
+    }
+    put(&w,"]}}");
     return w.failed?0:w.used;
 }
 

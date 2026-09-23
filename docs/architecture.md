@@ -229,6 +229,145 @@ Rapid repeated toggles, link-up before flush completes, ongoing learning and
 in-flight traffic need further testing. The register map is in
 [board integration](board-integration.md#link-control-and-events).
 
+### Control-protocol hooks (STP/LACP/LLDP) and the STP implementation
+
+The hardware traps and gates traffic needed to run STP (and, generically,
+any other IEEE 802.1D "Slow Protocol" that addresses frames to the reserved
+Bridge Group block) as protocol-agnostic primitives — none of the hardware
+described in this subsection parses a BPDU, elects a root, or runs a timer.
+As of 2026-09-23 those primitives ARE used by a real classic (802.1D-1998,
+not RSTP/MSTP) STP implementation in firmware (`software/r5/src/stp.c` +
+`stp_task.c`), described in its own subsection below. LACP and LLDP remain
+unimplemented; the same hooks are available for a future task to use the
+same way.
+
+**Reserved address trap.** Each per-port `mac_addr_resolver` instance
+(inside `mac_forwarding_top`) compares every frame's destination MAC
+against the fixed 44-bit prefix `01:80:C2:00:00:0x` (IEEE 802.1D's
+Bridge Group Address block, covering STP/RSTP/MSTP, LACP/OAM Slow
+Protocols, LLDP nearest-bridge and others in one compare). A match forces
+`dest_mask` to the CPU port only, regardless of the MAC table, and asserts
+a per-port `ctrl_frame_o`. This trap is unconditional — not gated by
+`fwd_en_i`/`learn_en_i` below, and not software-disableable — since the
+reserved range has no legitimate reason to ever be flooded or forwarded to
+another port.
+
+**`fwd_en_i` / `learn_en_i` (per physical port, `mac_forwarding_top` /
+`switch_top`).** These add the two 802.1D port-state gates the existing
+`link_up_i`/link-flush mechanism above does not provide:
+
+- `fwd_en_i[n]=0` makes port `n`'s resolver return an empty `dest_mask` for
+  ordinary traffic (nothing is relayed from or to that port), independent
+  of physical link state.
+- `learn_en_i[n]=0` suppresses `learn_req_o` for that port (source MACs
+  are not entered into the table), also independent of link state.
+- Both gates are bypassed for control-block frames — a "blocking" port
+  under `fwd_en_i=0` still delivers its BPDUs/LACPDUs/LLDPDUs to the CPU,
+  which is required for STP to ever transition a blocked port back to
+  forwarding.
+
+Firmware controls these through four new `rx_diag_regs` write-1-to-set /
+write-1-to-clear registers (`FWD_SET`/`FWD_CLR`/`LEARN_SET`/`LEARN_CLR` at
+offsets `0x38`/`0x3C`/`0x40`/`0x44`) and reads combined status back from
+`PORT_CTRL_STATUS` (`0x48`). Both default to all-ports-enabled out of
+reset, so the system behaves exactly as before this feature on any
+firmware that never touches these registers. The bits cross into the
+fabric clock domain through a plain double-flop synchronizer (level
+signals, not pulsed), matching this design's existing CDC conventions —
+see [cdc-review](cdc-review.md).
+
+**CPU TX destination override (`switch_top`).** Previously CPU-originated
+frames could only be resolved by the same automatic per-port
+`mac_addr_resolver` (PORT_ID=5) every physical port uses — learned-unicast
+or flood, with no way to target one specific egress port. A control
+protocol needs exactly that (send a BPDU/LACPDU out one port only).
+`CPU_TX_OVERRIDE` (`0x4C`, bit31=go, bits5:0=destination port mask)
+crosses into the fabric clock domain through the new generic
+`ctrl_value_xdomain` module (a one-shot value+toggle crossing, documented
+in the module itself) and arms a one-shot latch inside `switch_top` that
+substitutes the software-chosen mask for `cpu_port_top`'s normal
+`dest_mask_i`/`dest_mask_valid_i` on exactly the next frame the CPU
+enqueues, then disarms automatically. An un-overridden CPU frame resolves
+normally, so this has no effect on ordinary CPU traffic (management, DHCP,
+ARP, etc.).
+
+**Firmware plumbing (`software/r5/src/pstate.c`, `pstate.h`).** Thin
+register-access wrappers only — `pstate_fwd_set/clear`,
+`pstate_learn_set/clear`, `pstate_get`, and `pstate_cpu_tx_raw` (arms the
+override, then calls the existing `fabric_dma_send`). `network.c`'s RX
+loop pre-filters frames addressed to the reserved block before they reach
+`eConsiderFrameForProcessing` (which would otherwise silently discard
+them, since they don't match the board's own MAC or IP/ARP EtherTypes) and
+hands them to a weak, default-no-op hook, `fabric_ctrl_frame_rx` — now
+overridden by `stp_task.c` (see below); LACP/LLDP remain unimplemented and
+would need their own override of the same weak hook.
+
+**CPU RX ingress-port tag.** The one hardware gap STP genuinely needed:
+the CPU's inbound frame path (`buf_mgr_core`/`queue_mgr` → `egress_top` →
+the shared CPU AXI DMA) had no way to tell software which of the 5
+physical ports a delivered frame actually arrived on — all of them funnel
+into one shared CPU RX queue. `buf_mgr_pkg`'s per-buffer metadata (already
+carrying `length` end-to-end) now also carries a 3-bit ingress-port tag,
+set to each physical port's own fixed `PORT_ID` at enqueue time
+(`ingress_top.sv`) and read back at CPU dequeue time. `switch_top.sv`
+pushes it into a small `async_fifo` (`clk` → `axis_clk`, depth 16, one
+entry per frame handed to the CPU, in delivery order) that
+`rx_diag_regs`'s new `CPU_RX_TAG` register (`0x50`) pops on every read.
+`fabric_dma.c` reads this register exactly once per RX descriptor it
+retires (well-formed or not) to stay in lockstep, and exposes it as
+`fabric_dma_last_rx_tag()`. This is a generically useful hook (works for
+any CPU-delivered frame, not just trapped control-block ones), not
+STP-specific.
+
+#### STP implementation (firmware, 2026-09-23)
+
+`software/r5/src/stp.c`/`include/stp.h` implement the classic 802.1D-1998
+Spanning Tree Protocol: Config/TCN BPDU encode-decode, the fixed-
+configuration root/designated/blocking election (comparing
+{root ID, root path cost, sender bridge ID, sender port ID} tuples), and
+the Blocking → Listening → Learning → Forwarding progression driven by the
+four standard timers (Hello 2s, Max Age 20s, Forward Delay 15s, inherited
+from the root once one is known). It has no `board.h`/FreeRTOS dependency
+— host-testable like `policy.c`. A three-bridge triangle regression
+(`tests/test_stp.c`) elects one root and blocks one port in that topology;
+this does not establish general protocol conformance. A deliberate
+simplification: TCN BPDUs are counted but not propagated (no network-wide
+fast-aging on topology change) — see `stp.h`'s header for why.
+
+`stp_task.c` is the hardware glue: a 1 Hz FreeRTOS task that polls
+`board_ports_get()`/`board_ports_snapshot()` for per-port admission and
+speed (mapped to 802.1D path cost: 4/19/100 for 1000/100/10 Mb/s), drives
+`FWD_EN`/`LEARN_EN` through `pstate.c` from each recompute's desired mask
+(diffed against the last-applied mask, so an unchanged port is never
+re-written — `FWD_CLR`/`LEARN_CLR` also flush the port, so a spurious
+repeated write would flush it every second and prevent MAC learning from
+ever settling), and transmits BPDUs via `pstate_cpu_tx_raw`. It supplies
+the strong override of `fabric_ctrl_frame_rx`, reads the frame's ingress
+port via `fabric_dma_last_rx_tag()`, and feeds it to `stp_rx_bpdu()`. Live
+status (bridge/root IDs, root path cost, and per-port role/state/BPDU
+counters) is exposed through `/api/statistics`'s new `"stp"` JSON object
+and rendered on the web statistics page — the way to visually confirm STP
+is running and converged on real hardware.
+
+**Defaults disabled (2026-09-23).** `stp_task.c`'s `stp_enabled` static
+starts `false` and there is currently no web control or persistent
+configuration to change it (both explicitly future work) — the only way
+to turn it on today is editing that initializer and rebuilding. While
+disabled the task touches no hardware at all (no `FWD_EN`/`LEARN_EN`
+writes, no BPDU transmit/receive processing), ordinary forwarding remains enabled, while reserved control frames
+are still trapped to the CPU and discarded; `stp_get_enabled()`/
+`stp_set_enabled()` exist as the entry point the pending web control will
+call, restoring all-enabled hardware state on disable and reinitializing
+the engine fresh on enable. A real bug was found exercising this feature
+against a genuine STP-speaking neighbor switch and is worth knowing about
+if extending `stp_task.c` further: `fabric_dma_send()` needed a mutex once
+a second CPU-TX caller (BPDU transmission) existed alongside the IP
+stack's own output path — see [verification](verification.md)'s
+"real bug: CPU TX race" entry.
+
+Remaining TX-override serialization, shared STP task-state, CDC and CPU RX
+tag risks are recorded in [verification](verification.md#2026-09-23-check-in-review-remaining-stp-limitations).
+
 ## Switch-fabric bandwidth limitations and areas to investigate
 
 Status: updated 2026-09-22 for the pipelined physical ingress write engine

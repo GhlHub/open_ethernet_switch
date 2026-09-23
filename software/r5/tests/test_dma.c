@@ -11,7 +11,11 @@ static unsigned sends;
 static int mode;
 static uint8_t payload[64];
 void barrier(void) {}
-uint32_t mmio_read(uintptr_t p) { return regs[(p-DMA_BASE)/4]; }
+uint32_t mmio_read(uintptr_t p)
+{
+    if (p==DIAG_BASE+CPU_RX_TAG) return 0; /* not under test here: always "no tag" */
+    return regs[(p-DMA_BASE)/4];
+}
 void mmio_write(uintptr_t p,uint32_t v)
 {
     unsigned offset=(unsigned)(p-DMA_BASE);

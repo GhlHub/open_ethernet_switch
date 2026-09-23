@@ -121,6 +121,44 @@ negotiation link passes through a two-flop synchronizer before event detection.
 The new clock plan and constraints require review of all physical skew/reset
 assumptions; fixed-ratio simulation does not prove metastability safety.
 
+## STP/control-protocol hardware hooks (2026-09-23)
+
+Two new crossings support the port-state and CPU-TX-override hooks
+described in [architecture](architecture.md#control-protocol-hooks-stplacplldp-no-protocol-logic):
+
+- `switch_top` synchronizes `learn_en_i`/`fwd_en_i` (12 bits, `clk_pl_0` to
+  the 100 MHz fabric clock) with a plain two-flop `ASYNC_REG` synchronizer,
+  the same structure as finding 6 above. These are levels, not pulses, and
+  reset to all-ones so the fabric never observes a spurious all-zero mask
+  during reset release. No handshake is needed since a stale-by-one-cycle
+  read of an admin-intent bit is harmless.
+- The CPU TX destination override uses `ctrl_value_xdomain.sv`, which
+  launches data and toggle simultaneously through independent two-stage
+  synchronizers. This is not the constrained data-before-flag protocol in
+  finding 5. Equal synchronizer depths do not guarantee a coherent word or
+  matching event on silicon. Closely spaced writes can also lose events.
+  The random-phase behavioral bench passes but models neither metastability
+  nor physical bit skew. Replace or qualify this crossing with a held-data
+  handshake/asynchronous FIFO and review routed timing/CDC before relying
+  on it for STP. Existing clock-pair counts do not sign off this new circuit.
+
+## CPU RX ingress-port tag (2026-09-23)
+
+`switch_top.sv` adds one more `async_fifo` instance (the same vendor-recognized/
+behavioral-model split as finding 4, depth 16, width 3): write side on `clk`
+(fabric), pushed once per frame `queue_mgr` hands to the CPU (on
+`dequeue_valid[5]`, tagged with that buffer's true ingress port, threaded
+through `buf_mgr_core`/`queue_mgr`'s new `enqueue_meta_i`/`dequeue_meta_o`
+alongside the existing per-buffer length); read side on `axis_clk`, popped by
+`rx_diag_regs`'s new `CPU_RX_TAG` register (`0x50`) on every AXI-Lite read of
+that address. This is a plain FIFO crossing, not a data-before-flag mailbox
+-- ordering across the two clock domains is exactly
+the FIFO's own contract, and correctness additionally depends on software
+popping exactly one entry per RX DMA descriptor it retires (documented in
+`fabric_dma.c`). FIFO-full handling and alignment after DMA errors or resets
+remain hardware/software integration concerns. Not yet covered by a routed
+`report_cdc` pass.
+
 ## Initial R5 status interface
 
 `PCS_STATUS` at diagnostics offset `0x20` adds two-stage ASYNC_REG crossings

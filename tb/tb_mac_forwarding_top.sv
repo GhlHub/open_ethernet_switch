@@ -47,6 +47,8 @@ module tb_mac_forwarding_top;
 
   logic [NUM_PORTS-1:0][NUM_PORTS-1:0] dest_mask;
   logic [NUM_PORTS-1:0]                dest_mask_valid;
+  logic [NUM_PORTS-1:0]                learn_en, fwd_en;
+  logic [NUM_PORTS-1:0]                ctrl_frame;
 
   assign s_axis_tready = {NUM_PORTS{1'b1}}; // see header note
 
@@ -62,6 +64,9 @@ module tb_mac_forwarding_top;
     .s_axis_tready_i    (s_axis_tready),
     .dest_mask_o        (dest_mask),
     .dest_mask_valid_o  (dest_mask_valid),
+    .learn_en_i         (learn_en),
+    .fwd_en_i           (fwd_en),
+    .ctrl_frame_o       (ctrl_frame),
     .flush_req_i ('0),
     .flush_busy_o ()
   );
@@ -152,6 +157,8 @@ module tb_mac_forwarding_top;
     s_axis_tkeep  = '0;
     s_axis_tvalid = '0;
     s_axis_tlast  = '0;
+    learn_en      = '1;
+    fwd_en        = '1;
 
     repeat (5) @(posedge clk);
     rst_n = 1'b1;
@@ -243,6 +250,108 @@ module tb_mac_forwarding_top;
       end else
         $display("PASS: same-port hit on port %0d drops without flooding", port);
       wait_cycles(10);
+    end
+
+    // ---- test F: reserved control block (STP/LACP/LLDP...) never floods,
+    // always goes to the CPU alone, regardless of fwd_en_i; its source is
+    // still learned normally ----
+    begin
+      localparam logic [NUM_PORTS-1:0] CPU_ONLY = NUM_PORTS'(1) << (NUM_PORTS - 1);
+      localparam logic [47:0] MAC_STP_SRC  = 48'h02_00_00_00_F0_01;
+      localparam logic [47:0] MAC_LLDP_SRC = 48'h02_00_00_00_F0_02;
+      bit timed_out;
+
+      // F1: classic STP/RSTP/MSTP BPDU address
+      send_frame(0, 48'h01_80_C2_00_00_00, MAC_STP_SRC, 20);
+      wait_for_mask(0, timed_out);
+      if (timed_out || dest_mask[0] !== CPU_ONLY || !ctrl_frame[0]) begin
+        $display("FAIL: testF1 STP BPDU: timeout=%0b mask=%0b ctrl=%0b (expected CPU-only=%0b, ctrl=1)",
+                 timed_out, dest_mask[0], ctrl_frame[0], CPU_ONLY);
+        errors++;
+      end else $display("PASS: testF1 STP BPDU address trapped to the CPU alone");
+      wait_cycles(10);
+
+      // F2: LLDP's nearest-bridge address -- same block, different low nibble
+      send_frame(0, 48'h01_80_C2_00_00_0E, MAC_LLDP_SRC, 20);
+      wait_for_mask(0, timed_out);
+      if (timed_out || dest_mask[0] !== CPU_ONLY || !ctrl_frame[0]) begin
+        $display("FAIL: testF2 LLDP address: timeout=%0b mask=%0b ctrl=%0b", timed_out, dest_mask[0], ctrl_frame[0]);
+        errors++;
+      end else $display("PASS: testF2 LLDP address (same reserved block) also trapped to the CPU alone");
+      wait_cycles(10);
+
+      // F3: one past the reserved block -- must NOT be trapped (exact boundary)
+      send_frame(0, 48'h01_80_C2_00_00_10, MAC_STP_SRC, 20);
+      wait_for_mask(0, timed_out);
+      if (timed_out || dest_mask[0] !== (~(NUM_PORTS'(1) << 0)) || ctrl_frame[0]) begin
+        $display("FAIL: testF3 01:80:C2:00:00:10 (outside the block): timeout=%0b mask=%0b ctrl=%0b",
+                 timed_out, dest_mask[0], ctrl_frame[0]);
+        errors++;
+      end else $display("PASS: testF3 address just outside the reserved block floods normally, untrapped");
+      wait_cycles(10);
+
+      // F4: MAC_STP_SRC (testF1's source) is a real learned entry now
+      send_frame(1, MAC_STP_SRC, 48'h02_00_00_00_F0_03, 20);
+      wait_for_mask(1, timed_out);
+      if (timed_out || dest_mask[1] !== (NUM_PORTS'(1) << 0)) begin
+        $display("FAIL: testF4 BPDU source not learned: timeout=%0b mask=%0b", timed_out, dest_mask[1]);
+        errors++;
+      end else $display("PASS: testF4 a control frame's source MAC is learned like any other");
+      wait_cycles(10);
+
+      // F5: fwd_en_i=0 blocks ordinary traffic but never a control frame
+      fwd_en[0] = 1'b0;
+      wait_cycles(2);
+      send_frame(0, 48'hAA_BB_CC_DD_EE_02, MAC_STP_SRC, 20); // unlearned, ordinary
+      wait_for_mask(0, timed_out);
+      if (timed_out || dest_mask[0] !== '0) begin
+        $display("FAIL: testF5a fwd_en=0 ordinary frame: timeout=%0b mask=%0b (expected 0)", timed_out, dest_mask[0]);
+        errors++;
+      end else $display("PASS: testF5a forwarding disabled on port 0 drops its ordinary traffic");
+      wait_cycles(10);
+      send_frame(0, 48'h01_80_C2_00_00_00, MAC_STP_SRC, 20); // STP, same blocked port
+      wait_for_mask(0, timed_out);
+      if (timed_out || dest_mask[0] !== CPU_ONLY || !ctrl_frame[0]) begin
+        $display("FAIL: testF5b fwd_en=0 STP BPDU: timeout=%0b mask=%0b ctrl=%0b (expected CPU-only despite fwd_en=0)",
+                 timed_out, dest_mask[0], ctrl_frame[0]);
+        errors++;
+      end else $display("PASS: testF5b a blocked port still delivers its BPDUs to the CPU");
+      fwd_en[0] = 1'b1;
+      wait_cycles(10);
+    end
+
+    // ---- test G: learn_en_i=0 stops this port's source MACs from being
+    // learned; re-enabling it lets a subsequent frame learn normally ----
+    begin
+      localparam logic [47:0] MAC_G = 48'h02_00_00_00_60_01;
+      bit timed_out;
+
+      learn_en[3] = 1'b0;
+      wait_cycles(2);
+      send_frame(3, MAC_UNKNOWN_DST, MAC_G, 20);
+      wait_for_mask(3, timed_out);
+      if (timed_out) $fatal(1, "testG learning frame (disabled) timed out");
+      wait_cycles(50);
+      send_frame(1, MAC_G, 48'h02_00_00_00_60_02, 20);
+      wait_for_mask(1, timed_out);
+      if (timed_out || dest_mask[1] !== (~(NUM_PORTS'(1) << 1))) begin
+        $display("FAIL: testG1 learn_en=0 should have left MAC_G unlearned (flood expected): timeout=%0b mask=%0b",
+                 timed_out, dest_mask[1]);
+        errors++;
+      end else $display("PASS: testG1 learning disabled on port 3: its source MAC never entered the table");
+
+      learn_en[3] = 1'b1;
+      wait_cycles(2);
+      send_frame(3, MAC_UNKNOWN_DST, MAC_G, 20);
+      wait_for_mask(3, timed_out);
+      if (timed_out) $fatal(1, "testG learning frame (re-enabled) timed out");
+      wait_cycles(50);
+      send_frame(1, MAC_G, 48'h02_00_00_00_60_03, 20);
+      wait_for_mask(1, timed_out);
+      if (timed_out || dest_mask[1] !== (NUM_PORTS'(1) << 3)) begin
+        $display("FAIL: testG2 learn_en=1 should now learn MAC_G on port 3: timeout=%0b mask=%0b", timed_out, dest_mask[1]);
+        errors++;
+      end else $display("PASS: testG2 re-enabling learning lets the next frame's source be learned normally");
     end
 
     if (errors == 0) $display("=== ALL TESTS PASSED ===");

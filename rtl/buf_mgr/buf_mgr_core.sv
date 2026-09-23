@@ -28,6 +28,7 @@ module buf_mgr_core
   input  logic [NUM_PORTS-1:0][BUF_ID_W-1:0]  enqueue_bufid_i,
   input  logic [NUM_PORTS-1:0][LENGTH_W-1:0]  enqueue_length_i,
   input  logic [NUM_PORTS-1:0][NUM_PORTS-1:0] enqueue_destmask_i,
+  input  logic [NUM_PORTS-1:0][PORT_ID_W-1:0] enqueue_meta_i,
   output logic [NUM_PORTS-1:0]                enqueue_gnt_o,
 
   // dequeue (NUM_PORTS consumers)
@@ -35,6 +36,7 @@ module buf_mgr_core
   output logic [NUM_PORTS-1:0]               dequeue_valid_o,
   output logic [NUM_PORTS-1:0][BUF_ID_W-1:0] dequeue_bufid_o,
   output logic [NUM_PORTS-1:0][LENGTH_W-1:0] dequeue_length_o,
+  output logic [NUM_PORTS-1:0][PORT_ID_W-1:0] dequeue_meta_o,
 
   // release (NUM_PORTS requesters)
   input  logic [NUM_PORTS-1:0]               release_req_i,
@@ -88,11 +90,13 @@ module buf_mgr_core
     .enqueue_bufid_i      (enqueue_bufid_i),
     .enqueue_length_i     (enqueue_length_i),
     .enqueue_destmask_i   (enqueue_destmask_i),
+    .enqueue_meta_i       (enqueue_meta_i),
     .enqueue_gnt_o        (enqueue_gnt_o),
     .dequeue_req_i        (dequeue_req_i),
     .dequeue_valid_o      (dequeue_valid_o),
     .dequeue_bufid_o      (dequeue_bufid_o),
     .dequeue_length_o     (dequeue_length_o),
+    .dequeue_meta_o       (dequeue_meta_o),
     .link_up_i            (link_up_i),
     .flush_req_i          (flush_req_i),
     .flush_busy_o         (flush_busy_o),

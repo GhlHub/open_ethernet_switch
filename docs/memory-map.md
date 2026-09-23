@@ -188,7 +188,7 @@ inside an aperture are not allocatable memory.
 | `0x80040000–0x8007FFFF` | 256 KiB | PL0 MAC registers | R5 initializes MAC; hardware updates counters/status |
 | `0x80080000–0x800BFFFF` | 256 KiB | PL1 MAC registers | Same as PL0 |
 | `0x800C0000–0x800FFFFF` | 256 KiB | SFP MAC registers | R5 initializes MAC; hardware updates counters/status |
-| `0x80100000–0x8010FFFF` | 64 KiB | Fabric diagnostics and link control | R5 link task controls port admission/flush; PL supplies status/events |
+| `0x80100000–0x8010FFFF` | 64 KiB | Fabric diagnostics and link control | R5 link task controls port admission/flush; PL supplies status/events; also per-port forward/learn enable, a CPU TX destination override, and a CPU RX ingress-port tag for control-protocol hooks, owned by `software/r5/src/pstate.c`/`fabric_dma.c`; `stp_task.c` is the current consumer running real STP |
 
 Statistics extend this aperture at offsets `0x24–0x34`; the R5 statistics
 task exclusively owns read/clear DATA. Accumulated totals and sensor snapshots
@@ -196,8 +196,18 @@ are normal cacheable R5 BSS, with no new fixed DDR reservation. See
 [statistics.md](statistics.md) for the protocol and software access rules.
 
 Diagnostic offsets include LINK_SET `+0x0C`, LINK_CLR `+0x10`,
-LINK_STATUS `+0x14`, and PCS_STATUS `+0x20`. See
-[rx_diag_regs.sv](../rtl/board/rx_diag_regs.sv) for the register contract.
+LINK_STATUS `+0x14`, and PCS_STATUS `+0x20`. Control-protocol hooks add
+FWD_SET `+0x38`, FWD_CLR `+0x3C`, LEARN_SET `+0x40`, LEARN_CLR `+0x44`,
+PORT_CTRL_STATUS `+0x48` (read: `{18'd0, learn_en[5:0], fwd_en[5:0]}`),
+CPU_TX_OVERRIDE `+0x4C` (write: bit31=go, bits5:0=destination port mask;
+bit31 always reads 0, bits5:0 echo the last-written mask), and
+CPU_RX_TAG `+0x50` (read-only: bit31=valid, bits2:0=the physical ingress
+port of the CPU's next unread RX DMA descriptor; each read pops one entry,
+owned by `software/r5/src/fabric_dma.c`/`stp_task.c`). Both enables
+default all-ports-enabled out of reset. See
+[rx_diag_regs.sv](../rtl/board/rx_diag_regs.sv) and
+[architecture: control-protocol hooks](architecture.md#control-protocol-hooks-stplacplldp-no-protocol-logic)
+for the full register contract.
 Diagnostic accesses must respect software ownership: concurrent IIC or MDIO
 users require arbitration; some counters/status registers have read side effects.
 

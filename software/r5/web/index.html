@@ -12,6 +12,8 @@ const ports=['GEM0 · Right upper','GEM1 · Right lower','PL0 · Left upper','PL
 const portCols=['RX good packets','RX bad packets','RX good bytes','RX bad bytes','TX good packets','TX bad packets','TX good bytes','TX bad bytes'];
 const ddrCols=['Bytes','Bursts','Latency sum (cycles)','Max latency (cycles)','Address stalls (cycles)','Data stalls (cycles)','AXI errors','Outstanding (cycles)'];
 const debugNames=['GEM0 ingress stall','GEM1 ingress stall','PL0 ingress stall','PL1 ingress stall','SFP ingress stall','GEM0 egress stall','GEM1 egress stall','PL0 egress stall','PL1 egress stall','SFP egress stall','CPU to fabric stall','Fabric to CPU stall','CPU allocation wait','CPU enqueue wait','Link flush busy','Combined AXI errors'];
+const stpStates=['Disabled','Blocking','Listening','Learning','Forwarding'];
+const stpRoles=['Disabled','Root','Designated','Blocking'];
 const content=document.querySelector('#content'),status=document.querySelector('#status');
 const config=location.pathname==='/configuration';
 document.querySelector(`a[href="/${config?'configuration':'statistics'}"]`).setAttribute('aria-current','page');
@@ -37,6 +39,14 @@ async function refresh(){if(busy)return;busy=true;try{
  let html='<h2>Statistics</h2><p>Refreshes every second · Cumulative totals since firmware restart · Counter reads do not clear these totals. DDR and debug cycle counts use the 100 MHz fabric clock (10 ns/cycle).</p>';
  html+=table('Ethernet ports',['Port','Link speed',...portCols],s.ports.map((v,i)=>[ports[i],speed(s.speed_mbps[i],i),...v]));
  html+='<p>CPU RX is processor → fabric; CPU TX is fabric → processor.</p>';
+ const st=s.stp;
+ if(!st.enabled){
+  html+='<section class="panel"><h2>Spanning Tree (802.1D)</h2><p><strong>Disabled.</strong> All ports forward and learn normally, as if STP were not present. No web control to change this yet.</p></section>';
+ }else{
+  html+=`<section class="panel"><h2>Spanning Tree (802.1D)</h2><p>Bridge ${esc(st.bridge_mac)} priority ${st.bridge_priority} · Root ${esc(st.root_mac)} priority ${st.root_priority}${st.is_root?' (this bridge)':''} · Root path cost ${st.root_path_cost} · Root port ${st.root_port<0?'none (root)':ports[st.root_port]} · Topology changes ${st.topology_changes} · TCN BPDUs seen ${st.tcn_rx} (not propagated, see docs)</p></section>`;
+  html+=table('Spanning Tree ports',['Port','Role','State','Link','Path cost','BPDUs RX','BPDUs TX','Role changes'],
+    st.ports.map((p,i)=>[ports[i],stpRoles[p.role],stpStates[p.state],p.link_up?'Up':'Down',p.path_cost,p.bpdu_rx,p.bpdu_tx,p.role_changes]));
+ }
  if(s.ddr)html+=table('Fabric ↔ DDR',['Direction',...ddrCols],s.ddr.map((v,i)=>[['Physical ingress write','Physical egress read','CPU write','CPU read'][i],...v]));
  if(s.debug)html+=table('Debug counters',['Counter','Total (cycles, except AXI errors)'],s.debug[0].map((v,i)=>[debugNames[i],v]));
  const health=['capabilities','polls','age_ms','late_polls','saturated_reads','read_timeouts','release_timeouts','response_timeouts','last_release_index','last_release_target_index','last_response_index'];

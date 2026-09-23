@@ -46,6 +46,20 @@ module tb_switch_top;
   logic [5:0] link_up  = 6'b111111;
   logic [5:0] link_tog = '0;
   wire        link_flush_busy;
+  logic [5:0] learn_en_tb  = 6'b111111;
+  logic [5:0] fwd_en_tb    = 6'b111111;
+  wire  [5:0] ctrl_frame_tb;
+  logic [5:0] cpu_ovr_mask_tb = '0;
+  logic       cpu_ovr_go_tb   = 1'b0;
+  wire  [2:0] cpu_rx_tag;
+  wire        cpu_rx_tag_valid;
+  logic       cpu_rx_tag_pop = 1'b0;
+
+  logic [15:0] cpu_tx_tdata;
+  logic [1:0]  cpu_tx_tkeep;
+  logic        cpu_tx_tvalid;
+  logic        cpu_tx_tlast;
+  wire         cpu_tx_tready;
 
   logic gtx_clk_pl0 = 0;
   always #4 gtx_clk_pl0 = ~gtx_clk_pl0; // 125 MHz-equivalent
@@ -113,18 +127,23 @@ module tb_switch_top;
   logic                    m_axi_egr_rvalid;
   logic                    m_axi_egr_rready;
 
-  // ---- CPU port's own dedicated AXI4 write master: left idle (never
-  // granted -- this test only exercises the egress/RX direction) ----
+  // ---- CPU port's own dedicated AXI4 write master: exercised by testJ
+  // (CPU TX destination override), backed by u_mem_cpu below ----
   logic [AXI_ID_W-1:0]   m_axi_cpu_awid;
   logic [AXI_ADDR_W-1:0] m_axi_cpu_awaddr;
   logic [7:0]            m_axi_cpu_awlen;
   logic [2:0]             m_axi_cpu_awsize;
   logic [1:0]             m_axi_cpu_awburst;
   logic                   m_axi_cpu_awvalid;
+  wire                    m_axi_cpu_awready;
   logic [AXI_DATA_W-1:0]  m_axi_cpu_wdata;
   logic [AXI_STRB_W-1:0]  m_axi_cpu_wstrb;
   logic                   m_axi_cpu_wlast;
   logic                   m_axi_cpu_wvalid;
+  wire                    m_axi_cpu_wready;
+  wire [AXI_ID_W-1:0]     m_axi_cpu_bid;
+  wire [1:0]              m_axi_cpu_bresp;
+  wire                    m_axi_cpu_bvalid;
   logic                   m_axi_cpu_bready;
 
   // ---- CPU port's own dedicated AXI4 read master: actually exercised in
@@ -259,11 +278,11 @@ module tb_switch_top;
     .sfp_s_axi_rdata  (),      .sfp_s_axi_rresp   (),     .sfp_s_axi_rvalid  (), .sfp_s_axi_rready (1'b1),
     .sfp_interrupt    (), .sfp_mac_irq (),
 
-    .cpu_s_axis_tdata  (16'd0),
-    .cpu_s_axis_tkeep  (2'd0),
-    .cpu_s_axis_tvalid (1'b0),
-    .cpu_s_axis_tlast  (1'b0),
-    .cpu_s_axis_tready (),
+    .cpu_s_axis_tdata  (cpu_tx_tdata),
+    .cpu_s_axis_tkeep  (cpu_tx_tkeep),
+    .cpu_s_axis_tvalid (cpu_tx_tvalid),
+    .cpu_s_axis_tlast  (cpu_tx_tlast),
+    .cpu_s_axis_tready (cpu_tx_tready),
     .cpu_m_axis_tdata  (cpu_m_axis_tdata),
     .cpu_m_axis_tkeep  (cpu_m_axis_tkeep),
     .cpu_m_axis_tvalid (cpu_m_axis_tvalid),
@@ -307,15 +326,15 @@ module tb_switch_top;
     .m_axi_cpu_awsize  (m_axi_cpu_awsize),
     .m_axi_cpu_awburst (m_axi_cpu_awburst),
     .m_axi_cpu_awvalid (m_axi_cpu_awvalid),
-    .m_axi_cpu_awready (1'b0),
+    .m_axi_cpu_awready (m_axi_cpu_awready),
     .m_axi_cpu_wdata   (m_axi_cpu_wdata),
     .m_axi_cpu_wstrb   (m_axi_cpu_wstrb),
     .m_axi_cpu_wlast   (m_axi_cpu_wlast),
     .m_axi_cpu_wvalid  (m_axi_cpu_wvalid),
-    .m_axi_cpu_wready  (1'b0),
-    .m_axi_cpu_bid     (AXI_ID_W'(0)),
-    .m_axi_cpu_bresp   (2'd0),
-    .m_axi_cpu_bvalid  (1'b0),
+    .m_axi_cpu_wready  (m_axi_cpu_wready),
+    .m_axi_cpu_bid     (m_axi_cpu_bid),
+    .m_axi_cpu_bresp   (m_axi_cpu_bresp),
+    .m_axi_cpu_bvalid  (m_axi_cpu_bvalid),
     .m_axi_cpu_bready  (m_axi_cpu_bready),
     .m_axi_cpu_arid    (m_axi_cpu_arid),
     .m_axi_cpu_araddr  (m_axi_cpu_araddr),
@@ -332,7 +351,15 @@ module tb_switch_top;
     .m_axi_cpu_rready  (m_axi_cpu_rready),
     .link_up_i (link_up),
     .link_flush_tog_i (link_tog),
-    .link_flush_busy_o (link_flush_busy)
+    .link_flush_busy_o (link_flush_busy),
+    .learn_en_i (learn_en_tb),
+    .fwd_en_i (fwd_en_tb),
+    .ctrl_frame_o (ctrl_frame_tb),
+    .cpu_tx_ovr_mask_i (cpu_ovr_mask_tb),
+    .cpu_tx_ovr_go_i (cpu_ovr_go_tb),
+    .cpu_rx_ingress_port_o (cpu_rx_tag),
+    .cpu_rx_ingress_valid_o (cpu_rx_tag_valid),
+    .cpu_rx_ingress_pop_i (cpu_rx_tag_pop)
   );
 
   // Two independent memory models: u_mem backs ingress_top's write master
@@ -383,22 +410,22 @@ module tb_switch_top;
   axi_mem_bfm #(.MEM_BYTES(16 * BUFFER_BYTES), .BASE_ADDR(DDR_BASE_ADDR)) u_mem_cpu (
     .clk           (clk),
     .rst_n         (rst_n),
-    .s_axi_awid    ('0),
-    .s_axi_awaddr  ('0),
-    .s_axi_awlen   ('0),
-    .s_axi_awsize  ('0),
-    .s_axi_awburst ('0),
-    .s_axi_awvalid (1'b0),
-    .s_axi_awready (),
-    .s_axi_wdata   ('0),
-    .s_axi_wstrb   ('0),
-    .s_axi_wlast   (1'b0),
-    .s_axi_wvalid  (1'b0),
-    .s_axi_wready  (),
-    .s_axi_bid     (),
-    .s_axi_bresp   (),
-    .s_axi_bvalid  (),
-    .s_axi_bready  (1'b0),
+    .s_axi_awid    (m_axi_cpu_awid),
+    .s_axi_awaddr  (m_axi_cpu_awaddr),
+    .s_axi_awlen   (m_axi_cpu_awlen),
+    .s_axi_awsize  (m_axi_cpu_awsize),
+    .s_axi_awburst (m_axi_cpu_awburst),
+    .s_axi_awvalid (m_axi_cpu_awvalid),
+    .s_axi_awready (m_axi_cpu_awready),
+    .s_axi_wdata   (m_axi_cpu_wdata),
+    .s_axi_wstrb   (m_axi_cpu_wstrb),
+    .s_axi_wlast   (m_axi_cpu_wlast),
+    .s_axi_wvalid  (m_axi_cpu_wvalid),
+    .s_axi_wready  (m_axi_cpu_wready),
+    .s_axi_bid     (m_axi_cpu_bid),
+    .s_axi_bresp   (m_axi_cpu_bresp),
+    .s_axi_bvalid  (m_axi_cpu_bvalid),
+    .s_axi_bready  (m_axi_cpu_bready),
     .s_axi_arid    (m_axi_cpu_arid),
     .s_axi_araddr  (m_axi_cpu_araddr),
     .s_axi_arlen   (m_axi_cpu_arlen),
@@ -439,6 +466,37 @@ module tb_switch_top;
     gem0_rx_w_sop <= 1'b0;
     gem0_rx_w_eop <= 1'b0;
     gem0_rx_w_err <= 1'b0;
+  endtask
+
+  // drives the CPU's own ingress AXI4-Stream (fabric clk domain), 16-bit
+  // words packed 2 bytes/word (tkeep=2'b01 on a trailing odd byte), honoring
+  // tready (this port, unlike GEM0's raw push interface, genuinely
+  // backpressures store-and-forward)
+  task automatic cpu_send_frame(input byte data[]);
+    int n, i;
+    logic [15:0] word;
+    logic [1:0]  keep;
+    bit          is_last;
+    bit          acc;
+    n = data.size();
+    i = 0;
+    @(posedge clk);
+    while (i < n) begin
+      if (i + 1 < n) begin
+        word = {data[i+1], data[i]}; keep = 2'b11; is_last = (i + 2 >= n);
+      end else begin
+        word = {8'h00, data[i]}; keep = 2'b01; is_last = 1'b1;
+      end
+      cpu_tx_tdata  <= word;
+      cpu_tx_tkeep  <= keep;
+      cpu_tx_tvalid <= 1'b1;
+      cpu_tx_tlast  <= is_last;
+      @(posedge clk); acc = cpu_tx_tready;
+      while (!acc) begin @(posedge clk); acc = cpu_tx_tready; end
+      i = i + ((keep == 2'b11) ? 2 : 1);
+    end
+    cpu_tx_tvalid <= 1'b0;
+    cpu_tx_tlast  <= 1'b0;
   endtask
 
   byte cap_bytes[$];
@@ -510,6 +568,33 @@ module tb_switch_top;
           end
         end
       end
+
+      // ---- ingress-port tag: this same frame's CPU delivery must have
+      // pushed one entry tagging its true origin (GEM0 = physical port 0)
+      // ----
+      begin
+        int tag_timeout;
+        tag_timeout = 0;
+        while (!cpu_rx_tag_valid && tag_timeout < 100) begin
+          @(posedge axis_clk); tag_timeout++;
+        end
+        if (!cpu_rx_tag_valid) begin
+          $display("FAIL: ingress-port tag never became valid for the GEM0 frame delivered to the CPU");
+          errors++;
+        end else if (cpu_rx_tag !== 3'd0) begin
+          $display("FAIL: ingress-port tag = %0d for a GEM0 (port 0) frame, expected 0", cpu_rx_tag);
+          errors++;
+        end else begin
+          $display("PASS: CPU-delivered frame is correctly tagged with its true ingress port (GEM0 = 0)");
+        end
+        @(posedge axis_clk); cpu_rx_tag_pop <= 1'b1;
+        @(posedge axis_clk); cpu_rx_tag_pop <= 1'b0;
+        @(posedge axis_clk);
+        if (cpu_rx_tag_valid) begin
+          $display("FAIL: ingress-port tag still valid after popping the only pending entry");
+          errors++;
+        end
+      end
     end
 
     // ---- link-down: the CPU port stops receiving frames ----
@@ -552,6 +637,124 @@ module tb_switch_top;
         if (ok2) $display("PASS: after link-up the CPU port receives only the new frame, intact");
         else begin $display("FAIL: post link-up frame content mismatch"); errors++; end
       end
+    end
+
+    // ---- fwd_en_i: forwarding disabled on GEM0 (port 0) drops its ordinary
+    // traffic but a reserved-control-block frame (BPDU address) still
+    // reaches the CPU -- the same behavior tb_mac_forwarding_top.sv already
+    // proves at the resolver level, checked here through the real
+    // switch_top port boundary and the new async CDC synchronizer ----
+    begin
+      byte d4[]; byte d5[]; int n4, base4;
+      bit ok4;
+      n4 = 12 + 20;
+      d4 = new[n4]; d5 = new[n4];
+      for (int i = 0; i < 6; i++) begin d4[i] = 8'hAA; d4[6+i] = 8'h02; end
+      d4[5] = 8'h55; // unlearned ordinary unicast destination
+      for (int i = 0; i < 20; i++) d4[12+i] = byte'(8'hD0 + i);
+      for (int i = 0; i < 6; i++) d5[i] = 8'h01; // 01:80:C2:00:00:00 (STP BPDU)
+      d5[1] = 8'h80; d5[2] = 8'hC2; d5[3] = 8'h00; d5[4] = 8'h00; d5[5] = 8'h00;
+      for (int i = 0; i < 6; i++) d5[6+i] = 8'h02;
+      for (int i = 0; i < 20; i++) d5[12+i] = byte'(8'hE0 + i);
+
+      fwd_en_tb[0] = 1'b0;
+      repeat (5) @(posedge clk);
+
+      base4 = cap_bytes.size();
+      gem0_push_frame(d4);
+      wait_cycles(2000);
+      if (cap_bytes.size() != base4) begin
+        $display("FAIL: fwd_en=0 on GEM0: CPU received %0d ordinary bytes, expected 0", cap_bytes.size() - base4);
+        errors++;
+      end else $display("PASS: forwarding disabled on GEM0 drops its ordinary traffic (checked through switch_top, not just the resolver)");
+
+      base4 = cap_bytes.size();
+      gem0_push_frame(d5);
+      begin
+        int t; t = 0;
+        while (cap_bytes.size() < base4 + n4 && t < 5000) begin @(posedge clk); t++; end
+      end
+      ok4 = (cap_bytes.size() == base4 + n4);
+      if (ok4) for (int i = 0; i < n4; i++) if (cap_bytes[base4 + i] !== d5[i]) ok4 = 1'b0;
+      if (!ok4) begin
+        $display("FAIL: fwd_en=0 on GEM0: BPDU frame not delivered intact to the CPU (%0d bytes, expected %0d)",
+                 cap_bytes.size() - base4, n4);
+        errors++;
+      end else $display("PASS: a blocked GEM0 still delivers its BPDUs to the CPU, byte-for-byte");
+
+      fwd_en_tb[0] = 1'b1;
+      wait_cycles(5);
+    end
+
+    // ---- CPU TX destination override: firmware targets one specific
+    // physical port for a CPU-originated frame, bypassing the automatic
+    // (learned-unicast-or-flood) resolution every other CPU frame gets ----
+    begin
+      byte d6[]; int n6;
+      logic [5:0] seen_mask;
+      bit          seen_armed_before;
+      bit          got_grant;
+      n6 = 12 + 16;
+      d6 = new[n6];
+      for (int i = 0; i < 6; i++) begin d6[i] = 8'hAA; d6[6+i] = 8'h02; end
+      d6[5] = 8'h99; // unlearned ordinary unicast destination: would flood if not overridden
+      d6[11] = 8'h01;
+      for (int i = 0; i < 16; i++) d6[12+i] = byte'(8'hF0 + i);
+
+      cpu_ovr_mask_tb = 6'b000100; // port 2 (PL0) only
+      @(posedge axis_clk); cpu_ovr_go_tb = 1'b1; @(posedge axis_clk); cpu_ovr_go_tb = 1'b0;
+      repeat (5) @(posedge clk); // let the CDC crossing land before the frame does
+
+      seen_mask = '0; got_grant = 1'b0; seen_armed_before = 1'b0;
+      fork
+        cpu_send_frame(d6);
+        begin
+          int t; t = 0;
+          while (!got_grant && t < 20000) begin
+            @(posedge clk);
+            if (dut.cpu_enqueue_req && dut.cpu_enqueue_gnt) begin
+              seen_armed_before = dut.cpu_tx_ovr_armed_q;
+              seen_mask         = dut.cpu_enqueue_destmask;
+              got_grant         = 1'b1;
+            end
+            t++;
+          end
+        end
+      join
+      repeat (5) @(posedge clk);
+      if (!got_grant) begin
+        $display("FAIL: CPU TX override: enqueue never granted"); errors++;
+      end else if (!seen_armed_before) begin
+        $display("FAIL: CPU TX override: override not armed at the moment of enqueue"); errors++;
+      end else if (seen_mask !== 6'b000100) begin
+        $display("FAIL: CPU TX override: enqueue destmask=%b, expected port 2 only (000100)", seen_mask);
+        errors++;
+      end else if (dut.cpu_tx_ovr_armed_q !== 1'b0) begin
+        $display("FAIL: CPU TX override: still armed after the frame it was meant for was consumed"); errors++;
+      end else $display("PASS: CPU TX override sends a frame to exactly the software-chosen port, then disarms");
+
+      // a second, un-overridden frame with the SAME unlearned destination
+      // reverts to the normal (flood) resolution -- the override doesn't stick
+      got_grant = 1'b0; seen_mask = '0;
+      fork
+        cpu_send_frame(d6);
+        begin
+          int t; t = 0;
+          while (!got_grant && t < 20000) begin
+            @(posedge clk);
+            if (dut.cpu_enqueue_req && dut.cpu_enqueue_gnt) begin
+              seen_mask = dut.cpu_enqueue_destmask;
+              got_grant = 1'b1;
+            end
+            t++;
+          end
+        end
+      join
+      if (!got_grant || seen_mask !== (~(6'(1) << 5))) begin
+        $display("FAIL: after the override was consumed, expected normal flood (%b), got grant=%0b mask=%b",
+                 ~(6'(1) << 5), got_grant, seen_mask);
+        errors++;
+      end else $display("PASS: a later, un-overridden CPU frame resolves normally again (the override does not stick)");
     end
 
     if (errors == 0) $display("=== ALL TESTS PASSED ===");

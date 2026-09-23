@@ -123,6 +123,62 @@ module switch_top
   input  logic [NUM_PORTS-1:0] link_flush_tog_i,
   output logic                 link_flush_busy_o,
 
+  // Per-port control state for protocols that need to disable data-plane
+  // forwarding/learning on a port without touching its physical link state
+  // (802.1D STP/RSTP port states; a hook for any similar future protocol --
+  // e.g. LACP/LLDP do not need this, they only use ctrl_frame_o/the CPU TX
+  // override below, but nothing stops a future protocol from using this
+  // too). Async (AXI-Lite clock domain), synchronized inside this module;
+  // both default enabled, matching this design's behavior before this
+  // feature existed. A reserved-control-block frame (STP BPDUs, LACP/OAM,
+  // LLDP -- see mac_addr_resolver.sv's header) always reaches the CPU
+  // regardless of fwd_en_i; only ordinary data-plane forwarding is gated.
+  input  logic [NUM_PORTS-1:0] learn_en_i,
+  input  logic [NUM_PORTS-1:0] fwd_en_i,
+
+  // One-cycle-per-frame, held for that frame's dest_mask_valid_o lifetime:
+  // which ports just received a reserved-control-block frame. A hook for a
+  // future per-port control-frame counter/interrupt; nothing here consumes
+  // it.
+  output logic [NUM_PORTS-1:0] ctrl_frame_o,
+
+  // CPU-originated raw frame injection: firmware arms an explicit,
+  // software-chosen destination port mask for the SINGLE NEXT frame the CPU
+  // port transmits, bypassing the automatic MAC-table lookup that ordinary
+  // CPU traffic goes through (mac_addr_resolver's own instance for the CPU
+  // port, PORT_ID=NUM_PORTS-1 -- see its header: the CPU cannot otherwise
+  // target one specific egress port, only a learned unicast destination or
+  // a flood). This is the hook a future STP/LACP/LLDP task uses to transmit
+  // its own per-port frames (a distinct BPDU per port, a distinct LACPDU per
+  // aggregation-candidate port, etc.) -- also bypasses fwd_en_i, so a
+  // blocked STP port can still carry the CPU's own BPDUs out to its
+  // neighbor even while ordinary forwarding through it is disabled.
+  // axis_clk domain (this module already takes axis_clk as a port for the 3
+  // MAC instances, so the crossing into `clk` happens entirely inside this
+  // module, on real clocks -- no extra external synchronizer needed).
+  // cpu_tx_ovr_go_i must be exactly one axis_clk cycle per armed frame (see
+  // rtl/common/ctrl_value_xdomain.sv's header for the one-shot-mailbox
+  // contract this relies on), and the corresponding frame must not be
+  // queued into the CPU DMA before the register write that arms it is known
+  // to have taken effect.
+  input  logic [NUM_PORTS-1:0] cpu_tx_ovr_mask_i,
+  input  logic                 cpu_tx_ovr_go_i,
+
+  // Ingress-port tag for CPU-delivered frames: the CPU's inbound stream is a
+  // single shared queue fed by all 5 physical ports (plus, in principle, the
+  // CPU's own loopback slot, which never actually happens -- see
+  // ingress_top.sv), so without this a control protocol has no way to know
+  // which physical port a frame it just received arrived on. Pushed (clk
+  // domain) exactly once per frame this module hands to the CPU DMA, in the
+  // same order cpu_dma_rd.sv will stream them out -- see the async_fifo
+  // instance below for why this ordering guarantee holds. Read side is
+  // axis_clk domain (this module already takes axis_clk as a port), a plain
+  // same-clock producer the AXI-Lite side (rx_diag_regs, also axis_clk) can
+  // pop directly with no further synchronization.
+  output logic [PORT_ID_W-1:0] cpu_rx_ingress_port_o,
+  output logic                 cpu_rx_ingress_valid_o,
+  input  logic                 cpu_rx_ingress_pop_i,
+
   // ---------------------------------------------------------------------
   // PS GEM0 FIFO interface (gem_rx_clk_ps0/gem_tx_clk_ps0 domains)
   // ---------------------------------------------------------------------
@@ -387,6 +443,7 @@ module switch_top
   logic [NUM_PORTS-1:0]               dequeue_valid;
   logic [NUM_PORTS-1:0][BUF_ID_W-1:0] dequeue_bufid;
   logic [NUM_PORTS-1:0][LENGTH_W-1:0] dequeue_length;
+  logic [NUM_PORTS-1:0][PORT_ID_W-1:0] dequeue_meta;
   logic [NUM_PORTS-1:0]               release_req;
   logic [NUM_PORTS-1:0][BUF_ID_W-1:0] release_bufid;
   logic [NUM_PORTS-1:0]               release_gnt;
@@ -474,6 +531,84 @@ module switch_top
     else        link_flush_busy_o <= qm_flush_busy | mac_flush_busy;
   end
 
+  // ---- learn_en_i/fwd_en_i: plain 2-flop level synchronizers (not the
+  // flush-toggle machinery port_link_ctrl provides -- these are held levels
+  // with no associated drain event of their own; entering a state that
+  // disables forwarding is expected to arrive together with a LINK_CLR-style
+  // flush from software if one is wanted, same as this project's other
+  // "purge on the way down" transitions) ----
+  (* ASYNC_REG = "TRUE" *) logic [NUM_PORTS-1:0] learn_en_s1, learn_en_s2;
+  (* ASYNC_REG = "TRUE" *) logic [NUM_PORTS-1:0] fwd_en_s1, fwd_en_s2;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      learn_en_s1 <= '1; learn_en_s2 <= '1;
+      fwd_en_s1   <= '1; fwd_en_s2   <= '1;
+    end else begin
+      learn_en_s1 <= learn_en_i; learn_en_s2 <= learn_en_s1;
+      fwd_en_s1   <= fwd_en_i;   fwd_en_s2   <= fwd_en_s1;
+    end
+  end
+
+  // ---- CPU TX destination override: one-shot value crossing (see
+  // rtl/common/ctrl_value_xdomain.sv), then an "armed" latch that captures
+  // the override for exactly the one CPU-egress frame it precedes and
+  // disarms itself the moment that frame's enqueue is granted (the same
+  // cpu_enqueue_req/cpu_enqueue_gnt event mac_addr_resolver's own header
+  // already documents as the natural per-frame boundary on this
+  // interface -- nothing can queue a second CPU frame before this one is
+  // consumed, this port is single-frame-in-flight by construction) ----
+  logic [NUM_PORTS-1:0] cpu_tx_ovr_mask_sync;
+  logic                 cpu_tx_ovr_pulse;
+  ctrl_value_xdomain #(.WIDTH(NUM_PORTS)) u_cpu_tx_ovr_sync (
+    .src_clk (axis_clk), .src_rst_n (axis_rst_n),
+    .value_i (cpu_tx_ovr_mask_i), .go_i (cpu_tx_ovr_go_i),
+    .dst_clk (clk), .dst_rst_n (rst_n),
+    .value_o (cpu_tx_ovr_mask_sync), .valid_o (cpu_tx_ovr_pulse)
+  );
+  logic                 cpu_tx_ovr_armed_q;
+  logic [NUM_PORTS-1:0] cpu_tx_ovr_mask_q;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      cpu_tx_ovr_armed_q <= 1'b0;
+      cpu_tx_ovr_mask_q  <= '0;
+    end else begin
+      if (cpu_tx_ovr_pulse) begin
+        cpu_tx_ovr_armed_q <= 1'b1;
+        cpu_tx_ovr_mask_q  <= cpu_tx_ovr_mask_sync;
+      end else if (cpu_enqueue_req && cpu_enqueue_gnt) begin
+        cpu_tx_ovr_armed_q <= 1'b0;
+      end
+    end
+  end
+
+  // ---- CPU RX ingress-port tag: clk -> axis_clk, one entry per frame this
+  // module hands to the CPU DMA (see cpu_rx_ingress_* ports above). Pushed
+  // on dequeue_valid[5] -- queue_mgr.sv's per-port queue for the CPU is a
+  // single serialized engine, so dequeues (and therefore this push) happen
+  // in exactly the order cpu_dma_rd.sv/egress_port_rd#(.PORT_ID(5)) then
+  // stream those frames out to the CPU-facing AXI DMA, and a link-down
+  // flush of the CPU port releases buffers without ever asserting
+  // dequeue_valid -- so a frame that never reaches the CPU never pushes an
+  // entry here either. Depth 16 matches fabric_dma.c's own RX descriptor
+  // ring size (software cannot have more than that many frames
+  // outstanding). Software must pop exactly one entry per DMA descriptor
+  // it retires (whether or not that frame turned out well-formed) to stay
+  // in lockstep -- see fabric_dma.c's header for how it does this.
+  logic cpu_rx_tag_empty;
+  async_fifo #(.WIDTH(PORT_ID_W), .DEPTH(16)) u_cpu_rx_tag_fifo (
+    .wr_clk   (clk),
+    .wr_rst_n (rst_n),
+    .wr_en_i  (dequeue_valid[5]),
+    .wr_data_i(dequeue_meta[5]),
+    .full_o   (),
+    .rd_clk   (axis_clk),
+    .rd_rst_n (axis_rst_n),
+    .rd_en_i  (cpu_rx_ingress_pop_i),
+    .rd_data_o(cpu_rx_ingress_port_o),
+    .empty_o  (cpu_rx_tag_empty)
+  );
+  assign cpu_rx_ingress_valid_o = !cpu_rx_tag_empty;
+
   // =========================================================================
   // ingress_top.sv (owns buf_mgr_core)
   // =========================================================================
@@ -508,6 +643,7 @@ module switch_top
     .dequeue_valid_o_passthru    (dequeue_valid),
     .dequeue_bufid_o_passthru    (dequeue_bufid),
     .dequeue_length_o_passthru   (dequeue_length),
+    .dequeue_meta_o_passthru     (dequeue_meta),
     .release_req_i_passthru      (release_req),
     .release_bufid_i_passthru    (release_bufid),
     .release_gnt_o_passthru      (release_gnt),
@@ -580,8 +716,11 @@ module switch_top
     .m_axis_tvalid          (cpu_m_axis_tvalid),
     .m_axis_tlast           (cpu_m_axis_tlast),
     .m_axis_tready          (cpu_m_axis_tready),
-    .dest_mask_i            (dest_mask[5]),
-    .dest_mask_valid_i      (dest_mask_valid[5]),
+    // CPU TX destination override (see above): while armed, replace the
+    // automatic lookup result with the software-chosen mask for exactly
+    // this one frame.
+    .dest_mask_i            (cpu_tx_ovr_armed_q ? cpu_tx_ovr_mask_q : dest_mask[5]),
+    .dest_mask_valid_i      (cpu_tx_ovr_armed_q ? 1'b1 : dest_mask_valid[5]),
     .cpu_alloc_req_o        (cpu_alloc_req),
     .cpu_alloc_gnt_i        (cpu_alloc_gnt),
     .cpu_alloc_bufid_i      (cpu_alloc_bufid),
@@ -644,7 +783,10 @@ module switch_top
     .s_axis_tlast_i    (fwd_s_axis_tlast),
     .s_axis_tready_i   (fwd_s_axis_tready),
     .dest_mask_o       (dest_mask),
-    .dest_mask_valid_o (dest_mask_valid)
+    .dest_mask_valid_o (dest_mask_valid),
+    .learn_en_i        (learn_en_s2),
+    .fwd_en_i          (fwd_en_s2),
+    .ctrl_frame_o      (ctrl_frame_o)
   );
 
   // =========================================================================

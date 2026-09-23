@@ -50,7 +50,14 @@ module mac_forwarding_top
   // -> ingress_port_wr.sv's dest_mask_i/dest_mask_valid_i (ports 0-4) and
   // cpu_port_top.sv's (port 5)
   output logic [NUM_PORTS-1:0][NUM_PORTS-1:0] dest_mask_o,
-  output logic [NUM_PORTS-1:0]                dest_mask_valid_o
+  output logic [NUM_PORTS-1:0]                dest_mask_valid_o,
+
+  // per-port control state, already synchronized into this clock domain by
+  // the caller (see mac_addr_resolver.sv's header); both default-tied
+  // enabled by switch_top.sv until software drives them
+  input  logic [NUM_PORTS-1:0] learn_en_i,
+  input  logic [NUM_PORTS-1:0] fwd_en_i,
+  output logic [NUM_PORTS-1:0] ctrl_frame_o
 );
 
   genvar gi;
@@ -99,8 +106,11 @@ module mac_forwarding_top
         .s_axis_tvalid_i           (s_axis_tvalid_i[gi]),
         .s_axis_tlast_i            (s_axis_tlast_i[gi]),
         .s_axis_tready_i           (s_axis_tready_i[gi]),
+        .learn_en_i                (learn_en_i[gi]),
+        .fwd_en_i                  (fwd_en_i[gi]),
         .dest_mask_o               (dest_mask_o[gi]),
         .dest_mask_valid_o         (dest_mask_valid_o[gi]),
+        .ctrl_frame_o              (ctrl_frame_o[gi]),
         .learn_req_o               (learn_req[gi]),
         .learn_mac_o               (learn_mac[gi]),
         .lookup_req_o              (lookup_req[gi]),

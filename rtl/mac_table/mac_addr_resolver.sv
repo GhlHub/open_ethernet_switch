@@ -33,6 +33,36 @@
 //     so leaving dest_mask_valid_o low forever on a runt frame would wedge
 //     this port permanently.
 //
+// Reserved link-layer control frames (destination MAC 01:80:C2:00:00:0x,
+// the IEEE 802.1D "Bridge Group Address" block: STP/RSTP/MSTP BPDUs at
+// ...:00, the Slow Protocols multicast shared by LACP/OAM at ...:02, LLDP's
+// nearest-bridge address at ...:0E, and the rest of that 16-address block) --
+// a MAC bridge must never relay these out any port, only ever consume them
+// locally, in EVERY port state including one with forwarding disabled (a
+// blocked STP port must still receive and answer BPDUs). is_ctrl_dest below
+// intercepts the lookup result for exactly these 16 addresses and forces the
+// destination to the CPU port alone, unconditionally: not flooded, not
+// gated by fwd_en_i (unlike ordinary traffic -- see below), and never
+// resolved from the table (a reserved address is never a valid learned
+// unicast destination anyway, so the lookup always misses regardless). The
+// source MAC is still learned normally (subject to learn_en_i, same as any
+// other frame) -- a control frame's source is a real host address like any
+// other. One compare covers every protocol in the block: which byte of the
+// received frame identifies which protocol is a question for whatever
+// consumes it after the CPU port (not decoded here), so this same trap
+// already covers STP today and needs no RTL change to also carry LLDP,
+// LACP or any other protocol in the reserved block later.
+//
+// learn_en_i/fwd_en_i (from the CPU's per-port control state, see
+// rtl/board/rx_diag_regs.sv's FWD_SET/CLR and LEARN_SET/CLR registers, both
+// default-enabled so a design with no software driving them behaves exactly
+// as before this feature existed): learn_en_i gates learn_req_o outright;
+// fwd_en_i gates dest_mask_o for ORDINARY (non-control) frames only --
+// forwarding disabled on this port means nothing this port receives is
+// relayed anywhere (dest_mask_o forced to 0), matching 802.1D's Blocking/
+// Listening/Discarding port states. switch_top.sv synchronizes these
+// software-controlled levels into the fabric clock domain.
+//
 // dest_mask_valid_o is held (not pulsed) from when a result lands until
 // the *next* frame's first byte is accepted, which cannot happen before
 // ingress_port_wr has consumed the current one (dest_mask_valid_i gates
@@ -72,9 +102,20 @@ module mac_addr_resolver
   input  logic         s_axis_tlast_i,
   input  logic         s_axis_tready_i,
 
+  // per-port control state (see header); both default-tied enabled by
+  // switch_top.sv until software drives them
+  input  logic learn_en_i,
+  input  logic fwd_en_i,
+
   // -> ingress_port_wr's dest_mask_i/dest_mask_valid_i
   output logic [NUM_PORTS-1:0] dest_mask_o,
   output logic                 dest_mask_valid_o,
+
+  // held for exactly as long as dest_mask_valid_o/dest_mask_o (same
+  // register lifetime, see their own comments below) whenever this frame
+  // matched the reserved control block -- informational only (future
+  // per-port control-frame counters/hooks), nothing here consumes it
+  output logic ctrl_frame_o,
 
   // -> mac_learn_port #(.PORT_ID(PORT_ID))
   output logic             learn_req_o,
@@ -92,11 +133,31 @@ module mac_addr_resolver
   // broadcast handling
   localparam logic [NUM_PORTS-1:0] FLOOD_MASK = ~(NUM_PORTS'(1) << PORT_ID);
 
+  // CPU is always buf_mgr_pkg::NUM_PORTS' last slot (see switch_top.sv's
+  // port numbering table); masked by FLOOD_MASK so the CPU's own resolver
+  // instance (PORT_ID == CPU_PORT_ID) correctly resolves a reserved-address
+  // frame it might itself originate to 0 (drop), not to itself.
+  localparam int CPU_PORT_ID = NUM_PORTS - 1;
+  localparam logic [NUM_PORTS-1:0] CPU_MASK =
+    (NUM_PORTS'(1) << CPU_PORT_ID) & FLOOD_MASK;
+
+  // IEEE 802.1D reserved "Bridge Group Address" block, 01:80:C2:00:00:00
+  // through :0F -- see header. dest_mac's byte order here is the same
+  // human-readable order the rest of this module already uses (bit 47 =
+  // first transmitted byte); the low nibble (any of the 16 addresses) is
+  // don't-care.
+  localparam logic [43:0] CTRL_BLOCK_PREFIX = 44'h0180_C200_000;
+
   logic [2:0]  word_pos_q; // 0..5, next word to capture; 6 = parked,
                             // waiting for this frame's own tlast
   logic [47:0] dest_mac_q, src_mac_q;
   logic                 mask_ready_q;
   logic [NUM_PORTS-1:0] dest_mask_q;
+
+  // declared after dest_mac_q (Icarus Verilog 13.0 requires a signal's
+  // declaration to textually precede a procedural reference to it in the
+  // same module -- see this project's other files for the same note)
+  wire is_ctrl_dest = (dest_mac_q[47:4] == CTRL_BLOCK_PREFIX);
 
   wire word_accept = s_axis_tvalid_i && s_axis_tready_i;
 
@@ -104,6 +165,7 @@ module mac_addr_resolver
   logic [47:0] dest_mac_next, src_mac_next;
   logic                 mask_ready_next;
   logic [NUM_PORTS-1:0] dest_mask_next;
+  logic                 ctrl_frame_q, ctrl_frame_next;
   logic                 issue_req;
 
   always_comb begin
@@ -112,6 +174,7 @@ module mac_addr_resolver
     src_mac_next    = src_mac_q;
     mask_ready_next = mask_ready_q;
     dest_mask_next  = dest_mask_q;
+    ctrl_frame_next = ctrl_frame_q;
     issue_req       = 1'b0;
 
     if (word_accept) begin
@@ -153,6 +216,7 @@ module mac_addr_resolver
           // resolve straight to "drop" (see header note)
           mask_ready_next = 1'b1;
           dest_mask_next  = '0;
+          ctrl_frame_next = 1'b0;
         end
       end else if (word_pos_q < 3'd6) begin
         word_pos_next = word_pos_q + 1'b1;
@@ -161,9 +225,18 @@ module mac_addr_resolver
 
     if (lookup_result_valid_i) begin
       mask_ready_next = 1'b1;
-      dest_mask_next  = lookup_result_hit_i
-        ? (lookup_result_port_mask_i[NUM_PORTS-1:0] & FLOOD_MASK)
-        : FLOOD_MASK;
+      ctrl_frame_next = is_ctrl_dest;
+      if (is_ctrl_dest)
+        // reserved control block: always to the CPU alone, never flooded,
+        // never gated by fwd_en_i -- see the header note on why a blocked
+        // port must still deliver these
+        dest_mask_next = CPU_MASK;
+      else
+        dest_mask_next = fwd_en_i
+          ? (lookup_result_hit_i
+              ? (lookup_result_port_mask_i[NUM_PORTS-1:0] & FLOOD_MASK)
+              : FLOOD_MASK)
+          : '0; // forwarding disabled on this port: nothing it receives is relayed
     end
   end
 
@@ -174,17 +247,20 @@ module mac_addr_resolver
       src_mac_q    <= '0;
       mask_ready_q <= 1'b0;
       dest_mask_q  <= '0;
+      ctrl_frame_q <= 1'b0;
     end else begin
       word_pos_q   <= word_pos_next;
       dest_mac_q   <= dest_mac_next;
       src_mac_q    <= src_mac_next;
       mask_ready_q <= mask_ready_next;
       dest_mask_q  <= dest_mask_next;
+      ctrl_frame_q <= ctrl_frame_next;
     end
   end
 
   assign dest_mask_valid_o = mask_ready_q;
   assign dest_mask_o       = dest_mask_q;
+  assign ctrl_frame_o      = ctrl_frame_q;
 
   // learn_mac_o/lookup_mac_o drive from the *_next combinational signals,
   // not dest_mac_q/src_mac_q: issue_req and the MAC's own final 16 bits
@@ -192,7 +268,7 @@ module mac_addr_resolver
   // the register itself is still one cycle stale here -- mac_learn_port/
   // mac_lookup_port latch mac_i the same edge req_o is asserted, so this
   // needs to be combinationally current, not the pre-edge register.
-  assign learn_req_o  = issue_req;
+  assign learn_req_o  = issue_req && learn_en_i;
   assign learn_mac_o  = src_mac_next;
   assign lookup_req_o  = issue_req;
   assign lookup_mac_o  = dest_mac_next;

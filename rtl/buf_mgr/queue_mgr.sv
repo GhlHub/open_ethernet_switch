@@ -51,6 +51,15 @@ module queue_mgr
   input  logic [NUM_PORTS-1:0][BUF_ID_W-1:0]  enqueue_bufid_i,
   input  logic [NUM_PORTS-1:0][LENGTH_W-1:0]  enqueue_length_i,
   input  logic [NUM_PORTS-1:0][NUM_PORTS-1:0] enqueue_destmask_i,
+  // Per-buffer, not per-destination (exactly like enqueue_length_i above):
+  // the ingress port a buffer's frame actually arrived on, captured once at
+  // enqueue and read back once at dequeue regardless of which port(s) it is
+  // delivered to. Ports 0-4 tie this to their own fixed PORT_ID at the
+  // ingress_top.sv boundary; only the CPU port (index 5) ever reads it back
+  // (see switch_top.sv's cpu_rx_ingress_* ports) -- a hook for any control
+  // protocol that needs to know which physical port a CPU-delivered frame
+  // came from, not just STP.
+  input  logic [NUM_PORTS-1:0][PORT_ID_W-1:0] enqueue_meta_i,
   output logic [NUM_PORTS-1:0]                enqueue_gnt_o, // one-hot pulse
 
   // dequeue (NUM_PORTS consumers, each pops its own queue)
@@ -58,6 +67,7 @@ module queue_mgr
   output logic [NUM_PORTS-1:0]                dequeue_valid_o, // one-hot pulse
   output logic [NUM_PORTS-1:0][BUF_ID_W-1:0]  dequeue_bufid_o,
   output logic [NUM_PORTS-1:0][LENGTH_W-1:0]  dequeue_length_o,
+  output logic [NUM_PORTS-1:0][PORT_ID_W-1:0] dequeue_meta_o,
 
   // link state / flush
   input  logic [NUM_PORTS-1:0] link_up_i,
@@ -89,6 +99,20 @@ module queue_mgr
     if (len_en) begin
       if (len_we) length_mem[len_addr] <= len_wdata;
       len_rdata_q <= length_mem[len_addr];
+    end
+  end
+
+  // ---- meta memory (ingress-port tag; single owner, shares length_mem's
+  // enable/write/address controls -- always written and read on exactly the
+  // same cycles as length, so no separate control signals are needed) ----
+  logic [PORT_ID_W-1:0] meta_mem [0:NUM_BUFFERS-1];
+  logic [PORT_ID_W-1:0] meta_wdata;
+  logic [PORT_ID_W-1:0] meta_rdata_q;
+
+  always_ff @(posedge clk) begin
+    if (len_en) begin
+      if (len_we) meta_mem[len_addr] <= meta_wdata;
+      meta_rdata_q <= meta_mem[len_addr];
     end
   end
 
@@ -161,15 +185,18 @@ module queue_mgr
   logic [BUF_ID_W-1:0]  enq_bufid_muxed;
   logic [LENGTH_W-1:0]  enq_length_muxed;
   logic [NUM_PORTS-1:0] enq_destmask_muxed;
+  logic [PORT_ID_W-1:0] enq_meta_muxed;
   always_comb begin
     enq_bufid_muxed    = '0;
     enq_length_muxed   = '0;
     enq_destmask_muxed = '0;
+    enq_meta_muxed     = '0;
     for (int p = 0; p < NUM_PORTS; p++) begin
       if (enq_grant[p]) begin
         enq_bufid_muxed    = enqueue_bufid_i[p];
         enq_length_muxed   = enqueue_length_i[p];
         enq_destmask_muxed = enqueue_destmask_i[p];
+        enq_meta_muxed     = enqueue_meta_i[p];
       end
     end
   end
@@ -213,6 +240,7 @@ module queue_mgr
   logic [BUF_ID_W-1:0]   bufid_q;
   logic [LENGTH_W-1:0]   length_q;
   logic [NUM_PORTS-1:0]  destmask_q;
+  logic [PORT_ID_W-1:0]  meta_q;
   logic [NUM_PORTS-1:0]  enq_grant_q;
   logic [PORT_ID_W-1:0]  port_idx_q;
 
@@ -261,6 +289,7 @@ module queue_mgr
           bufid_q        <= enq_bufid_muxed;
           length_q       <= enq_length_muxed;
           destmask_q     <= enq_destmask_muxed & link_up_i;
+          meta_q         <= enq_meta_muxed;
           enq_grant_q    <= enq_grant;
           port_idx_q     <= '0;
           last_was_deq_q <= 1'b0;
@@ -364,17 +393,18 @@ module queue_mgr
   always_comb begin
     dequeue_bufid_o  = '0;
     dequeue_length_o = '0;
+    dequeue_meta_o   = '0;
     if (deq_complete_win) begin
       // constant-indexed case, not a variable/register-indexed array
       // write -- see the note atop this file for the confirmed Icarus bug
       // that pattern would hit.
       unique case (deq_port_q)
-        PORT_ID_W'(0): begin dequeue_bufid_o[0] = head_ptr[deq_port_q]; dequeue_length_o[0] = len_rdata_q; end
-        PORT_ID_W'(1): begin dequeue_bufid_o[1] = head_ptr[deq_port_q]; dequeue_length_o[1] = len_rdata_q; end
-        PORT_ID_W'(2): begin dequeue_bufid_o[2] = head_ptr[deq_port_q]; dequeue_length_o[2] = len_rdata_q; end
-        PORT_ID_W'(3): begin dequeue_bufid_o[3] = head_ptr[deq_port_q]; dequeue_length_o[3] = len_rdata_q; end
-        PORT_ID_W'(4): begin dequeue_bufid_o[4] = head_ptr[deq_port_q]; dequeue_length_o[4] = len_rdata_q; end
-        default:        begin dequeue_bufid_o[5] = head_ptr[deq_port_q]; dequeue_length_o[5] = len_rdata_q; end
+        PORT_ID_W'(0): begin dequeue_bufid_o[0] = head_ptr[deq_port_q]; dequeue_length_o[0] = len_rdata_q; dequeue_meta_o[0] = meta_rdata_q; end
+        PORT_ID_W'(1): begin dequeue_bufid_o[1] = head_ptr[deq_port_q]; dequeue_length_o[1] = len_rdata_q; dequeue_meta_o[1] = meta_rdata_q; end
+        PORT_ID_W'(2): begin dequeue_bufid_o[2] = head_ptr[deq_port_q]; dequeue_length_o[2] = len_rdata_q; dequeue_meta_o[2] = meta_rdata_q; end
+        PORT_ID_W'(3): begin dequeue_bufid_o[3] = head_ptr[deq_port_q]; dequeue_length_o[3] = len_rdata_q; dequeue_meta_o[3] = meta_rdata_q; end
+        PORT_ID_W'(4): begin dequeue_bufid_o[4] = head_ptr[deq_port_q]; dequeue_length_o[4] = len_rdata_q; dequeue_meta_o[4] = meta_rdata_q; end
+        default:        begin dequeue_bufid_o[5] = head_ptr[deq_port_q]; dequeue_length_o[5] = len_rdata_q; dequeue_meta_o[5] = meta_rdata_q; end
       endcase
     end
   end
@@ -382,7 +412,7 @@ module queue_mgr
   always_comb begin
     state_d = state_q;
 
-    len_en = 1'b0; len_we = 1'b0; len_addr = '0; len_wdata = '0;
+    len_en = 1'b0; len_we = 1'b0; len_addr = '0; len_wdata = '0; meta_wdata = '0;
     lnk_en = 1'b0; lnk_we = 1'b0; lnk_addr = '0; lnk_wdata = '0;
 
     unique case (state_q)
@@ -405,6 +435,7 @@ module queue_mgr
         len_we    = 1'b1;
         len_addr  = bufid_q;
         len_wdata = length_q;
+        meta_wdata = meta_q;
         if (destmask_q == '0) state_d = S_ENQ_DROP_WAIT;
         else                   state_d = S_ENQ_REF_WAIT;
       end

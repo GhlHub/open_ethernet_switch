@@ -43,6 +43,61 @@
 //                         bit1 negotiation link, bit0 PCS sync}.
 // Statistics extension: 0x24 ABI/capabilities, 0x28 indirect index (RW),
 // 0x2c read/clear DATA, 0x30 mailbox busy, 0x34 fabric frequency.
+//
+// Per-port control state, independent of LINK_SET/CLR's physical link
+// tracking: a hook for any protocol that needs to disable data-plane
+// forwarding and/or learning on a port without touching its physical link
+// (802.1D STP/RSTP port states; other protocols could reuse this too, though
+// LACP/LLDP typically only need the reserved-control-block trap and the CPU
+// TX override below, not this). Both default enabled on reset, matching
+// this design's behavior before this feature existed -- with no software
+// driving these registers the switch forwards/learns on every port exactly
+// as it always did. See rtl/mac_table/mac_addr_resolver.sv's header for
+// what FWD_EN/LEARN_EN actually gate, and why a reserved-control-block
+// frame (STP BPDUs, LACP/OAM, LLDP -- one address range covers all of them)
+// always reaches the CPU regardless of FWD_EN.
+//   0x38 FWD_SET      write 1 to bit p: enable forwarding on port p (bits
+//                5:0). Reads 0.
+//   0x3C FWD_CLR      write 1 to bit p: disable forwarding on port p --
+//                nothing p receives is relayed anywhere (except a reserved
+//                control frame, which still reaches the CPU). Also flushes
+//                p exactly like LINK_CLR (drains its queued frames, expires
+//                its learned entries): entering a non-forwarding state is
+//                exactly the moment 802.1D wants stale entries purged.
+//                Also acts when p's forwarding was already disabled. Reads 0.
+//   0x40 LEARN_SET    write 1 to bit p: enable learning on port p (bits
+//                5:0). Reads 0.
+//   0x44 LEARN_CLR    write 1 to bit p: disable learning on port p (its
+//                source MACs stop refreshing/entering the table). Also
+//                flushes p, same rationale as FWD_CLR. Reads 0.
+//   0x48 PORT_CTRL_STATUS  read-only: bits5:0 FWD_EN, bits13:8 LEARN_EN.
+//   0x50 CPU_RX_TAG   read-only: bit31 valid (a tag was available at the
+//                time of this read; if 0, bits2:0 are meaningless), bits2:0
+//                = the physical ingress port (0-4) of the frame the CPU's
+//                NEXT unread RX DMA descriptor came from. Each read pops one
+//                entry -- software must read this exactly once per RX DMA
+//                descriptor it retires (see fabric_dma.c), in the same
+//                order, or the two streams desynchronize. A hook for any
+//                control protocol that needs to know which port a
+//                CPU-delivered frame arrived on, not just STP; carried for
+//                every CPU-delivered frame, not only trapped control-block
+//                ones (software already re-checks the destination MAC
+//                itself if it only cares about those -- see network.c).
+//   0x4C CPU_TX_OVERRIDE  write: bits5:0 = destination port mask for the
+//                SINGLE NEXT frame the CPU port transmits (bypassing the
+//                normal MAC-table lookup that CPU-originated traffic
+//                otherwise goes through -- the CPU cannot otherwise target
+//                one specific egress port; see switch_top.sv's header),
+//                bit31 must be written 1 to arm it (a write with bit31=0 is
+//                ignored). The queued DMA transfer for that one frame must
+//                not be started before this write's response is seen (this
+//                register's crossing into the fabric domain takes a few
+//                fabric clocks, comfortably faster than queuing a DMA
+//                descriptor). Read: bits5:0 = the last-written mask; bit31
+//                always reads 0 (this register does not report live
+//                armed/consumed status -- there is no return path from the
+//                fabric domain telling this block when a frame has
+//                consumed the override, only a one-way arm).
 // DATA timeout returns ffffffff without canceling the outstanding request.
 // Retry the SAME index; late snapshots are retained, never silently discarded.
 module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
@@ -90,7 +145,22 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
   input  logic        link_flush_busy_i,     // fabric domain, synchronized here
   input  logic [1:0]  phy_link_i,        // {PL1, PL0} PHY link, axis domain
   input  logic [5:0]  link_event_set_i,      // axis domain: sets the sticky event bit
-  output logic        link_irq_o
+  output logic        link_irq_o,
+
+  // per-port control state (see header); axis domain, consumed asynchronously
+  // by switch_top's own synchronizers (plain levels for FWD_EN/LEARN_EN, a
+  // ctrl_value_xdomain crossing for CPU_TX_OVERRIDE)
+  output logic [5:0]  fwd_en_o,
+  output logic [5:0]  learn_en_o,
+  output logic [5:0]  cpu_tx_ovr_mask_o,
+  output logic        cpu_tx_ovr_go_o,       // one-cycle pulse
+
+  // CPU RX ingress-port tag FIFO (see header, 0x50): axis domain, same clock
+  // as this module -- a plain same-clock pop, not a CDC crossing here (the
+  // crossing itself lives inside switch_top.sv, on its own clk/axis_clk).
+  input  logic [2:0] cpu_rx_tag_i,
+  input  logic       cpu_rx_tag_valid_i,
+  output logic       cpu_rx_tag_pop_o
 );
 
   logic [7:0]  aw_hold;
@@ -118,6 +188,17 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
   logic [5:0] event_q, event_en_q;
   (* ASYNC_REG = "TRUE" *) logic [1:0] flush_busy_s;
 
+  wire fwd_set_wr   = write_fire && aw_hold == 8'h38 && wstrb_hold[0];
+  wire fwd_clr_wr   = write_fire && aw_hold == 8'h3C && wstrb_hold[0];
+  wire learn_set_wr = write_fire && aw_hold == 8'h40 && wstrb_hold[0];
+  wire learn_clr_wr = write_fire && aw_hold == 8'h44 && wstrb_hold[0];
+  wire cpu_ovr_wr   = write_fire && aw_hold == 8'h4C && wstrb_hold[3]; // bit31 (arm) lives in byte 3
+  // any of the three CLR operations purges stale forwarding state -- the
+  // same "flush on the way into a non-forwarding/non-learning state" this
+  // design already does for LINK_CLR; at most one of these is true on any
+  // given write_fire cycle (aw_hold selects exactly one register)
+  wire [5:0] fwd_flush_bits = (link_clr_wr || fwd_clr_wr || learn_clr_wr) ? w_hold[5:0] : 6'b0;
+
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       link_up_o        <= 6'b100000;
@@ -125,19 +206,33 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
       event_q          <= '0;
       event_en_q       <= '0;
       flush_busy_s     <= '0;
+      fwd_en_o         <= '1;
+      learn_en_o       <= '1;
     end else begin
       flush_busy_s <= {flush_busy_s[0], link_flush_busy_i};
       if (link_set_wr) link_up_o <= link_up_o | w_hold[5:0];
-      if (link_clr_wr) begin
-        link_up_o        <= link_up_o & ~w_hold[5:0];
-        link_flush_tog_o <= link_flush_tog_o ^ w_hold[5:0];
-      end
+      if (link_clr_wr) link_up_o <= link_up_o & ~w_hold[5:0];
+      if (|fwd_flush_bits) link_flush_tog_o <= link_flush_tog_o ^ fwd_flush_bits;
+      if (fwd_set_wr)   fwd_en_o   <= fwd_en_o   | w_hold[5:0];
+      if (fwd_clr_wr)   fwd_en_o   <= fwd_en_o   & ~w_hold[5:0];
+      if (learn_set_wr) learn_en_o <= learn_en_o | w_hold[5:0];
+      if (learn_clr_wr) learn_en_o <= learn_en_o & ~w_hold[5:0];
       // set has priority over a same-cycle clear
       event_q <= (event_q & ~(evt_clr_wr ? w_hold[5:0] : 6'b0)) | link_event_set_i;
       if (evt_en_wr) event_en_q <= w_hold[5:0];
     end
   end
   assign link_irq_o = |(event_q & event_en_q);
+
+  // last-written mask, for readback only -- see header: this register does
+  // not track whether the fabric domain has consumed it yet
+  logic [5:0] cpu_ovr_mask_q;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) cpu_ovr_mask_q <= '0;
+    else if (cpu_ovr_wr && w_hold[31]) cpu_ovr_mask_q <= w_hold[5:0];
+  end
+  assign cpu_tx_ovr_mask_o = w_hold[5:0];
+  assign cpu_tx_ovr_go_o   = cpu_ovr_wr && w_hold[31];
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) force_q <= 1'b0;
     else if (sfp_ctl_wr) force_q <= w_hold[0];
@@ -211,6 +306,9 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
           8'h30:   s_axi_rdata <= {30'd0,stats_ack_sync[1],stats_request};
           8'h34:   s_axi_rdata <= 100000000;
           8'h20:   s_axi_rdata <= {28'd0, sfp_pcs_status_i};
+          8'h48:   s_axi_rdata <= {18'd0, learn_en_o, fwd_en_o};
+          8'h4C:   s_axi_rdata <= {26'd0, cpu_ovr_mask_q}; // bit31 always 0 (see header)
+          8'h50:   s_axi_rdata <= {cpu_rx_tag_valid_i, 28'd0, cpu_rx_tag_i};
           default: s_axi_rdata <= 32'd0;
         endcase
       end
@@ -219,5 +317,11 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
   end
   assign s_axi_rresp = 2'b00;
 
-  wire unused_ok = &{1'b0, s_axi_awaddr[0], wstrb_hold[3:1]};
+  // Fires exactly the one cycle the 0x50 read case below latches
+  // s_axi_rdata -- the same "pop on read" moment a fwft FIFO's rd_en_i
+  // needs: cpu_rx_tag_i/cpu_rx_tag_valid_i are sampled combinationally
+  // here, on the same edge the FIFO's read pointer advances underneath it.
+  assign cpu_rx_tag_pop_o = ar_valid_q && !s_axi_rvalid && ar_hold == 8'h50;
+
+  wire unused_ok = &{1'b0, s_axi_awaddr[0], wstrb_hold[2:1]};
 endmodule
