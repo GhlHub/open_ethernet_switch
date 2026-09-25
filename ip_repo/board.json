@@ -14,7 +14,7 @@
     "rtl/sfp_pcs/gth_sfp_wrapper.sv",
     "rtl/sfp_pcs/sfp_pcs_clk_gen.sv",
     "rtl/sfp_pcs/sfp_sideband.sv",
-    "rtl/switch_top.sv"
+    "ip_repo/switch_stats_router.sv"
   ],
   "vendor_ip": [
     "rtl/sfp_pcs/ip/gth_sfp_ip.xci",

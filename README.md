@@ -70,10 +70,12 @@ supported port capabilities.
 
 The first digital IP partition is deployed with all counter groups enabled.
 It passed the simulation comparisons, routed with WNS +0.018 ns and hold
-slack +0.010 ns, and passed settled CPU/endpoint connectivity checks over
+slack +0.011 ns, and passed settled CPU/endpoint connectivity checks over
 GEM1 and PL0. Initial DHCP and endpoint packet losses recovered but remain
-unexplained. Physical-port packaging, production block-design migration,
-complete CDC review and broader traffic qualification remain pending.
+unexplained. The production block design now instantiates the digital catalog IPs and
+has passed JTAG deployment and settled connectivity checks.
+Physical-port packaging, complete CDC review and broader traffic
+qualification remain pending.
 See [partitioning](docs/ip-partitioning.md) and
 [verification](docs/verification.md) for scope and evidence.
 

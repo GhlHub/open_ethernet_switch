@@ -28,11 +28,14 @@ def main():
     parser.add_argument('--stats-ddr', type=int, choices=(0, 1), default=1)
     parser.add_argument('--stats-debug', type=int, choices=(0, 1), default=1)
     parser.add_argument('--packaged-bd', type=Path, help='Use generated IP simulation wrappers from validate.tcl')
+    parser.add_argument('--production-bd', type=Path, help='Generated production system BD directory')
     parser.add_argument('--catalog', type=Path, help='Catalog used to generate --packaged-bd')
     args = parser.parse_args()
     if args.packaged_bd and (not args.catalog or (args.stats_ddr, args.stats_debug) != (1, 1)):
         parser.error('--packaged-bd requires --catalog and both statistics options enabled')
-    suffix = '_packaged' if args.packaged_bd else ''
+    suffix = '_production' if args.production_bd else ('_packaged' if args.packaged_bd else '')
+    if args.production_bd and (not args.catalog or args.packaged_bd or (args.stats_ddr, args.stats_debug) != (1, 1)):
+        parser.error('--production-bd requires --catalog, both counter groups, and no --packaged-bd')
     out = ROOT / 'build/ip_refactor' / f'equivalence_{args.stats_ddr}{args.stats_debug}{suffix}'
     out.mkdir(parents=True, exist_ok=True)
     # This fixture proves a structural partition, not arbitrary leaf-RTL
@@ -61,7 +64,7 @@ def main():
     reference = tb[start:end].replace('switch_top #(', 'golden_switch_top #(', 1).replace(') dut (', ') reference (', 1)
     for name in outputs:
         reference = re.sub(r'\.' + name + r'\s*\([^)]*\)', '.' + name + '()', reference)
-    checks = '\n'.join(f'      if (dut.{name} !== reference.{name}) $fatal(1, "equivalence mismatch: {name}");' for name in outputs)
+    checks = '\n'.join(f'      if (dut.{name} !== reference.{name}) $fatal(1, "equivalence mismatch: {name} actual=%h expected=%h", dut.{name}, reference.{name});' for name in outputs)
     # Connect inputs through the DUT's ports so tied/shared clocks are checked
     # exactly as the original assembly sees them.
     edges = ' or '.join('posedge dut.' + name for name in clocks)
@@ -132,6 +135,21 @@ def main():
         files += [str(p) for p in args.packaged_bd.resolve().glob('ip/*/sim/*.sv')]
         # Generated IP wrappers add an `inst` level around the fabric module.
         tb = tb.replace('dut.u_fabric.', 'dut.u_fabric.inst.')
+        (out / 'tb_miter.sv').write_text(tb)
+    if args.production_bd:
+        from production_fixture import fixture
+        from check_ip_catalog import check
+        staged = check(args.catalog.resolve())
+        files = [staged[Path(p).name] for p in sources()] + files[len(sources()):]
+        assembly, wrappers = fixture(args.production_bd.resolve(), out)
+        files[files.index(str(ROOT / 'rtl/switch_top.sv'))] = assembly
+        files += wrappers + [str(ROOT / 'ip_repo/switch_stats_router.sv')]
+        tb = tb.replace('dut.u_fabric.', 'dut.fabric.inst.')
+        # The legacy fixture releases reset on sampling edges. Added BD net
+        # aliases change delta-cycle ordering; release on the inactive edge
+        # so both assemblies receive identical, race-free reset stimulus.
+        tb = re.sub(r'repeat \(5\) @\(posedge (\w+)\);(\s+\w*rst_n\w* = 1\'b1;)',
+                    r'repeat (5) @(negedge \1);\2', tb)
         (out / 'tb_miter.sv').write_text(tb)
     run(['iverilog', '-g2012', '-s', 'tb_switch_top', '-o', str(out / 'miter.vvp'), *files], out / 'compile.log')
     run(['vvp', str(out / 'miter.vvp')], out / 'run.log')

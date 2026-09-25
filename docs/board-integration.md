@@ -1,10 +1,16 @@
 # KR260 board integration status
 
-Inventory: 2026-09-20. The board assembly includes automatic PL PHY setup,
-RGMII elastic receive buffers and I/O delays, SFP IIC/sideband control, and
-CPU-readable diagnostics. Existing local routed reports show WNS +0.018 ns,
-WHS +0.010 ns and zero critical CDC clock-pair rows, with warnings remaining.
-No board traffic or FreeRTOS operation has been demonstrated.
+Production assembly updated 2026-09-25: packaged digital endpoints, fabric
+and management now live inside `system.bd`. Physical RGMII, MDIO, GTH,
+clock/reset and sideband logic remain in `kr260_pl_top`, preserving board
+constraint targets. Register addresses and firmware ABI are unchanged.
+
+The preceding native assembly has been demonstrated on the board with
+FreeRTOS, DHCP, CPU/endpoint traffic, SNMP/web and microSD persistence.
+The production catalog assembly also passed JTAG deployment, DHCP after
+retry, settled CPU/endpoint forwarding and SNMP/web checks on GEM1/PL0. See
+[verification](verification.md) for build-specific evidence and timing/CDC
+limitations, and [partitioning](ip-partitioning.md) for migration scope.
 
 ## Reference material and revision scope
 

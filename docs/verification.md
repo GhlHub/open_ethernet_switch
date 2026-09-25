@@ -1,5 +1,98 @@
 # Design inventory verification
 
+## 2026-09-25 production catalog board acceptance
+
+Loaded the production catalog bitstream identified below through hw_server
+at `10.0.1.107:3121`, with matching `STATS_DDR=1`, `STATS_DEBUG=1` R5 firmware.
+The ELF memory/DMA-region audit passed. UART confirmed cache enabled,
+statistics capabilities `0x53540107`, saved microSD settings loaded and STP
+disabled. GEM1 (right lower, uplink) and PL0 (left upper, endpoint) linked
+at 1000 Mb/s. DHCP acquired `10.0.1.104` after the one-minute retry.
+
+| Check | Result |
+| --- | --- |
+| Initial endpoint ping | 48/100 replies; 52 startup losses |
+| Endpoint full-MTU ping before DHCP completed | 200/200 replies |
+| R5 normal / full-MTU ping after DHCP | 100/100 and 200/200 replies |
+| Concurrent sustained R5 and endpoint full-MTU ping | 1,000/1,000 each |
+| One-second statistics HTTP polling during traffic | 55/55 successful reads |
+| Statistics/configuration pages and API GETs | HTTP 200 |
+| Unauthenticated configuration POST | HTTP 401; settings unchanged |
+| SNMP final health | 784 polls, zero late polls, saturation or mailbox timeouts |
+| Packet / DDR errors | Zero bad packets and AXI response errors |
+
+Physical-port forwarding does not depend on the management DHCP lease.
+Ingress DDR write-data stalls remained exactly two cycles per burst (6,058
+bursts and 12,116 stall cycles during measurement), matching the prior image.
+Other measured DDR directions had zero data-stall cycles. Sensor readings
+were valid with no sensor errors. Browser statistics refreshed successfully;
+one statistics-to-configuration navigation timed out, while direct navigation
+loaded all settings and controls without JavaScript errors. Its cause remains
+unresolved and should be checked again during browser regression.
+
+Initial forwarding loss and DHCP retry remain unexplained. Unconnected
+ports, speed combinations and simultaneous all-port load were not retested.
+Logs and JSON snapshots are local artifacts under
+`build/ip_refactor/production_bd/board_test/`.
+
+
+## 2026-09-25 production catalog block design
+
+Moved the fabric, two GEM bridges, two PL MACs, SFP MAC/PCS and management
+registers into production `system.bd` as catalog IP cells. Physical clocks,
+RGMII, MDIO, GTH and sideband logic retain their board hierarchy. The
+13-bank statistics decoder is a BD module reference. Counter options are
+set on fabric and management together; the firmware register map is unchanged.
+
+Verification before implementation:
+
+- Native equivalence passed all four optional-counter combinations.
+- Generated production datapath equivalence passed 29,934 clock samples,
+  114 outputs per sample and 1,327 completed snapshots, including all bank
+  and slot indices. Packet-content, forwarding, link flush and CPU override
+  assertions passed. The fixture releases reset on inactive clock edges
+  to eliminate the original stimulus race exposed by BD net aliases.
+- Generated-BD audits passed catalog identity, control/DDR/GEM/IRQ wiring,
+  clock/reset connections, address windows and unchanged physical-instance
+  connections. Catalog source hashes and interface checks passed. Explicit
+  zero cache-attribute ties preserve the previous DDR transaction attributes;
+  generated SmartConnect port connections were inspected as well.
+- Fresh Tcl regeneration matched the implementation BD's connections,
+  component parameters, external ports and address map, and passed the
+  generated-datapath comparison again. The clock-crossing XDC now uses
+  late processing so all board and vendor clocks exist before its bounds
+  are applied; no numerical timing constraint was relaxed.
+- Diagnostics and SFP-sideband regressions passed.
+
+The all-counter implementation and bitstream generation completed successfully
+in `build/ip_refactor/production_bd/project/`. Final routed results:
+
+| Metric | Production catalog assembly |
+| --- | ---: |
+| Setup WNS / TNS | +0.018 ns / 0.000 ns |
+| Hold WHS / THS | +0.011 ns / 0.000 ns |
+| LUTs | 29,050 |
+| Registers | 36,982 |
+| Block RAM tiles | 51.5 |
+| DSPs | 0 |
+| Unclocked pins / unconstrained internal endpoints | 0 / 0 |
+
+All retained RGMII instance/clock targets and constrained PS, PL and SFP
+clock names resolve. The successful implementation run has zero critical
+warnings and errors. DRC reports only the two existing AXI DMA BRAM
+collision advisories. CDC remains unwaived: 2,632 CDC-1, 13 CDC-10 and
+8 CDC-12 critical findings, matching the previous partition's category
+counts. Seven inputs and eleven outputs still lack external delay
+constraints. Positive slack is not complete CDC/external-I/O sign-off.
+Reports are under `build/ip_refactor/production_bd/reports/`.
+
+Bitstream: `build/ip_refactor/production_bd/project/kr260_switch.runs/impl_1/kr260_top.bit`.
+SHA-256: `f718231385c739efa01e5e0cac625fc34eeedcfe7dbb90c34506937430484c0c`.
+
+This assembly was downloaded over JTAG with matching all-counter R5 firmware.
+See the board acceptance results above. Older sections retain their original
+image-specific evidence.
+
 ## 2026-09-25 repository checkpoint
 
 The `begin partition to ip repo centric flow` checkpoint includes the initial

@@ -30,11 +30,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--core', choices=CORES, action='append')
     parser.add_argument('--board', action='store_true')
+    parser.add_argument('--board-only', action='store_true', help='Physical shell and BD module references; catalog supplies digital RTL')
     parser.add_argument('--assembly', action='store_true')
     parser.add_argument('--kind', choices=('rtl', 'vendor_ip', 'constraints'), default='rtl')
     args = parser.parse_args()
     if args.kind == 'rtl':
-        paths = sources(args.core or CORES, args.board)
+        paths = sources((), True) if args.board_only else sources(args.core or CORES, args.board)
         if args.assembly and 'rtl/switch_top.sv' not in paths:
             paths.append('rtl/switch_top.sv')
     else:

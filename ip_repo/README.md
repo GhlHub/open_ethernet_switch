@@ -15,9 +15,10 @@ stays in `rtl/`; each dependency has one editable source copy.
 
 The first partition retains RGMII I/O/MDIO, GTH/clock generation and SFP
 sideband handling in the board layer. These physical shells are **not yet
-inside the port IPs**. The production assembly instantiates the modules
-through `rtl/switch_top.sv`; it does not yet instantiate catalog cells in
-the production PS block design. See [migration and verification](../docs/ip-partitioning.md).
+inside the port IPs**. The production `system.bd` instantiates all seven digital catalog cells
+through `production.tcl`. `rtl/switch_top.sv` remains the native simulation
+assembly. `switch_stats_router.sv` is a small BD module reference preserving
+the existing 13-bank mailbox routing. See [migration and verification](../docs/ip-partitioning.md).
 
 ## Generate and validate a catalog
 
@@ -48,15 +49,20 @@ deployment configuration**.
 ## Build and simulation
 
 ```sh
-python3 scripts/ip_sources.py --board
+python3 scripts/ip_sources.py --board-only
 make -C sim sim-switch-top sim-ingress sim-bufmgr sim-statistics
 make -C sim sim-ip-equivalence
-KR260_PROJECT_DIR="$PWD/build/vivado_kr260_modular" STATS_DDR=1 STATS_DEBUG=1 \
+KR260_PROJECT_DIR="$PWD/build/ip_refactor/production_bd/project" STATS_DDR=1 STATS_DEBUG=1 \
   vivado -mode batch -nolog -nojournal -source build/build_kr260.tcl -tclargs impl
-vivado -mode batch -nolog -nojournal -source ip_repo/review_board.tcl
+vivado -mode batch -nolog -nojournal -source ip_repo/review_board.tcl -tclargs \
+  build/ip_refactor/production_bd/project/kr260_switch.runs/impl_1/kr260_top_routed.dcp \
+  build/ip_refactor/production_bd/reports
 ```
 
-The board build and switch-level simulation resolve these same manifests.
+The board build checks catalog source hashes before using its staged RTL.
+Only physical-shell RTL and the mailbox router are added directly; digital
+RTL comes from the catalog cells. Simulation resolves the same manifests.
+`KR260_IP_CATALOG` selects an alternative generated catalog directory.
 The board script retains its usual `build/vivado_kr260` default; the
 explicit output override preserves the existing project during migration.
 Firmware retains the existing matching `STATS_DDR`/`STATS_DEBUG` options

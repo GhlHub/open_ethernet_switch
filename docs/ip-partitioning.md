@@ -43,7 +43,10 @@ ingress subsystem tests and instantiates the same ingress datapath.
 `ip_repo/gem_port/hdl/switch_gem_port.sv` combines the existing GEM bridge
 with its RX and TX counter banks. `rtl/switch_top.sv` is now a wiring
 assembly of the fabric and five endpoints, plus the unchanged statistics
-bank decoder. It preserves the existing board and testbench port list.
+bank decoder. It preserves the existing testbench port list. The production board now
+uses `ip_repo/production.tcl` to instantiate the catalog cells directly
+in `system.bd`; `kr260_pl_top` contains only the physical shells, clocks,
+reset synchronizers, MDIO and physical status/event logic.
 
 The other three IP manifests package the existing PL MAC, SFP MAC/PCS and
 management modules. `scripts/ip_sources.py` deduplicates shared leaf RTL
@@ -110,6 +113,54 @@ Local evidence is under `build/ip_refactor/`. The isolated board project
 is `build/vivado_kr260_modular/`; its implementation result is recorded in
 [verification](verification.md).
 
+
+## Production block design
+
+`system.bd` contains `fabric`, `gem0`, `gem1`, `pl0`, `pl1`, `sfp` and
+`management` catalog cells alongside PS, DMA and SmartConnect. All ten
+physical AXI-Stream connections, CPU streams, three DDR masters, MAC control
+interfaces, GEM external FIFOs, interrupts and management controls connect
+inside the BD. The existing address windows remain:
+
+| Block | Base | Window |
+| --- | --- | --- |
+| CPU AXI DMA | `0x80000000` | 64 KiB |
+| PL0 / PL1 MDIO | `0x80010000` / `0x80020000` | 64 KiB each |
+| SFP I2C | `0x80030000` | 64 KiB |
+| PL0 / PL1 MAC | `0x80040000` / `0x80080000` | 256 KiB each |
+| SFP MAC | `0x800C0000` | 256 KiB |
+| Management | `0x80100000` | 64 KiB |
+
+`STATS_DDR` and `STATS_DEBUG` now configure both fabric and management IP
+parameters in the build Tcl. Physical instances stay under `u_pl`, preserving
+the RGMII delay groups and forwarded-clock constraint targets.
+The clock-crossing XDC is processed late, after vendor and board clocks
+exist; its numeric bounds are unchanged.
+`axi_attributes.tcl` explicitly retains the previous `AxCACHE=0000` ties
+on all four switch DDR channels; Vivado otherwise defaults omitted cache
+attributes to `0011`. There is no firmware ABI change. A missing or stale
+catalog fails the build before BD creation; regenerate it into a fresh
+directory and set `KR260_IP_CATALOG`.
+
+To compare the generated production datapath with the original assembly:
+
+```sh
+python3 scripts/check_ip_equivalence.py \
+  --production-bd build/ip_refactor/production_bd/project/kr260_switch.gen/sources_1/bd/system \
+  --catalog build/ip_catalog
+```
+
+This fixture uses the generated instance connections and packaged source
+snapshots, checks the stream/control wiring against the prior native
+assembly, and reuses the packet/counter equivalence stimulus. Only aging
+and PCS timers are accelerated in fixture-local wrapper copies. PS/DDR
+interconnect and physical I/O remain simulation boundaries. The all-counter
+production assembly passed this comparison and completed bitstream generation
+with routed WNS +0.018 ns and hold slack +0.011 ns; see
+[build results and limitations](verification.md#2026-09-25-production-catalog-block-design).
+It was downloaded over JTAG and passed settled GEM1/PL0 connectivity, SNMP
+and HTTP checks; see the board acceptance results in verification.md.
+
 ## Remaining migration and acceptance work
 
 The reusable **digital** IP boundaries are implemented. The complete
@@ -122,10 +173,10 @@ is not complete:
    this requires a separate physical timing check.
 2. Move the GTH, PCS clock generator and SFP sideband shell into the SFP
    package, with reproducible vendor-IP dependencies and scoped clocks.
-3. Move the statistics bank decoder into the management assembly and
-   instantiate the packaged endpoints/fabric in the production block
-   design. The generated `partition_validation.bd` is currently an
-   interface-validation design, not the production system.
+3. Package the statistics bank decoder with the management assembly.
+   Production already uses catalog endpoints/fabric/management; its
+   unchanged decoder is currently a small BD module reference. The
+   separate `partition_validation.bd` remains an interface test fixture.
 4. Add a six-port concurrent packet scoreboard with randomized DDR
    backpressure/errors, exhaustion, link/reset transitions and ownership
    invariants. Existing subsystem tests and the finite comparison do not

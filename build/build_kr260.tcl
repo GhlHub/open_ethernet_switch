@@ -1,11 +1,13 @@
-# Reproducible KR260 switch build: PS + AXI interconnect + AXI DMA block design
-# around rtl/board/kr260_pl_top.sv (module reference).
+# Reproducible KR260 switch build: PS, AXI DMA/interconnect and packaged
+# digital switch IP in system.bd, beside the physical kr260_pl_top shell.
 #
 #   cd build && vivado -mode batch -source build_kr260.tcl -nolog -nojournal \
 #       -tclargs [bd|synth|impl]      (default: synth)
 #
 # Generated project lives in build/vivado_kr260/ (git-ignored).
+if {[catch {
 set stage [expr {[llength $argv] ? [lindex $argv 0] : "synth"}]
+if {$stage ni {bd synth impl}} {error "stage must be bd, synth or impl"}
 set here  [file dirname [file normalize [info script]]]
 set root  [file dirname $here]
 set proj  $here/vivado_kr260
@@ -31,26 +33,32 @@ foreach option {STATS_DDR STATS_DEBUG} {
   if {$value ni {0 1}} {error "$option must be 0 or 1"}
   lappend stats_generics "$option=$value"
 }
-set_property generic $stats_generics [current_fileset]
+# Catalog parameters, rather than top-level HDL generics, select counters.
+foreach setting $stats_generics {
+  lassign [split $setting =] name value
+  set [string tolower $name] $value
+}
 
 set_property XPM_LIBRARIES {XPM_MEMORY XPM_CDC} [current_project]
 
 # ---- RTL: the same explicit IP manifests used by simulation and packaging ----
-set rtl [split [exec python3 $root/scripts/ip_sources.py --board] "\n"]
+set rtl [split [exec python3 $root/scripts/ip_sources.py --board-only] "\n"]
 add_files -norecurse $rtl
-if {[file exists $root/build/ip_catalog]} {
-  set_property ip_repo_paths [list $root/build/ip_catalog] [current_project]
-  update_ip_catalog
-}
+set catalog $root/build/ip_catalog
+if {[info exists ::env(KR260_IP_CATALOG)]} {set catalog [file normalize $::env(KR260_IP_CATALOG)]}
+# Fail before generating hardware if the catalog differs from checked-in RTL.
+puts [exec python3 $root/scripts/check_ip_catalog.py $catalog]
+set_property ip_repo_paths [list $catalog] [current_project]
+update_ip_catalog
 set_property file_type SystemVerilog [get_files -filter {NAME =~ *.sv}]
-# packages first so import statements resolve
-foreach pkg [get_files -filter {NAME =~ *_pkg.sv}] { }
 update_compile_order -fileset sources_1
 
 # ---- constraints ----
 add_files -fileset constrs_1 -norecurse [split [exec python3 $root/scripts/ip_sources.py --kind constraints] "\n"]
 # the crossing constraints reference IP-generated clocks: implementation only
 set_property USED_IN {implementation} [get_files $root/constraints/kr260_clocks.xdc]
+# Clock-pair bounds must follow vendor clocks and the board primary clocks.
+set_property PROCESSING_ORDER LATE [get_files $root/constraints/kr260_clocks.xdc]
 set_property USED_IN {implementation} [get_files $root/constraints/kr260_rgmii_io.xdc]
 
 # ---- block design ----
@@ -158,10 +166,8 @@ foreach p {sc_ddr/aresetn sc_dma/aresetn dma/axi_resetn} {
 
 set_property -dict [list \
   CONFIG.FREQ_HZ [get_property CONFIG.FREQ_HZ [get_bd_pins ps/pl_clk0]] \
-  CONFIG.ASSOCIATED_BUSIF {pl0_s_axi:pl1_s_axi:sfp_s_axi:mdio0_s_axi:mdio1_s_axi:diag_s_axi} \
   CONFIG.ASSOCIATED_RESET {axis_rst_n}] [get_bd_ports axis_clk]
 set_property -dict [list \
-  CONFIG.ASSOCIATED_BUSIF {m_axi_ing:m_axi_egr:m_axi_cpu:cpu_s_axis:cpu_m_axis} \
   CONFIG.ASSOCIATED_RESET {fabric_rst_n_o}] [get_bd_ports fabric_clk_o]
 set_property -dict [list CONFIG.FREQ_HZ [get_property CONFIG.FREQ_HZ [get_bd_pins ps/pl_clk1]]] [get_bd_ports freerun_clk]
 
@@ -237,32 +243,36 @@ foreach n {pl0_s_axi pl1_s_axi sfp_s_axi mdio0_s_axi mdio1_s_axi diag_s_axi} {
 foreach n {m_axi_ing m_axi_egr m_axi_cpu} {
   set_property -dict [list CONFIG.DATA_WIDTH 128 CONFIG.HAS_LOCK 0 CONFIG.HAS_CACHE 0 CONFIG.HAS_PROT 0 CONFIG.HAS_QOS 0 CONFIG.HAS_REGION 0] [get_bd_intf_ports $n]
 }
+source $root/ip_repo/production.tcl
+
 # Fixed register map (PS HPM0_LPD window). MAC blocks are 256 KiB (18-bit AXI-Lite).
 foreach {seg off rng} {
   dma/S_AXI_LITE/Reg   0x80000000 64K
   sfp_iic/S_AXI/Reg    0x80030000 64K
   mdio0_s_axi/Reg      0x80010000 64K
   mdio1_s_axi/Reg      0x80020000 64K
-  pl0_s_axi/Reg        0x80040000 256K
-  pl1_s_axi/Reg        0x80080000 256K
-  sfp_s_axi/Reg        0x800C0000 256K
-  diag_s_axi/Reg       0x80100000 64K
+  pl0/s_axi/reg0        0x80040000 256K
+  pl1/s_axi/reg0        0x80080000 256K
+  sfp/s_axi/reg0        0x800C0000 256K
+  management/s_axi/reg0       0x80100000 64K
 } {
   assign_bd_address -offset $off -range $rng -target_address_space [get_bd_addr_spaces ps/Data] [get_bd_addr_segs $seg]
 }
 assign_bd_address
 validate_bd_design
 save_bd_design
+puts [exec python3 $root/scripts/check_production_bd.py $proj/kr260_switch.srcs/sources_1/bd/system/system.bd]
+generate_target all [get_files $proj/kr260_switch.srcs/sources_1/bd/system/system.bd]
 make_wrapper -files [get_files $proj/kr260_switch.srcs/sources_1/bd/system/system.bd] -top
 add_files -norecurse $proj/kr260_switch.gen/sources_1/bd/system/hdl/system_wrapper.v
 set_property top kr260_top [current_fileset]
 update_compile_order -fileset sources_1
-file mkdir $here/reports
-set fh [open $here/reports/address_map.txt w]
+file mkdir $proj/reports
+set fh [open $proj/reports/address_map.txt w]
 foreach seg [get_bd_addr_segs -of_objects [get_bd_addr_spaces ps/Data]] {
   puts $fh "[get_property NAME $seg]  offset=[get_property OFFSET $seg]  range=[get_property RANGE $seg]"
 }
-foreach as {dma/Data_SG dma/Data_MM2S dma/Data_S2MM} {
+foreach as {fabric/m_axi_ing fabric/m_axi_egr fabric/m_axi_cpu dma/Data_SG dma/Data_MM2S dma/Data_S2MM} {
   foreach seg [get_bd_addr_segs -of_objects [get_bd_addr_spaces $as]] {
     puts $fh "$as -> [get_property NAME $seg]  offset=[get_property OFFSET $seg]  range=[get_property RANGE $seg]"
   }
@@ -272,17 +282,21 @@ close $fh
 # vendor IP output products (kept out of rtl/; regenerated every build)
 foreach ip [get_ips] { puts "IP [get_property NAME $ip] locked=[get_property IS_LOCKED $ip]" }
 generate_target all [get_ips -filter {SCOPE == ""}]
-if {$stage eq "bd"} { return }
+if {$stage eq "bd"} { exit 0 }
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1
 if {[get_property PROGRESS [get_runs synth_1]] ne "100%"} {
   puts stderr "ERROR: synthesis did not complete: [get_property STATUS [get_runs synth_1]]"
   exit 1
 }
-if {$stage eq "synth"} { return }
+if {$stage eq "synth"} { exit 0 }
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
 if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} {
   puts stderr "ERROR: implementation did not complete: [get_property STATUS [get_runs impl_1]]"
+  exit 1
+}
+} message options]} {
+  puts stderr [dict get $options -errorinfo]
   exit 1
 }
