@@ -1,4 +1,11 @@
 SHELL := /bin/bash
+.DEFAULT_GOAL := sim
+
+.PHONY: sim-ip-equivalence
+sim-ip-equivalence:
+	@set -e; for ddr in 0 1; do for debug in 0 1; do \
+	  python3 ../scripts/check_ip_equivalence.py --stats-ddr $$ddr --stats-debug $$debug; \
+	done; done
 
 MAC_DIR    := ../rtl/mac_table
 BUFMGR_DIR := ../rtl/buf_mgr
@@ -42,6 +49,7 @@ INGRESS_SRCS := \
 	$(DMA_DIR)/axi_dma_pkg.sv \
 	$(DMA_DIR)/ingress_port_wr.sv \
 	$(DMA_DIR)/ingress_dma_wr.sv \
+	../ip_repo/switch_fabric/hdl/ingress_datapath.sv \
 	$(DMA_DIR)/ingress_top.sv
 
 INGRESS_TB := $(TB_DIR)/axi_mem_bfm.sv $(TB_DIR)/tb_ingress_top.sv
@@ -166,52 +174,8 @@ MAC_FWD_SRCS := \
 
 MAC_FWD_TB := $(TB_DIR)/tb_mac_forwarding_top.sv
 
-SWITCH_TOP_SRCS := $(wildcard ../rtl/stats/*.sv) \
-	$(COMMON_DIR)/port_link_ctrl.sv \
-	$(COMMON_DIR)/ctrl_value_xdomain.sv \
-	$(BUFMGR_DIR)/buf_mgr_pkg.sv \
-	$(MAC_DIR)/mac_table_pkg.sv \
-	$(DMA_DIR)/axi_dma_pkg.sv \
-	$(COMMON_DIR)/rr_arbiter.sv \
-	$(COMMON_DIR)/sync_fifo.sv \
-	$(COMMON_DIR)/async_fifo.sv \
-	$(BUFMGR_DIR)/free_list_mgr.sv \
-	$(BUFMGR_DIR)/queue_mgr.sv \
-	$(BUFMGR_DIR)/buf_mgr_core.sv \
-	$(DMA_DIR)/ingress_port_wr.sv \
-	$(DMA_DIR)/ingress_dma_wr.sv \
-	$(DMA_DIR)/ingress_top.sv \
-	$(DMA_DIR)/egress_port_rd.sv \
-	$(DMA_DIR)/egress_dma_rd.sv \
-	$(DMA_DIR)/egress_top.sv \
-	$(CPU_PORT_DIR)/cpu_dma_wr.sv \
-	$(CPU_PORT_DIR)/cpu_dma_rd.sv \
-	$(CPU_PORT_DIR)/cpu_port_top.sv \
-	$(MAC_DIR)/mac_table_bank.sv \
-	$(MAC_DIR)/bank_arbiter.sv \
-	$(MAC_DIR)/aging_sweep_fsm.sv \
-	$(MAC_DIR)/learn_engine_fsm.sv \
-	$(MAC_DIR)/lookup_engine_fsm.sv \
-	$(MAC_DIR)/mac_learn_port.sv \
-	$(MAC_DIR)/mac_lookup_port.sv \
-	$(MAC_DIR)/mac_addr_table_top.sv \
-	$(MAC_DIR)/mac_addr_resolver.sv \
-	$(MAC_DIR)/mac_forwarding_top.sv \
-	$(PS_ETH_DIR)/gem_rx_w_to_axis.sv \
-	$(PS_ETH_DIR)/axis_to_gem_tx_r.sv \
-	$(PS_ETH_DIR)/ps_gem_axis_bridge.sv \
-	$(PL_GMII_DIR)/open_eth_mac_1g_switch.sv \
-	$(PL_GMII_DIR)/mac_rxd_to_switch_ingress.sv \
-	$(PL_GMII_DIR)/switch_egress_to_mac_txd.sv \
-	$(PL_GMII_DIR)/pl_gmii_mac_top.sv \
-	$(SFP_PCS_DIR)/sfp_pcs_pkg.sv \
-	$(SFP_PCS_DIR)/gmii_1000base_x_tx.sv \
-	$(SFP_PCS_DIR)/sync_1000base_x.sv \
-	$(SFP_PCS_DIR)/gmii_1000base_x_rx.sv \
-	$(SFP_PCS_DIR)/autoneg_1000base_x.sv \
-	$(SFP_PCS_DIR)/sfp_1000base_x_pcs.sv \
-	$(SFP_PCS_DIR)/sfp_port_top.sv \
-	../rtl/switch_top.sv
+# The IP manifests are shared with packaging and the board build.
+SWITCH_TOP_SRCS := $(shell python3 ../scripts/ip_sources.py --assembly)
 
 SWITCH_TOP_TB := $(TB_DIR)/axi_mem_bfm.sv $(TB_DIR)/tb_switch_top.sv
 

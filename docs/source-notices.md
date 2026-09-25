@@ -70,3 +70,23 @@ The R5 linker script in `software/r5/linker.ld` is adapted from AMD
 embeddedsw 2026.1 `scripts/linker_files/lscript_r5.ld.in` and retains its MIT
 copyright/SPDX header. The application links the generated AMD standalone BSP;
 its source notices remain in the installed/generated BSP.
+
+## R5 storage and authentication dependencies
+
+The vendored [libpayload USB subset](../third_party/libpayload_usb/README.md)
+comes from coreboot revision `7a5f91cae93cc0a5420bb3569f521a8addb228ed`.
+Its BSD-3-Clause notices remain in the source files; the import README
+describes the R5 adaptation and mass-storage compatibility changes.
+
+[FatFs R0.15](../third_party/fatfs/README.md) supplies FAT filesystem access;
+its upstream notice remains in `ff.c` and `ff.h`. The local configuration
+does not enable formatting or exFAT.
+
+The [SHA-256 implementation](../third_party/sha256/README.md) retains Brad
+Conte's public-domain attribution and records its import through AMD
+embeddedsw 2026.1 and the local unsigned-shift correction. It is used by
+the administrator password verifier.
+
+IP packaging copies project RTL and its existing notices into generated
+catalogs. The new `ip_repo` boundaries do not change source licensing;
+generated catalogs and vendor output products are excluded from Git.

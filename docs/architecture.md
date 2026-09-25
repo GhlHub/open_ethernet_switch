@@ -1,5 +1,10 @@
 # Overall architecture
 
+The digital modules now have [IP repository boundaries](ip-partitioning.md)
+with an extracted `switch_fabric`, local GEM counters and reproducible
+Vivado packaging. The diagram below shows the board-level packet flow;
+`switch_top` is the compatibility wiring assembly around these blocks.
+
 Inventory baseline: 2026-09-20. The design is a store-and-forward switch
 using a shared PS DDR packet pool. PS GEM traffic enters PL through the GEM
 external FIFO interface, bypassing the GEM's built-in DMA. The switch's own

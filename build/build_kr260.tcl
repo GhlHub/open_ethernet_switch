@@ -9,14 +9,15 @@ set stage [expr {[llength $argv] ? [lindex $argv 0] : "synth"}]
 set here  [file dirname [file normalize [info script]]]
 set root  [file dirname $here]
 set proj  $here/vivado_kr260
+if {[info exists ::env(KR260_PROJECT_DIR)]} {set proj [file normalize $::env(KR260_PROJECT_DIR)]}
 set part  xck26-sfvc784-2LV-c
 
 file delete -force $proj
 create_project kr260_switch $proj -part $part
 # ---- vendor IP: copy the checked-in .xci files so generated products stay out of rtl/ ----
 file mkdir $proj/ip
-foreach x {sfp_pcs/ip/gth_sfp_ip.xci sfp_pcs/ip/sfp_pcs_clk_gen_ip.xci pl_gmii/ip/pl_eth_clk_gen_ip.xci} {
-  file copy -force $root/rtl/$x $proj/ip/
+foreach x [split [exec python3 $root/scripts/ip_sources.py --kind vendor_ip] "\n"] {
+  file copy -force $x $proj/ip/
   import_ip $proj/ip/[file tail $x]
 }
 
@@ -34,19 +35,20 @@ set_property generic $stats_generics [current_fileset]
 
 set_property XPM_LIBRARIES {XPM_MEMORY XPM_CDC} [current_project]
 
-# ---- RTL (synthesizable sources only: no *_sim_model.sv) ----
-set rtl {}
-foreach f [glob -nocomplain -directory $root/rtl -types f *.sv */*.sv] {
-  if {![string match *_sim_model.sv $f]} { lappend rtl $f }
-}
+# ---- RTL: the same explicit IP manifests used by simulation and packaging ----
+set rtl [split [exec python3 $root/scripts/ip_sources.py --board] "\n"]
 add_files -norecurse $rtl
+if {[file exists $root/build/ip_catalog]} {
+  set_property ip_repo_paths [list $root/build/ip_catalog] [current_project]
+  update_ip_catalog
+}
 set_property file_type SystemVerilog [get_files -filter {NAME =~ *.sv}]
 # packages first so import statements resolve
 foreach pkg [get_files -filter {NAME =~ *_pkg.sv}] { }
 update_compile_order -fileset sources_1
 
 # ---- constraints ----
-add_files -fileset constrs_1 -norecurse [glob $root/constraints/*.xdc]
+add_files -fileset constrs_1 -norecurse [split [exec python3 $root/scripts/ip_sources.py --kind constraints] "\n"]
 # the crossing constraints reference IP-generated clocks: implementation only
 set_property USED_IN {implementation} [get_files $root/constraints/kr260_clocks.xdc]
 set_property USED_IN {implementation} [get_files $root/constraints/kr260_rgmii_io.xdc]
@@ -273,6 +275,14 @@ generate_target all [get_ips -filter {SCOPE == ""}]
 if {$stage eq "bd"} { return }
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1
+if {[get_property PROGRESS [get_runs synth_1]] ne "100%"} {
+  puts stderr "ERROR: synthesis did not complete: [get_property STATUS [get_runs synth_1]]"
+  exit 1
+}
 if {$stage eq "synth"} { return }
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
+if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} {
+  puts stderr "ERROR: implementation did not complete: [get_property STATUS [get_runs impl_1]]"
+  exit 1
+}

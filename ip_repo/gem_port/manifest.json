@@ -1,0 +1,23 @@
+{
+  "name": "gem_port",
+  "version": "1.0",
+  "description": "PS GEM external FIFO bridge and port counters",
+  "top": "switch_gem_port",
+  "sources": [
+    "rtl/common/async_fifo.sv",
+    "rtl/stats/stats_bank.sv",
+    "rtl/stats/stats_gem.sv",
+    "rtl/ps_eth/gem_rx_w_to_axis.sv",
+    "rtl/ps_eth/axis_to_gem_tx_r.sv",
+    "rtl/ps_eth/ps_gem_axis_bridge.sv",
+    "ip_repo/gem_port/hdl/switch_gem_port.sv"
+  ],
+  "clocks": {
+    "clk": [
+      "s_axis",
+      "m_axis"
+    ],
+    "gem_rx_clk": [],
+    "gem_tx_clk": []
+  }
+}

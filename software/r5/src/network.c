@@ -1,4 +1,5 @@
 #include "board.h"
+#include "config.h"
 #include "policy.h"
 #include "pstate.h"
 #include "FreeRTOS.h"
@@ -11,6 +12,7 @@
 #include <string.h>
 static NetworkInterface_t interface;
 static NetworkEndPoint_t endpoint;
+static bool use_dhcp;
 static volatile bool link_up;
 static struct dhcp_policy dhcp;
 static TaskHandle_t service;
@@ -35,13 +37,14 @@ void network_link_changed(bool up)
 void network_dhcp_result(int leased)
 {
     /* Called in IP task, possibly already in a critical section. */
+    if (!use_dhcp) return;
     taskENTER_CRITICAL(); dhcp_result(&dhcp,leased!=0,now_ms()); taskEXIT_CRITICAL();
     if (!leased && service) xTaskNotify(service,2u,eSetBits);
 }
 void vApplicationIPNetworkEventHook_Multi(eIPCallbackEvent_t event, NetworkEndPoint_t *e)
 {
     if (event==eNetworkUp && e->ipv4_settings.ulIPAddress!=0) {
-        xil_printf("DHCP IPv4 acquired: %lu.%lu.%lu.%lu\r\n",
+        xil_printf("%s IPv4: %lu.%lu.%lu.%lu\r\n",use_dhcp?"DHCP":"Static",
             (unsigned long)(FreeRTOS_ntohl(e->ipv4_settings.ulIPAddress)>>24),
             (unsigned long)((FreeRTOS_ntohl(e->ipv4_settings.ulIPAddress)>>16)&255),
             (unsigned long)((FreeRTOS_ntohl(e->ipv4_settings.ulIPAddress)>>8)&255),
@@ -75,7 +78,7 @@ static void network_service(void *arg)
         }
         if (events&2u) xil_printf("DHCP unsuccessful; retry in 60 seconds\r\n");
         bool retry;
-        taskENTER_CRITICAL(); retry=dhcp_retry(&dhcp,link_up,now_ms()); taskEXIT_CRITICAL();
+        taskENTER_CRITICAL(); retry=use_dhcp && dhcp_retry(&dhcp,link_up,now_ms()); taskEXIT_CRITICAL();
         if (retry) { xil_printf("Retry DHCP\r\n"); FreeRTOS_NetworkDown(&interface); }
         /* Bounded work per iteration so a flooded CPU port cannot starve link service. */
         for (unsigned j=0;j<16;j++) {
@@ -107,15 +110,16 @@ static void network_service(void *arg)
 }
 void network_start(void)
 {
-    /* Locally administered development MAC; assign a unique value per board. */
-    static const uint8_t mac[6]={0x02,0x4b,0x52,0x32,0x36,0x01};
+    struct switch_config cfg; settings_get(&cfg,NULL,NULL);
     static const uint8_t zero[4]={0,0,0,0};
+    use_dhcp=cfg.dhcp;
     memset(&interface,0,sizeof interface);
     interface.pcName="fabric0";
     interface.pfInitialise=initialise; interface.pfOutput=output; interface.pfGetPhyLinkStatus=phy_status;
     FreeRTOS_AddNetworkInterface(&interface);
-    FreeRTOS_FillEndPoint(&interface,&endpoint,zero,zero,zero,zero,mac);
-    endpoint.bits.bWantDHCP=pdTRUE;
+    FreeRTOS_FillEndPoint(&interface,&endpoint,
+        use_dhcp?zero:cfg.ip,use_dhcp?zero:cfg.netmask,use_dhcp?zero:cfg.gateway,zero,cfg.mac[0]);
+    endpoint.bits.bWantDHCP=use_dhcp?pdTRUE:pdFALSE;
     configASSERT(fabric_dma_init());
     configASSERT(FreeRTOS_IPInit_Multi()==pdPASS);
     configASSERT(xTaskCreate(network_service,"fabric-rx",2048,NULL,3,&service)==pdPASS);

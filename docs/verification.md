@@ -1,5 +1,146 @@
 # Design inventory verification
 
+## 2026-09-25 repository checkpoint
+
+The `begin partition to ip repo centric flow` checkpoint includes the initial
+digital IP partition and the previously uncommitted standalone-R5 USB storage,
+persistent configuration and administrator-authentication work. The root
+README, dependency notices and development inventory reflect the deployed
+state and distinguish completed work from the remaining physical-IP migration.
+
+Before check-in, the all-counter R5 build/ELF audit and complete firmware host
+tests passed. The browser regression passed using the local Node 22/Playwright
+installation, covering navigation, refresh, counter precision, sensor formatting,
+port/IP settings, MAC allocation and storage availability. IP catalog source,
+interface and clock/reset checks passed; the staged whitespace check is clean.
+Generated catalogs, FPGA outputs, firmware binaries and local test logs are
+excluded from the commit. Earlier RTL, routing and hardware evidence follows.
+
+## 2026-09-25 partitioned design downloaded and connectivity checked
+
+Loaded the partitioned all-counter bitstream from
+`build/vivado_kr260_modular/kr260_switch.runs/impl_1/kr260_top.bit` through
+the KR260 PS TAP on `10.0.1.107:3121`. Rebuilt and started the standalone R5
+firmware with `STATS_DDR=1 STATS_DEBUG=1 CONFIG_RECOVERY=0`. ELF checks passed;
+UART confirmed matching capabilities `0x53540107`, enabled D-cache and
+successful SD configuration loading. STP remains disabled.
+
+The first DHCP attempt failed; the scheduled retry succeeded at
+**10.0.1.104**. GEM1 (right lower) and PL0 (left upper) report 1000 Mb/s;
+the other physical links are down. Tests were bound to workstation `eth1`:
+
+| Target/test | Result |
+| --- | --- |
+| KR260 normal ping | 100/100 replies |
+| KR260 1472-byte payload, DF, A55A pattern | 100/100 replies |
+| Endpoint 10.0.1.140 initial full-MTU run | First 50 requests lost; next 50 replied |
+| Endpoint repeat, normal/full-MTU | 30/30 and 30/30 replies |
+| Endpoint settled full-MTU, DF, A55A pattern | 200/200 replies |
+| Web statistics page and configuration/ports/statistics APIs | HTTP success |
+| SNMP | All counter groups readable; collector advancing |
+
+The final SNMP snapshot, after 695 collector polls, reported zero bad
+RX/TX packets, DDR error responses, late polls, saturation or mailbox/snapshot
+timeouts. GEM1/PL0 counters advanced during endpoint traffic. Saved SD
+configuration remains present and writable; no settings were changed.
+
+Connectivity is working after settling. The initial DHCP failure and roughly
+five seconds of initial endpoint loss are recorded, not explained or claimed
+fixed by this test. This does not validate disconnected ports or sustained
+line-rate traffic. The board is left running the new image and firmware.
+Logs and snapshots are in `build/ip_refactor/jtag_validation/`.
+
+## 2026-09-25 digital IP partition verified and routed
+
+The first [IP repository partition](ip-partitioning.md) separates the fabric
+and GEM counter ownership while preserving the board-facing interface.
+All four DDR/debug counter combinations passed the original-versus-partitioned
+simulation: 114 outputs checked over 29,922 clock samples per run, with
+1,326–1,591 completed statistics snapshots. Shared legacy leaf RTL was checked
+against the immutable reference commit so changes cannot be hidden by using
+the same modified leaf in both designs.
+
+The module regression passed buffer ownership, ingress/egress, GEM, GEM/egress
+integration, PL adapters, SFP, CPU port, forwarding, counters, GEM multirate,
+ingress pipeline and diagnostics tests. Vivado generated all five IP types;
+the separate seven-instance validation BD passed validation/generation without
+warnings. The generated BD elaborated in Icarus against the packaged source
+files. An additional all-counter run through Vivado's generated IP wrappers
+passed the same 114-output comparison and 1,326 snapshot reads. Packaging
+source hashes, bus widths, clocks, resets and legal parameters were checked.
+
+An isolated **all-counter** KR260 build completed synthesis, routing and
+bitstream generation in `build/vivado_kr260_modular/`:
+
+| Routed result | Value |
+| --- | ---: |
+| WNS / TNS | +0.018 ns / 0.000 ns |
+| Worst hold slack / total hold slack | +0.010 ns / 0.000 ns |
+| Unclocked register/latch pins | 0 |
+| Unconstrained internal endpoints | 0 |
+| CLB LUTs / registers | 30,831 / 37,894 |
+| Block RAM tiles | 51.5 |
+| DSPs | 0 |
+
+The bitstream is
+`build/vivado_kr260_modular/kr260_switch.runs/impl_1/kr260_top.bit`, SHA-256
+`785b9b353feb7137828b1d0e17b923c568df421f521967917d5baef112634a3d`.
+Both RGMII forwarded-clock constraints still resolve to their intended
+instances. DRC reports two vendor AXI-DMA BRAM collision advisories and no
+errors. This build meets the existing constraints; the positive margins
+are small and do not constitute complete external-interface sign-off.
+
+The routed CDC report still needs protocol-aware review: CDC-1=2,632,
+CDC-10=13 and CDC-12=8 critical findings. The latter groups include the
+statistics request decode and shared acknowledgment mux. No new crossing
+logic was introduced by this structural split; these findings are **not
+automatically waived** by simulation equivalence. Existing missing external
+I/O-delay constraints and the earlier STP/CPU-tag concerns remain open.
+This run is not a completed CDC sign-off or a six-port saturation test.
+
+Evidence is in `build/ip_refactor/`; `ip_repo/review_board.tcl` reproduces
+the routed reports. The production board assembly still uses the native
+RTL module instances from the manifests. The physical-shell and production
+BD migration remains listed in [partitioning](ip-partitioning.md).
+The image was subsequently downloaded with matching firmware; the hardware
+connectivity results are recorded above.
+
+## 2026-09-24 R5 USB microSD configuration verified
+
+The standalone R5 enumerated the onboard USB2244 reader and mounted the user's
+FAT32 card (31,116,288 x 512-byte sectors). Defaults were selected with no saved
+record. Unauthenticated configuration POST returned 401; authenticated save and
+readback returned 200. The initial save failed because the reader rejects SCSI
+SYNCHRONIZE CACHE with sense 05/20/00 and reports only mode page 05. A compatibility
+path restricted to this VID/PID, that sense code, and valid mode data without an
+enabled write cache now accepts completed write-through transfers. Host tests
+cover its error and malformed-response rejection paths.
+
+Saved defaults, then temporarily disabled unused PL1, performed full PS/FSBL/USB
+reset and reload, and verified the saved mask 23. Restored mask 31, saved again,
+and repeated full reset; UART reported loaded settings and the API confirmed
+`saved=true`, `writable=true`, all ports enabled. DHCP assigned `10.0.1.104` to
+`00:0a:35:0f:37:45`. Credentials remain `admin` / `admin`.
+
+The hardware host is now `10.0.1.107` (JTAG 3121, UART 2323). With a Kintex FPGA
+also attached, XSDB requires selecting `PS TAP`, not `PL`, before programming.
+The boot script was corrected. The default FPGA image exposes caps `0x53540101`;
+this deployment explicitly used the validated pipelined-ingress all-counter image
+with matching firmware (`0x53540107`). STP remains disabled; this image predates
+the STP hardware hooks. GEM1 is the only active physical link, at 1000 Mb/s.
+
+One late ping run lost 9/10 replies; subsequent small Ethernet-bound pings and
+HTTP also failed temporarily. JTAG found the idle task running, links admitted,
+and DMA without error. Connectivity recovered without resetting firmware. Later
+normal and Ethernet-bound full-MTU runs passed, followed by 30/30 replies during
+ten successful repeated configuration/card-status reads. SNMP showed no collector
+timeouts, packet errors or AXI errors in sampled counters. The transient's cause
+is unconfirmed and remains a follow-up; this is not a sustained-load qualification.
+
+All firmware host tests and ELF checks pass. Physical power-cycle retention and
+card removal/replacement remain pending. Logs are local ignored artifacts in
+`build/r5/sd_validation/`; see [USB storage](usb-storage.md).
+
 ## 2026-09-23 autonegotiation regression expectation corrected
 
 Resolved the previously recorded `sim-autoneg` test-C failure (16 received

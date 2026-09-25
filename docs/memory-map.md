@@ -1,6 +1,6 @@
 # Memory map, usage and ownership
 
-Updated 2026-09-21 for the R5-0 split-mode FreeRTOS firmware with data cache
+Updated 2026-09-23 for the R5-0 split-mode FreeRTOS firmware with data cache
 enabled and the normal FPGA image without ILAs.
 
 This document describes the application's memory contract and the register
@@ -18,7 +18,9 @@ identified as end symbols. MiB/KiB mean powers of two.
 | --- | ---: | --- | --- |
 | `0x00000000–0x0000FFFF` in the R5-0 local view | 64 KiB | ATCM vectors, boot code and boot data | R5-0 startup and exception handling. This is local TCM, not a DMA buffer address. |
 | `0x10000000–0x1007FFFF` in DDR | 512 KiB | Switch packet pool: 256 slots × 2048 bytes | PL buffer manager owns allocation and lifetime. PL ingress/egress and CPU-port RTL DMA engines access payloads through HP0. R5 firmware does not directly access this pool. |
-| `0x20000000–0x21FF7FFF` in DDR | 32 MiB minus 32 KiB | R5 code, constants, data, FreeRTOS heap, stacks and driver state | R5-0 application reservation. The unused portion is reserved capacity, not available to other software without changing this contract. |
+| `0x20000000–0x21DFFFFF` in DDR | 30 MiB | R5 code, constants, data, FreeRTOS heap, stacks and driver state | R5-0 application reservation. The unused portion is reserved capacity, not available to other software without changing this contract. |
+| `0x21E00000–0x21EFFFFF` in DDR | 1 MiB | USB host heap, rings, contexts and DMA bounce buffer | R5 USB stack; separate non-cacheable, shareable, execute-never MPU region, single owner; PS USB0 DMA accesses it |
+| `0x21F00000–0x21FF7FFF` in DDR | 992 KiB | Reserved gap | Not allocated by firmware |
 | `0x21FF8000–0x21FFFFFF` in DDR | 32 KiB | CPU virtual-port AXI DMA descriptors and RX/TX bounce buffers | R5 DMA driver controls ownership transfers to/from AXI DMA. AXI DMA accesses this storage through HP1. |
 | Other DDR addresses | Not assigned here | Outside the application's explicit reservations | Do not assume these are free: boot software, other processors and future operating systems require their own allocation review. |
 
@@ -263,3 +265,25 @@ Changes to buffer counts, frame sizes, DDR reservations or other processor
 software must preserve non-overlap, update the linker/MPU/driver together,
 and rerun the ELF audit and DMA ownership tests. Do not enlarge the fabric
 pool or enable another processor without reviewing all reservations.
+
+## USB storage and persistent configuration (2026-09-23)
+
+R5 startup initializes USB0 xHCI at `0xFE200000` (DWC3 globals at `0xFE20C100`).
+It uses PS I2C1 at `0xFF030000` to release the carrier USB0 PHY/hub/card-reader
+resets and attach the hub before the sensor task takes ownership of I2C1.
+USB1 remains outside this storage implementation. The HTTP task subsequently
+owns storage access; network and STP settings reads only copy the RAM snapshot.
+
+The linker reserves `.usb_nocache` at `0x21E00000–0x21EFFFFF` for USB allocations.
+A separate MPU override uses normal, shareable, non-cacheable, execute-never
+attributes. Aligned allocations, transfer rings, device contexts, scratchpads
+and a 64 KiB bounce buffer belong to this pool. Cached stack/filesystem buffers
+are bounced by xHCI. Event consumption uses an acquire barrier; queue publication
+uses the upstream write barriers. The allocator initializes on first use and
+coalesces freed allocations. Ethernet's existing 32 KiB DMA region is unchanged.
+
+Configuration is stored in two root files on an existing FAT microSD volume;
+there is no configuration QSPI reservation. See [configuration](configuration.md)
+and [USB storage](usb-storage.md). The USB allocation is linker-verified; board enumeration and configuration
+save/readback across reset passed with both DMA MPU overrides active on
+2026-09-24. Hotplug and physical power-cycle tests remain pending.

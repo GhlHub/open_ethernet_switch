@@ -1,7 +1,7 @@
 # Read-only live checks. Run after boot_jtag.tcl; leaves R5 running.
 set root [file normalize [file join [file dirname [info script]] ../..]]
 cd $root
-set url [expr {[llength $argv] ? [lindex $argv 0] : "tcp:10.0.1.109:3121"}]
+set url [expr {[llength $argv] ? [lindex $argv 0] : "tcp:10.0.1.107:3121"}]
 set nm /tools/Xilinx/2026.1/gnu/armr5/lin/gcc-arm-none-eabi/bin/armr5-none-eabi-nm
 set symbols [exec $nm software/r5/out/kr260_r5.elf]
 proc symbol_address {name} {

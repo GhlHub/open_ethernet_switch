@@ -2,7 +2,7 @@
 # Run: xsdb software/r5/boot_jtag.tcl [hw_server_url] [bitstream] [halt]
 set root [file normalize [file join [file dirname [info script]] ../..]]
 cd $root
-set url [expr {[llength $argv] ? [lindex $argv 0] : "tcp:10.0.1.109:3121"}]
+set url [expr {[llength $argv] ? [lindex $argv 0] : "tcp:10.0.1.107:3121"}]
 set fsbl build/r5/workspace/kr260_r5/zynqmp_fsbl/build/fsbl.elf
 set init build/r5/workspace/kr260_r5/hw/sdt/psu_init.tcl
 set bit build/vivado_kr260/kr260_switch.runs/impl_1/kr260_top.bit
@@ -63,7 +63,9 @@ set clk [mrd -value 0xff5e0090]
 mwr 0xff5e0090 [expr {$clk | 0x1000000}]
 mwr 0xff5e023c [expr {($reset | 2) & ~5}]
 after 200
-targets -set -filter {name =~ "PL"}
+# PS TAP owns the programmable FPGA context; PL alone is ambiguous when
+# another FPGA cable is attached to the hardware server.
+targets -set -filter {name == "PS TAP"}
 fpga -file $bit
 targets -set -filter {name =~ "PSU"}
 source $init
@@ -78,6 +80,6 @@ puts [targets]
 if {$halt} {
     puts "R5-0 loaded and halted at entry; arm ILAs before continuing."
 } else {
-    puts "R5-0 started; monitor UART1 at 115200 8N1 (10.0.1.109:2323)."
+    puts "R5-0 started; monitor UART1 at 115200 8N1 (10.0.1.107:2323)."
 }
 exit

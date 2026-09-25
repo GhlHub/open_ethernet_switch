@@ -1,0 +1,31 @@
+{
+  "name": "sfp_port",
+  "version": "1.0",
+  "description": "1000BASE-X MAC and PCS (board GTH shell external)",
+  "top": "sfp_port_top",
+  "sources": [
+    "rtl/sfp_pcs/sfp_pcs_pkg.sv",
+    "rtl/common/async_fifo.sv",
+    "rtl/stats/stats_bank.sv",
+    "rtl/pl_gmii/open_eth_mac_1g_switch.sv",
+    "rtl/pl_gmii/mac_rxd_to_switch_ingress.sv",
+    "rtl/pl_gmii/switch_egress_to_mac_txd.sv",
+    "rtl/sfp_pcs/gmii_1000base_x_tx.sv",
+    "rtl/sfp_pcs/sync_1000base_x.sv",
+    "rtl/sfp_pcs/gmii_1000base_x_rx.sv",
+    "rtl/sfp_pcs/autoneg_1000base_x.sv",
+    "rtl/sfp_pcs/sfp_1000base_x_pcs.sv",
+    "rtl/sfp_pcs/sfp_port_top.sv"
+  ],
+  "clocks": {
+    "clk": [
+      "s_axis",
+      "m_axis"
+    ],
+    "axis_clk": [
+      "s_axi"
+    ],
+    "gtx_clk": [],
+    "gth_clk": []
+  }
+}

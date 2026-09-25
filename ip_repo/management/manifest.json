@@ -1,0 +1,14 @@
+{
+  "name": "management",
+  "version": "1.0",
+  "description": "Switch AXI-Lite control and statistics mailbox",
+  "top": "rx_diag_regs",
+  "sources": [
+    "rtl/board/rx_diag_regs.sv"
+  ],
+  "clocks": {
+    "clk": [
+      "s_axi"
+    ]
+  }
+}

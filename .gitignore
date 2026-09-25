@@ -17,6 +17,8 @@
 /sim/*.jou
 /sim/*.pb
 /.Xil/
+/vivado*.jou
+/vivado*.log
 
 # Python caches
 __pycache__/
@@ -41,6 +43,9 @@ build/reports_*.txt
 /build/r5/
 /software/r5/out/
 /build/gem1_debug/
+/build/ip_refactor/
+/build/ip_catalog/
+/build/vivado_kr260_modular/
 
 # Vivado GUI schematic viewer log
 /nlviewcommon.logfile

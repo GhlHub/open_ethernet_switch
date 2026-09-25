@@ -33,6 +33,7 @@ static void timer_init(XTtcPs *timer, uintptr_t base)
     XTtcPs_DisableInterrupts(timer, XTTCPS_IXR_ALL_MASK);
 }
 extern uint8_t __dma_nocache_start[], __dma_nocache_end[];
+extern uint8_t __usb_nocache_start[], __usb_nocache_end[];
 static void cache_init(void)
 {
     uintptr_t base=(uintptr_t)__dma_nocache_start;
@@ -50,6 +51,17 @@ static void cache_init(void)
     isb();
     configASSERT(mfcp(XREG_CP15_MPU_REG_BASEADDR)==base);
     configASSERT(mfcp(XREG_CP15_MPU_REG_SIZE_EN)==((REGION_32K<<1)|REGION_EN));
+    configASSERT(mfcp(XREG_CP15_MPU_REG_ACCESS_CTRL)==attr);
+    uintptr_t usb_base=(uintptr_t)__usb_nocache_start;
+    size_t usb_size=(uintptr_t)__usb_nocache_end-usb_base;
+    configASSERT(usb_size==0x100000 && !(usb_base&(usb_size-1)));
+    uint32_t usb_region=Xil_GetNextMPURegion();
+    configASSERT(usb_region<MAX_POSSIBLE_MPU_REGS);
+    configASSERT(Xil_SetMPURegion(usb_base,usb_size,attr)==XST_SUCCESS);
+    mtcp(XREG_CP15_MPU_MEMORY_REG_NUMBER,usb_region);
+    isb();
+    configASSERT(mfcp(XREG_CP15_MPU_REG_BASEADDR)==usb_base);
+    configASSERT(mfcp(XREG_CP15_MPU_REG_SIZE_EN)==((REGION_1M<<1)|REGION_EN));
     configASSERT(mfcp(XREG_CP15_MPU_REG_ACCESS_CTRL)==attr);
     Xil_DCacheEnable();
     uint32_t control=mfcp(XREG_CP15_SYS_CONTROL);

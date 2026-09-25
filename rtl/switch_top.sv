@@ -1,54 +1,4 @@
-// switch_top.sv
-//
-// Top-level switch: joins every subsystem built and tested independently
-// elsewhere in this project, which is the piece that had been missing.
-//
-//   - ingress_top.sv / egress_top.sv: 5 physical ports' ingress/egress
-//     DMA + the one shared buf_mgr_core instance (owned by ingress_top.sv;
-//     egress_top.sv's dequeue/release passthrough is wired to it here)
-//   - cpu_port_top.sv: the CPU port (buf_mgr_pkg::NUM_PORTS' index 5),
-//     its alloc/enqueue wired to ingress_top.sv's cpu_* passthrough and
-//     its dequeue/release wired to egress_top.sv's cpu_* passthrough
-//   - mac_forwarding_top.sv: the MAC learn/lookup/aging table, snooping
-//     every port's ingress AXI4-Stream and driving every port's
-//     dest_mask_i/dest_mask_valid_i (ingress_top.sv for ports 0-4,
-//     cpu_port_top.sv for port 5)
-//   - 2x ps_gem_axis_bridge.sv (PS GEM0/GEM1), 2x pl_gmii_mac_top.sv
-//     (PL GMII0/GMII1), 1x sfp_port_top.sv (SFP): the 5 physical ports'
-//     own MAC/PCS front-ends
-//   - a free-running clock divider generating mac_forwarding_top's
-//     age_tick_i (~4 Hz) directly from the fabric clock -- the "simple
-//     clock divider" this project's aging schedule was always meant to
-//     run from (see mac_table_pkg.sv's AGE_TICKS_PER_SWEEP note)
-//
-// Port numbering (fixed by axi_dma_pkg.sv's own NUM_PHYS_PORTS comment,
-// "PS0, PS1, PL0, PL1, SFP0", plus buf_mgr_pkg::NUM_PORTS' 6th slot):
-//   0 = PS GEM0   1 = PS GEM1   2 = PL GMII0   3 = PL GMII1
-//   4 = SFP0      5 = CPU
-//
-// Deliberately NOT resolved here (each already flagged at its own
-// boundary, carried up to this level unchanged):
-//   - the AXI4 write/read masters from ingress_top.sv, egress_top.sv, and
-//     cpu_port_top.sv (2 more) all still need to reach PS DDR through
-//     some AXI interconnect/crossbar -- a system-integration concern, not
-//     built here; all 4 are exposed as this module's own separate masters
-//   - the CPU port's own s_axis_*/m_axis_* AXI4-Stream boundary still
-//     needs a Vivado-configured AXI DMA IP (Scatter/Gather mode) on the
-//     other end -- see cpu_port_top.sv's header
-//   - the SFP port's GTHE4_CHANNEL transceiver primitive -- see
-//     sfp_port_top.sv's header. Clause 37 autonegotiation IS included
-//     (autoneg_1000base_x.sv, inside sfp_1000base_x_pcs.sv); its status
-//     is exposed here as sfp_an_link_up_o/sfp_an_duplex_full_o/
-//     sfp_an_pause_o/sfp_an_remote_fault_o, parallel to sfp_sync_ok_o
-//     (still PCS code-group sync only, a precondition for a negotiated
-//     link, not the link itself)
-//   - each MAC's own AXI4-Lite (register/statistics) port -- exposed
-//     separately per instance (pl_gmii0/pl_gmii1/sfp), no CPU-facing
-//     register-access architecture decided yet
-//   - default_age_i -- exposed as a runtime input, matching
-//     mac_addr_table_top.sv's own "software-configurable" design intent;
-//     no fixed value chosen here
-
+// Compatibility assembly of the reusable IP blocks. Public board/simulation ABI unchanged.
 module switch_top
   import buf_mgr_pkg::*;
   import axi_dma_pkg::*;
@@ -407,392 +357,169 @@ module switch_top
   output logic                  m_axi_cpu_rready
 );
 
-  wire [12:0] stats_req, stats_acks;
-  wire [12:0][31:0] stats_values;
-
-  // =========================================================================
-  // age_tick: free-running clock divider off the fabric clock (clk,
-  // 100 MHz by default), pulsing age_tick for exactly 1 cycle every
-  // AGE_TICK_DIVIDE_COUNT cycles (~1/4 second at the default count) --
-  // mac_addr_table_top.sv synchronizes/edge-detects this itself (it need
-  // not already be clean in this clock domain, though it already is), so
-  // a plain counter-driven pulse is all that's needed here.
-  // =========================================================================
-  localparam int DIVIDE_CNT_W = $clog2(AGE_TICK_DIVIDE_COUNT);
-
-  logic [DIVIDE_CNT_W-1:0] age_div_cnt_q;
-  logic                    age_tick;
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      age_div_cnt_q <= '0;
-      age_tick      <= 1'b0;
-    end else if (age_div_cnt_q == DIVIDE_CNT_W'(AGE_TICK_DIVIDE_COUNT - 1)) begin
-      age_div_cnt_q <= '0;
-      age_tick      <= 1'b1;
-    end else begin
-      age_div_cnt_q <= age_div_cnt_q + 1'b1;
-      age_tick      <= 1'b0;
-    end
-  end
-
-  // =========================================================================
-  // buf_mgr_core dequeue/release passthrough: ingress_top.sv <-> egress_top.sv
-  // =========================================================================
-  logic [NUM_PORTS-1:0]               dequeue_req;
-  logic [NUM_PORTS-1:0]               dequeue_valid;
-  logic [NUM_PORTS-1:0][BUF_ID_W-1:0] dequeue_bufid;
-  logic [NUM_PORTS-1:0][LENGTH_W-1:0] dequeue_length;
-  logic [NUM_PORTS-1:0][PORT_ID_W-1:0] dequeue_meta;
-  logic [NUM_PORTS-1:0]               release_req;
-  logic [NUM_PORTS-1:0][BUF_ID_W-1:0] release_bufid;
-  logic [NUM_PORTS-1:0]               release_gnt;
-
-  // =========================================================================
-  // CPU port alloc/enqueue (ingress side) <-> ingress_top.sv's cpu_* ports
-  // =========================================================================
-  logic                cpu_alloc_req, cpu_alloc_gnt;
-  logic [BUF_ID_W-1:0] cpu_alloc_bufid;
-  logic                     cpu_enqueue_req;
-  logic [BUF_ID_W-1:0]      cpu_enqueue_bufid;
-  logic [LENGTH_W-1:0]      cpu_enqueue_length;
-  logic [NUM_PORTS-1:0]     cpu_enqueue_destmask;
-  logic                     cpu_enqueue_gnt;
-
-  // =========================================================================
-  // CPU port dequeue/release (egress side) <-> egress_top.sv's cpu_* ports
-  // =========================================================================
-  logic                cpu_dequeue_valid;
-  logic [BUF_ID_W-1:0] cpu_dequeue_bufid;
-  logic [LENGTH_W-1:0] cpu_dequeue_length;
-  logic                cpu_dequeue_req;
-  logic                cpu_release_req;
-  logic [BUF_ID_W-1:0] cpu_release_bufid;
-  logic                cpu_release_gnt;
-
-  // =========================================================================
-  // Per-physical-port ingress AXI4-Stream (MAC -> ingress_top.sv), indexed
-  // 0=PS GEM0, 1=PS GEM1, 2=PL GMII0, 3=PL GMII1, 4=SFP0
-  // =========================================================================
   logic [NUM_PHYS_PORTS-1:0][15:0] phy_s_axis_tdata;
   logic [NUM_PHYS_PORTS-1:0][1:0]  phy_s_axis_tkeep;
   logic [NUM_PHYS_PORTS-1:0]       phy_s_axis_tvalid;
   logic [NUM_PHYS_PORTS-1:0]       phy_s_axis_tlast;
   logic [NUM_PHYS_PORTS-1:0]       phy_s_axis_tuser;
   logic [NUM_PHYS_PORTS-1:0]       phy_s_axis_tready;
-
-  // Per-physical-port egress AXI4-Stream (egress_top.sv -> MAC)
   logic [NUM_PHYS_PORTS-1:0][15:0] phy_m_axis_tdata;
   logic [NUM_PHYS_PORTS-1:0][1:0]  phy_m_axis_tkeep;
   logic [NUM_PHYS_PORTS-1:0]       phy_m_axis_tvalid;
   logic [NUM_PHYS_PORTS-1:0]       phy_m_axis_tlast;
   logic [NUM_PHYS_PORTS-1:0]       phy_m_axis_tready;
-
-  // =========================================================================
-  // Forwarding decision, all NUM_PORTS (0-4 physical, 5 CPU)
-  // =========================================================================
-  logic [NUM_PORTS-1:0][NUM_PORTS-1:0] dest_mask;
-  logic [NUM_PORTS-1:0]                dest_mask_valid;
-
-  // mac_forwarding_top's snoop inputs mirror the same s_axis_* wires
-  // feeding ingress_top.sv (ports 0-4) and cpu_port_top.sv (port 5)
-  logic [NUM_PORTS-1:0][15:0] fwd_s_axis_tdata;
-  logic [NUM_PORTS-1:0][1:0]  fwd_s_axis_tkeep;
-  logic [NUM_PORTS-1:0]       fwd_s_axis_tvalid;
-  logic [NUM_PORTS-1:0]       fwd_s_axis_tlast;
-  logic [NUM_PORTS-1:0]       fwd_s_axis_tready;
-
-  assign fwd_s_axis_tdata[NUM_PHYS_PORTS-1:0]  = phy_s_axis_tdata;
-  assign fwd_s_axis_tkeep[NUM_PHYS_PORTS-1:0]  = phy_s_axis_tkeep;
-  assign fwd_s_axis_tvalid[NUM_PHYS_PORTS-1:0] = phy_s_axis_tvalid;
-  assign fwd_s_axis_tlast[NUM_PHYS_PORTS-1:0]  = phy_s_axis_tlast;
-  assign fwd_s_axis_tready[NUM_PHYS_PORTS-1:0] = phy_s_axis_tready;
-
-  assign fwd_s_axis_tdata[5]  = cpu_s_axis_tdata;
-  assign fwd_s_axis_tkeep[5]  = cpu_s_axis_tkeep;
-  assign fwd_s_axis_tvalid[5] = cpu_s_axis_tvalid;
-  assign fwd_s_axis_tlast[5]  = cpu_s_axis_tlast;
-  assign fwd_s_axis_tready[5] = cpu_s_axis_tready;
-
-  // =========================================================================
-  // link state: synchronize into this clock domain, generate flush pulses
-  // =========================================================================
-  logic [NUM_PORTS-1:0] link_up_sync, link_flush_req;
-  logic                 qm_flush_busy, mac_flush_busy;
-  port_link_ctrl #(.NUM_PORTS(NUM_PORTS)) u_port_link_ctrl (
-    .clk (clk), .rst_n (rst_n),
-    .link_up_async_i (link_up_i), .flush_tog_async_i (link_flush_tog_i),
-    .link_up_o (link_up_sync), .flush_req_o (link_flush_req)
-  );
-  // registered before leaving the domain (the consumer synchronizes it into the
-  // AXI-Lite clock; a gate in front of the synchronizer would be a CDC hazard)
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) link_flush_busy_o <= 1'b0;
-    else        link_flush_busy_o <= qm_flush_busy | mac_flush_busy;
-  end
-
-  // ---- learn_en_i/fwd_en_i: plain 2-flop level synchronizers (not the
-  // flush-toggle machinery port_link_ctrl provides -- these are held levels
-  // with no associated drain event of their own; entering a state that
-  // disables forwarding is expected to arrive together with a LINK_CLR-style
-  // flush from software if one is wanted, same as this project's other
-  // "purge on the way down" transitions) ----
-  (* ASYNC_REG = "TRUE" *) logic [NUM_PORTS-1:0] learn_en_s1, learn_en_s2;
-  (* ASYNC_REG = "TRUE" *) logic [NUM_PORTS-1:0] fwd_en_s1, fwd_en_s2;
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      learn_en_s1 <= '1; learn_en_s2 <= '1;
-      fwd_en_s1   <= '1; fwd_en_s2   <= '1;
-    end else begin
-      learn_en_s1 <= learn_en_i; learn_en_s2 <= learn_en_s1;
-      fwd_en_s1   <= fwd_en_i;   fwd_en_s2   <= fwd_en_s1;
-    end
-  end
-
-  // ---- CPU TX destination override: one-shot value crossing (see
-  // rtl/common/ctrl_value_xdomain.sv), then an "armed" latch that captures
-  // the override for exactly the one CPU-egress frame it precedes and
-  // disarms itself the moment that frame's enqueue is granted (the same
-  // cpu_enqueue_req/cpu_enqueue_gnt event mac_addr_resolver's own header
-  // already documents as the natural per-frame boundary on this
-  // interface -- nothing can queue a second CPU frame before this one is
-  // consumed, this port is single-frame-in-flight by construction) ----
-  logic [NUM_PORTS-1:0] cpu_tx_ovr_mask_sync;
-  logic                 cpu_tx_ovr_pulse;
-  ctrl_value_xdomain #(.WIDTH(NUM_PORTS)) u_cpu_tx_ovr_sync (
-    .src_clk (axis_clk), .src_rst_n (axis_rst_n),
-    .value_i (cpu_tx_ovr_mask_i), .go_i (cpu_tx_ovr_go_i),
-    .dst_clk (clk), .dst_rst_n (rst_n),
-    .value_o (cpu_tx_ovr_mask_sync), .valid_o (cpu_tx_ovr_pulse)
-  );
-  logic                 cpu_tx_ovr_armed_q;
-  logic [NUM_PORTS-1:0] cpu_tx_ovr_mask_q;
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      cpu_tx_ovr_armed_q <= 1'b0;
-      cpu_tx_ovr_mask_q  <= '0;
-    end else begin
-      if (cpu_tx_ovr_pulse) begin
-        cpu_tx_ovr_armed_q <= 1'b1;
-        cpu_tx_ovr_mask_q  <= cpu_tx_ovr_mask_sync;
-      end else if (cpu_enqueue_req && cpu_enqueue_gnt) begin
-        cpu_tx_ovr_armed_q <= 1'b0;
-      end
-    end
-  end
-
-  // ---- CPU RX ingress-port tag: clk -> axis_clk, one entry per frame this
-  // module hands to the CPU DMA (see cpu_rx_ingress_* ports above). Pushed
-  // on dequeue_valid[5] -- queue_mgr.sv's per-port queue for the CPU is a
-  // single serialized engine, so dequeues (and therefore this push) happen
-  // in exactly the order cpu_dma_rd.sv/egress_port_rd#(.PORT_ID(5)) then
-  // stream those frames out to the CPU-facing AXI DMA, and a link-down
-  // flush of the CPU port releases buffers without ever asserting
-  // dequeue_valid -- so a frame that never reaches the CPU never pushes an
-  // entry here either. Depth 16 matches fabric_dma.c's own RX descriptor
-  // ring size (software cannot have more than that many frames
-  // outstanding). Software must pop exactly one entry per DMA descriptor
-  // it retires (whether or not that frame turned out well-formed) to stay
-  // in lockstep -- see fabric_dma.c's header for how it does this.
-  logic cpu_rx_tag_empty;
-  async_fifo #(.WIDTH(PORT_ID_W), .DEPTH(16)) u_cpu_rx_tag_fifo (
-    .wr_clk   (clk),
-    .wr_rst_n (rst_n),
-    .wr_en_i  (dequeue_valid[5]),
-    .wr_data_i(dequeue_meta[5]),
-    .full_o   (),
-    .rd_clk   (axis_clk),
-    .rd_rst_n (axis_rst_n),
-    .rd_en_i  (cpu_rx_ingress_pop_i),
-    .rd_data_o(cpu_rx_ingress_port_o),
-    .empty_o  (cpu_rx_tag_empty)
-  );
-  assign cpu_rx_ingress_valid_o = !cpu_rx_tag_empty;
-
-  // =========================================================================
-  // ingress_top.sv (owns buf_mgr_core)
-  // =========================================================================
-  ingress_top u_ingress_top (
-    .clk                       (clk),
-    .rst_n                     (rst_n),
-    .s_axis_tdata              (phy_s_axis_tdata),
-    .s_axis_tkeep              (phy_s_axis_tkeep),
-    .s_axis_tvalid             (phy_s_axis_tvalid),
-    .s_axis_tlast              (phy_s_axis_tlast),
-    .s_axis_tuser              (phy_s_axis_tuser),
-    .s_axis_tready             (phy_s_axis_tready),
-    .dest_mask_i               (dest_mask[NUM_PHYS_PORTS-1:0]),
-    .dest_mask_valid_i         (dest_mask_valid[NUM_PHYS_PORTS-1:0]),
-    .m_axi_awid                (m_axi_ing_awid),
-    .m_axi_awaddr              (m_axi_ing_awaddr),
-    .m_axi_awlen               (m_axi_ing_awlen),
-    .m_axi_awsize              (m_axi_ing_awsize),
-    .m_axi_awburst             (m_axi_ing_awburst),
-    .m_axi_awvalid             (m_axi_ing_awvalid),
-    .m_axi_awready             (m_axi_ing_awready),
-    .m_axi_wdata               (m_axi_ing_wdata),
-    .m_axi_wstrb               (m_axi_ing_wstrb),
-    .m_axi_wlast               (m_axi_ing_wlast),
-    .m_axi_wvalid              (m_axi_ing_wvalid),
-    .m_axi_wready              (m_axi_ing_wready),
-    .m_axi_bid                 (m_axi_ing_bid),
-    .m_axi_bresp                (m_axi_ing_bresp),
-    .m_axi_bvalid                (m_axi_ing_bvalid),
-    .m_axi_bready                (m_axi_ing_bready),
-    .dequeue_req_i_passthru      (dequeue_req),
-    .dequeue_valid_o_passthru    (dequeue_valid),
-    .dequeue_bufid_o_passthru    (dequeue_bufid),
-    .dequeue_length_o_passthru   (dequeue_length),
-    .dequeue_meta_o_passthru     (dequeue_meta),
-    .release_req_i_passthru      (release_req),
-    .release_bufid_i_passthru    (release_bufid),
-    .release_gnt_o_passthru      (release_gnt),
-    .link_up_i                   (link_up_sync),
-    .flush_req_i                 (link_flush_req),
-    .flush_busy_o                (qm_flush_busy),
-    .cpu_alloc_req_i              (cpu_alloc_req),
-    .cpu_alloc_gnt_o              (cpu_alloc_gnt),
-    .cpu_alloc_bufid_o            (cpu_alloc_bufid),
-    .cpu_enqueue_req_i            (cpu_enqueue_req),
-    .cpu_enqueue_bufid_i          (cpu_enqueue_bufid),
-    .cpu_enqueue_length_i         (cpu_enqueue_length),
-    .cpu_enqueue_destmask_i       (cpu_enqueue_destmask),
-    .cpu_enqueue_gnt_o            (cpu_enqueue_gnt)
+  wire [12:0] stats_req, stats_acks;
+  wire [12:0][31:0] stats_values;
+  switch_fabric #(.STATS_DDR(STATS_DDR), .STATS_DEBUG(STATS_DEBUG),
+    .AGE_TICK_DIVIDE_COUNT(AGE_TICK_DIVIDE_COUNT)) u_fabric (
+    .clk(clk),
+    .rst_n(rst_n),
+    .axis_clk(axis_clk),
+    .axis_rst_n(axis_rst_n),
+    .default_age_i(default_age_i),
+    .link_up_i(link_up_i),
+    .link_flush_tog_i(link_flush_tog_i),
+    .link_flush_busy_o(link_flush_busy_o),
+    .learn_en_i(learn_en_i),
+    .fwd_en_i(fwd_en_i),
+    .ctrl_frame_o(ctrl_frame_o),
+    .cpu_tx_ovr_mask_i(cpu_tx_ovr_mask_i),
+    .cpu_tx_ovr_go_i(cpu_tx_ovr_go_i),
+    .cpu_rx_ingress_port_o(cpu_rx_ingress_port_o),
+    .cpu_rx_ingress_valid_o(cpu_rx_ingress_valid_o),
+    .cpu_rx_ingress_pop_i(cpu_rx_ingress_pop_i),
+    .cpu_s_axis_tdata(cpu_s_axis_tdata),
+    .cpu_s_axis_tkeep(cpu_s_axis_tkeep),
+    .cpu_s_axis_tvalid(cpu_s_axis_tvalid),
+    .cpu_s_axis_tlast(cpu_s_axis_tlast),
+    .cpu_s_axis_tready(cpu_s_axis_tready),
+    .cpu_m_axis_tdata(cpu_m_axis_tdata),
+    .cpu_m_axis_tkeep(cpu_m_axis_tkeep),
+    .cpu_m_axis_tvalid(cpu_m_axis_tvalid),
+    .cpu_m_axis_tlast(cpu_m_axis_tlast),
+    .cpu_m_axis_tready(cpu_m_axis_tready),
+    .m_axi_ing_awid(m_axi_ing_awid),
+    .m_axi_ing_awaddr(m_axi_ing_awaddr),
+    .m_axi_ing_awlen(m_axi_ing_awlen),
+    .m_axi_ing_awsize(m_axi_ing_awsize),
+    .m_axi_ing_awburst(m_axi_ing_awburst),
+    .m_axi_ing_awvalid(m_axi_ing_awvalid),
+    .m_axi_ing_awready(m_axi_ing_awready),
+    .m_axi_ing_wdata(m_axi_ing_wdata),
+    .m_axi_ing_wstrb(m_axi_ing_wstrb),
+    .m_axi_ing_wlast(m_axi_ing_wlast),
+    .m_axi_ing_wvalid(m_axi_ing_wvalid),
+    .m_axi_ing_wready(m_axi_ing_wready),
+    .m_axi_ing_bid(m_axi_ing_bid),
+    .m_axi_ing_bresp(m_axi_ing_bresp),
+    .m_axi_ing_bvalid(m_axi_ing_bvalid),
+    .m_axi_ing_bready(m_axi_ing_bready),
+    .m_axi_egr_arid(m_axi_egr_arid),
+    .m_axi_egr_araddr(m_axi_egr_araddr),
+    .m_axi_egr_arlen(m_axi_egr_arlen),
+    .m_axi_egr_arsize(m_axi_egr_arsize),
+    .m_axi_egr_arburst(m_axi_egr_arburst),
+    .m_axi_egr_arvalid(m_axi_egr_arvalid),
+    .m_axi_egr_arready(m_axi_egr_arready),
+    .m_axi_egr_rid(m_axi_egr_rid),
+    .m_axi_egr_rdata(m_axi_egr_rdata),
+    .m_axi_egr_rresp(m_axi_egr_rresp),
+    .m_axi_egr_rlast(m_axi_egr_rlast),
+    .m_axi_egr_rvalid(m_axi_egr_rvalid),
+    .m_axi_egr_rready(m_axi_egr_rready),
+    .m_axi_cpu_awid(m_axi_cpu_awid),
+    .m_axi_cpu_awaddr(m_axi_cpu_awaddr),
+    .m_axi_cpu_awlen(m_axi_cpu_awlen),
+    .m_axi_cpu_awsize(m_axi_cpu_awsize),
+    .m_axi_cpu_awburst(m_axi_cpu_awburst),
+    .m_axi_cpu_awvalid(m_axi_cpu_awvalid),
+    .m_axi_cpu_awready(m_axi_cpu_awready),
+    .m_axi_cpu_wdata(m_axi_cpu_wdata),
+    .m_axi_cpu_wstrb(m_axi_cpu_wstrb),
+    .m_axi_cpu_wlast(m_axi_cpu_wlast),
+    .m_axi_cpu_wvalid(m_axi_cpu_wvalid),
+    .m_axi_cpu_wready(m_axi_cpu_wready),
+    .m_axi_cpu_bid(m_axi_cpu_bid),
+    .m_axi_cpu_bresp(m_axi_cpu_bresp),
+    .m_axi_cpu_bvalid(m_axi_cpu_bvalid),
+    .m_axi_cpu_bready(m_axi_cpu_bready),
+    .m_axi_cpu_arid(m_axi_cpu_arid),
+    .m_axi_cpu_araddr(m_axi_cpu_araddr),
+    .m_axi_cpu_arlen(m_axi_cpu_arlen),
+    .m_axi_cpu_arsize(m_axi_cpu_arsize),
+    .m_axi_cpu_arburst(m_axi_cpu_arburst),
+    .m_axi_cpu_arvalid(m_axi_cpu_arvalid),
+    .m_axi_cpu_arready(m_axi_cpu_arready),
+    .m_axi_cpu_rid(m_axi_cpu_rid),
+    .m_axi_cpu_rdata(m_axi_cpu_rdata),
+    .m_axi_cpu_rresp(m_axi_cpu_rresp),
+    .m_axi_cpu_rlast(m_axi_cpu_rlast),
+    .m_axi_cpu_rvalid(m_axi_cpu_rvalid),
+    .m_axi_cpu_rready(m_axi_cpu_rready),
+    .s00_axis_tdata(phy_s_axis_tdata[0]),
+    .s01_axis_tdata(phy_s_axis_tdata[1]),
+    .s02_axis_tdata(phy_s_axis_tdata[2]),
+    .s03_axis_tdata(phy_s_axis_tdata[3]),
+    .s04_axis_tdata(phy_s_axis_tdata[4]),
+    .s00_axis_tkeep(phy_s_axis_tkeep[0]),
+    .s01_axis_tkeep(phy_s_axis_tkeep[1]),
+    .s02_axis_tkeep(phy_s_axis_tkeep[2]),
+    .s03_axis_tkeep(phy_s_axis_tkeep[3]),
+    .s04_axis_tkeep(phy_s_axis_tkeep[4]),
+    .s00_axis_tvalid(phy_s_axis_tvalid[0]),
+    .s01_axis_tvalid(phy_s_axis_tvalid[1]),
+    .s02_axis_tvalid(phy_s_axis_tvalid[2]),
+    .s03_axis_tvalid(phy_s_axis_tvalid[3]),
+    .s04_axis_tvalid(phy_s_axis_tvalid[4]),
+    .s00_axis_tlast(phy_s_axis_tlast[0]),
+    .s01_axis_tlast(phy_s_axis_tlast[1]),
+    .s02_axis_tlast(phy_s_axis_tlast[2]),
+    .s03_axis_tlast(phy_s_axis_tlast[3]),
+    .s04_axis_tlast(phy_s_axis_tlast[4]),
+    .s00_axis_tuser(phy_s_axis_tuser[0]),
+    .s01_axis_tuser(phy_s_axis_tuser[1]),
+    .s02_axis_tuser(phy_s_axis_tuser[2]),
+    .s03_axis_tuser(phy_s_axis_tuser[3]),
+    .s04_axis_tuser(phy_s_axis_tuser[4]),
+    .s00_axis_tready(phy_s_axis_tready[0]),
+    .s01_axis_tready(phy_s_axis_tready[1]),
+    .s02_axis_tready(phy_s_axis_tready[2]),
+    .s03_axis_tready(phy_s_axis_tready[3]),
+    .s04_axis_tready(phy_s_axis_tready[4]),
+    .m00_axis_tdata(phy_m_axis_tdata[0]),
+    .m01_axis_tdata(phy_m_axis_tdata[1]),
+    .m02_axis_tdata(phy_m_axis_tdata[2]),
+    .m03_axis_tdata(phy_m_axis_tdata[3]),
+    .m04_axis_tdata(phy_m_axis_tdata[4]),
+    .m00_axis_tkeep(phy_m_axis_tkeep[0]),
+    .m01_axis_tkeep(phy_m_axis_tkeep[1]),
+    .m02_axis_tkeep(phy_m_axis_tkeep[2]),
+    .m03_axis_tkeep(phy_m_axis_tkeep[3]),
+    .m04_axis_tkeep(phy_m_axis_tkeep[4]),
+    .m00_axis_tvalid(phy_m_axis_tvalid[0]),
+    .m01_axis_tvalid(phy_m_axis_tvalid[1]),
+    .m02_axis_tvalid(phy_m_axis_tvalid[2]),
+    .m03_axis_tvalid(phy_m_axis_tvalid[3]),
+    .m04_axis_tvalid(phy_m_axis_tvalid[4]),
+    .m00_axis_tlast(phy_m_axis_tlast[0]),
+    .m01_axis_tlast(phy_m_axis_tlast[1]),
+    .m02_axis_tlast(phy_m_axis_tlast[2]),
+    .m03_axis_tlast(phy_m_axis_tlast[3]),
+    .m04_axis_tlast(phy_m_axis_tlast[4]),
+    .m00_axis_tready(phy_m_axis_tready[0]),
+    .m01_axis_tready(phy_m_axis_tready[1]),
+    .m02_axis_tready(phy_m_axis_tready[2]),
+    .m03_axis_tready(phy_m_axis_tready[3]),
+    .m04_axis_tready(phy_m_axis_tready[4]),
+    .stats_req(stats_req[12:7]),
+    .stats_select(stats_index[3:0]),
+    .stats_acks(stats_acks[12:7]),
+    .stats_values(stats_values[12:7])
   );
 
-  // =========================================================================
-  // egress_top.sv
-  // =========================================================================
-  egress_top u_egress_top (
-    .clk                       (clk),
-    .rst_n                     (rst_n),
-    .m_axis_tdata              (phy_m_axis_tdata),
-    .m_axis_tkeep              (phy_m_axis_tkeep),
-    .m_axis_tvalid             (phy_m_axis_tvalid),
-    .m_axis_tlast              (phy_m_axis_tlast),
-    .m_axis_tready             (phy_m_axis_tready),
-    .m_axi_arid                (m_axi_egr_arid),
-    .m_axi_araddr              (m_axi_egr_araddr),
-    .m_axi_arlen               (m_axi_egr_arlen),
-    .m_axi_arsize              (m_axi_egr_arsize),
-    .m_axi_arburst             (m_axi_egr_arburst),
-    .m_axi_arvalid             (m_axi_egr_arvalid),
-    .m_axi_arready             (m_axi_egr_arready),
-    .m_axi_rid                 (m_axi_egr_rid),
-    .m_axi_rdata                (m_axi_egr_rdata),
-    .m_axi_rresp                (m_axi_egr_rresp),
-    .m_axi_rlast                (m_axi_egr_rlast),
-    .m_axi_rvalid                (m_axi_egr_rvalid),
-    .m_axi_rready                (m_axi_egr_rready),
-    .dequeue_req_o_passthru      (dequeue_req),
-    .dequeue_valid_i_passthru    (dequeue_valid),
-    .dequeue_bufid_i_passthru    (dequeue_bufid),
-    .dequeue_length_i_passthru   (dequeue_length),
-    .release_req_o_passthru      (release_req),
-    .release_bufid_o_passthru    (release_bufid),
-    .release_gnt_i_passthru      (release_gnt),
-    .cpu_dequeue_valid_o          (cpu_dequeue_valid),
-    .cpu_dequeue_bufid_o          (cpu_dequeue_bufid),
-    .cpu_dequeue_length_o         (cpu_dequeue_length),
-    .cpu_dequeue_req_i            (cpu_dequeue_req),
-    .cpu_release_req_i            (cpu_release_req),
-    .cpu_release_bufid_i          (cpu_release_bufid),
-    .cpu_release_gnt_o            (cpu_release_gnt)
-  );
-
-  // =========================================================================
-  // cpu_port_top.sv
-  // =========================================================================
-  cpu_port_top u_cpu_port_top (
-    .clk                    (clk),
-    .rst_n                  (rst_n),
-    .s_axis_tdata           (cpu_s_axis_tdata),
-    .s_axis_tkeep           (cpu_s_axis_tkeep),
-    .s_axis_tvalid          (cpu_s_axis_tvalid),
-    .s_axis_tlast           (cpu_s_axis_tlast),
-    .s_axis_tready          (cpu_s_axis_tready),
-    .m_axis_tdata           (cpu_m_axis_tdata),
-    .m_axis_tkeep           (cpu_m_axis_tkeep),
-    .m_axis_tvalid          (cpu_m_axis_tvalid),
-    .m_axis_tlast           (cpu_m_axis_tlast),
-    .m_axis_tready          (cpu_m_axis_tready),
-    // CPU TX destination override (see above): while armed, replace the
-    // automatic lookup result with the software-chosen mask for exactly
-    // this one frame.
-    .dest_mask_i            (cpu_tx_ovr_armed_q ? cpu_tx_ovr_mask_q : dest_mask[5]),
-    .dest_mask_valid_i      (cpu_tx_ovr_armed_q ? 1'b1 : dest_mask_valid[5]),
-    .cpu_alloc_req_o        (cpu_alloc_req),
-    .cpu_alloc_gnt_i        (cpu_alloc_gnt),
-    .cpu_alloc_bufid_i      (cpu_alloc_bufid),
-    .cpu_enqueue_req_o      (cpu_enqueue_req),
-    .cpu_enqueue_bufid_o    (cpu_enqueue_bufid),
-    .cpu_enqueue_length_o   (cpu_enqueue_length),
-    .cpu_enqueue_destmask_o (cpu_enqueue_destmask),
-    .cpu_enqueue_gnt_i      (cpu_enqueue_gnt),
-    .cpu_dequeue_valid_i    (cpu_dequeue_valid),
-    .cpu_dequeue_bufid_i    (cpu_dequeue_bufid),
-    .cpu_dequeue_length_i   (cpu_dequeue_length),
-    .cpu_dequeue_req_o      (cpu_dequeue_req),
-    .cpu_release_req_o      (cpu_release_req),
-    .cpu_release_bufid_o    (cpu_release_bufid),
-    .cpu_release_gnt_i      (cpu_release_gnt),
-    .m_axi_awid             (m_axi_cpu_awid),
-    .m_axi_awaddr           (m_axi_cpu_awaddr),
-    .m_axi_awlen            (m_axi_cpu_awlen),
-    .m_axi_awsize           (m_axi_cpu_awsize),
-    .m_axi_awburst          (m_axi_cpu_awburst),
-    .m_axi_awvalid          (m_axi_cpu_awvalid),
-    .m_axi_awready          (m_axi_cpu_awready),
-    .m_axi_wdata            (m_axi_cpu_wdata),
-    .m_axi_wstrb            (m_axi_cpu_wstrb),
-    .m_axi_wlast            (m_axi_cpu_wlast),
-    .m_axi_wvalid           (m_axi_cpu_wvalid),
-    .m_axi_wready           (m_axi_cpu_wready),
-    .m_axi_bid              (m_axi_cpu_bid),
-    .m_axi_bresp            (m_axi_cpu_bresp),
-    .m_axi_bvalid           (m_axi_cpu_bvalid),
-    .m_axi_bready           (m_axi_cpu_bready),
-    .m_axi_arid             (m_axi_cpu_arid),
-    .m_axi_araddr           (m_axi_cpu_araddr),
-    .m_axi_arlen            (m_axi_cpu_arlen),
-    .m_axi_arsize           (m_axi_cpu_arsize),
-    .m_axi_arburst          (m_axi_cpu_arburst),
-    .m_axi_arvalid          (m_axi_cpu_arvalid),
-    .m_axi_arready          (m_axi_cpu_arready),
-    .m_axi_rid              (m_axi_cpu_rid),
-    .m_axi_rdata            (m_axi_cpu_rdata),
-    .m_axi_rresp            (m_axi_cpu_rresp),
-    .m_axi_rlast            (m_axi_cpu_rlast),
-    .m_axi_rvalid           (m_axi_cpu_rvalid),
-    .m_axi_rready           (m_axi_cpu_rready)
-  );
-
-  // =========================================================================
-  // mac_forwarding_top.sv
-  // =========================================================================
-  mac_forwarding_top u_mac_forwarding_top (
-    .clk               (clk),
-    .rst_n             (rst_n),
-    .age_tick_i        (age_tick),
-    .default_age_i     (default_age_i),
-    .flush_req_i       (link_flush_req),
-    .flush_busy_o      (mac_flush_busy),
-    .s_axis_tdata_i    (fwd_s_axis_tdata),
-    .s_axis_tkeep_i    (fwd_s_axis_tkeep),
-    .s_axis_tvalid_i   (fwd_s_axis_tvalid),
-    .s_axis_tlast_i    (fwd_s_axis_tlast),
-    .s_axis_tready_i   (fwd_s_axis_tready),
-    .dest_mask_o       (dest_mask),
-    .dest_mask_valid_o (dest_mask_valid),
-    .learn_en_i        (learn_en_s2),
-    .fwd_en_i          (fwd_en_s2),
-    .ctrl_frame_o      (ctrl_frame_o)
-  );
-
-  // =========================================================================
-  // PS GEM0 (port 0) / PS GEM1 (port 1)
-  // =========================================================================
-  ps_gem_axis_bridge u_ps_gem0 (
+  switch_gem_port u_ps_gem0 (
+    .stats_req(stats_req[1:0]), .stats_select(stats_index[3:0]),
+    .stats_acks(stats_acks[1:0]), .stats_values(stats_values[1:0]),
     .clk              (clk),
     .rst_n            (rst_n),
     .gem_rx_clk       (gem_rx_clk_ps0),
@@ -834,7 +561,10 @@ module switch_top
     .tx_r_status_i       (gem0_tx_r_status_i)
   );
 
-  ps_gem_axis_bridge u_ps_gem1 (
+
+  switch_gem_port u_ps_gem1 (
+    .stats_req(stats_req[3:2]), .stats_select(stats_index[3:0]),
+    .stats_acks(stats_acks[3:2]), .stats_values(stats_values[3:2]),
     .clk              (clk),
     .rst_n            (rst_n),
     .gem_rx_clk       (gem_rx_clk_ps1),
@@ -876,9 +606,7 @@ module switch_top
     .tx_r_status_i       (gem1_tx_r_status_i)
   );
 
-  // =========================================================================
-  // PL GMII0 (port 2) / PL GMII1 (port 3)
-  // =========================================================================
+
   pl_gmii_mac_top u_pl_gmii0 (
     .stats_request(stats_req[4]), .stats_select(stats_index[3:0]),
     .stats_ack(stats_acks[4]), .stats_value(stats_values[4]),
@@ -925,6 +653,7 @@ module switch_top
     .interrupt         (pl0_interrupt),
     .mac_irq           (pl0_mac_irq)
   );
+
 
   pl_gmii_mac_top u_pl_gmii1 (
     .stats_request(stats_req[5]), .stats_select(stats_index[3:0]),
@@ -973,9 +702,7 @@ module switch_top
     .mac_irq           (pl1_mac_irq)
   );
 
-  // =========================================================================
-  // SFP0 (port 4)
-  // =========================================================================
+
   sfp_port_top #(
     .AN_BREAK_LINK_CYCLES(SFP_AN_BREAK_LINK_CYCLES),
     .AN_LINK_TIMER_CYCLES(SFP_AN_LINK_TIMER_CYCLES),
@@ -1035,7 +762,6 @@ module switch_top
     .mac_irq          (sfp_mac_irq)
   );
 
-
   // Statistics mailbox selects one source bank. Select is held throughout
   // the four-phase CDC handshake by rx_diag_regs.
   for (genvar k=0;k<13;k=k+1) begin : stats_decode
@@ -1043,86 +769,5 @@ module switch_top
   end
   assign stats_ack = stats_index[7:4] < 13 ? stats_acks[stats_index[7:4]] : stats_request;
   assign stats_value = stats_index[7:4] < 13 ? stats_values[stats_index[7:4]] : 0;
-  wire [3:0][31:0] stats_gem0_rx_inc;
-  stats_gem_rx stats_gem0_rx (.clk(gem_rx_clk_ps0),.rst_n(gem_rx_rst_n_ps0),
-    .wr(gem0_rx_w_wr_i),.sop(gem0_rx_w_sop_i),.eop(gem0_rx_w_eop_i),.error(gem0_rx_w_err_i),.flush(gem0_rx_w_flush_i),.overflow(gem0_rx_w_overflow_o),.increment(stats_gem0_rx_inc));
-  stats_bank #(.N(4)) stats_bank0 (.clk(gem_rx_clk_ps0),.rst_n(gem_rx_rst_n_ps0),
-    .increment(stats_gem0_rx_inc),.request(stats_req[0]),.select(stats_index[3:0]),.ack(stats_acks[0]),.value(stats_values[0]));
-  wire [3:0][31:0] stats_gem0_tx_inc;
-  stats_gem_tx stats_gem0_tx (.clk(gem_tx_clk_ps0),.rst_n(gem_tx_rst_n_ps0),
-    .valid(gem0_tx_r_valid_o),.sop(gem0_tx_r_sop_o),.error(gem0_tx_r_err_o),.underflow(gem0_tx_r_underflow_o),.complete_toggle(gem0_dma_tx_end_tog_i),.status(gem0_tx_r_status_i),.increment(stats_gem0_tx_inc));
-  stats_bank #(.N(4)) stats_bank1 (.clk(gem_tx_clk_ps0),.rst_n(gem_tx_rst_n_ps0),
-    .increment(stats_gem0_tx_inc),.request(stats_req[1]),.select(stats_index[3:0]),.ack(stats_acks[1]),.value(stats_values[1]));
-  wire [3:0][31:0] stats_gem1_rx_inc;
-  stats_gem_rx stats_gem1_rx (.clk(gem_rx_clk_ps1),.rst_n(gem_rx_rst_n_ps1),
-    .wr(gem1_rx_w_wr_i),.sop(gem1_rx_w_sop_i),.eop(gem1_rx_w_eop_i),.error(gem1_rx_w_err_i),.flush(gem1_rx_w_flush_i),.overflow(gem1_rx_w_overflow_o),.increment(stats_gem1_rx_inc));
-  stats_bank #(.N(4)) stats_bank2 (.clk(gem_rx_clk_ps1),.rst_n(gem_rx_rst_n_ps1),
-    .increment(stats_gem1_rx_inc),.request(stats_req[2]),.select(stats_index[3:0]),.ack(stats_acks[2]),.value(stats_values[2]));
-  wire [3:0][31:0] stats_gem1_tx_inc;
-  stats_gem_tx stats_gem1_tx (.clk(gem_tx_clk_ps1),.rst_n(gem_tx_rst_n_ps1),
-    .valid(gem1_tx_r_valid_o),.sop(gem1_tx_r_sop_o),.error(gem1_tx_r_err_o),.underflow(gem1_tx_r_underflow_o),.complete_toggle(gem1_dma_tx_end_tog_i),.status(gem1_tx_r_status_i),.increment(stats_gem1_tx_inc));
-  stats_bank #(.N(4)) stats_bank3 (.clk(gem_tx_clk_ps1),.rst_n(gem_tx_rst_n_ps1),
-    .increment(stats_gem1_tx_inc),.request(stats_req[3]),.select(stats_index[3:0]),.ack(stats_acks[3]),.value(stats_values[3]));
-  wire [7:0][31:0] stats_cpu_inc;
-  stats_axis stats_cpu_s (.clk(clk),.rst_n(rst_n),.valid(cpu_s_axis_tvalid),.ready(cpu_s_axis_tready),
-    .last(cpu_s_axis_tlast),.bad(1'b0),.keep(cpu_s_axis_tkeep),.increment(stats_cpu_inc[0 +: 4]));
-  stats_axis stats_cpu_m (.clk(clk),.rst_n(rst_n),.valid(cpu_m_axis_tvalid),.ready(cpu_m_axis_tready),
-    .last(cpu_m_axis_tlast),.bad(1'b0),.keep(cpu_m_axis_tkeep),.increment(stats_cpu_inc[4 +: 4]));
-  stats_bank stats_cpu_bank (.clk(clk),.rst_n(rst_n),.increment(stats_cpu_inc),
-    .request(stats_req[7]),.select(stats_index[3:0]),.ack(stats_acks[7]),.value(stats_values[7]));
-  generate if (STATS_DDR) begin : ddr_statistics
-    stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b1)) monitor8 (.clk(clk),.rst_n(rst_n),
-      .address_valid(m_axi_ing_awvalid),.address_ready(m_axi_ing_awready),
-      .data_valid(m_axi_ing_wvalid),.data_ready(m_axi_ing_wready),
-      .strobe(m_axi_ing_wstrb),
-      .response_valid(m_axi_ing_bvalid),.response_ready(m_axi_ing_bready),
-      .response_last(1'b1),.response(m_axi_ing_bresp),
-      .request(stats_req[8]),.select(stats_index[3:0]),.ack(stats_acks[8]),.value(stats_values[8]));
-    stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b0)) monitor9 (.clk(clk),.rst_n(rst_n),
-      .address_valid(m_axi_egr_arvalid),.address_ready(m_axi_egr_arready),
-      .data_valid(m_axi_egr_rvalid),.data_ready(m_axi_egr_rready),
-      .strobe({AXI_STRB_W{1'b1}}),
-      .response_valid(m_axi_egr_rvalid),.response_ready(m_axi_egr_rready),
-      .response_last(m_axi_egr_rlast),.response(m_axi_egr_rresp),
-      .request(stats_req[9]),.select(stats_index[3:0]),.ack(stats_acks[9]),.value(stats_values[9]));
-    stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b1)) monitor10 (.clk(clk),.rst_n(rst_n),
-      .address_valid(m_axi_cpu_awvalid),.address_ready(m_axi_cpu_awready),
-      .data_valid(m_axi_cpu_wvalid),.data_ready(m_axi_cpu_wready),
-      .strobe(m_axi_cpu_wstrb),
-      .response_valid(m_axi_cpu_bvalid),.response_ready(m_axi_cpu_bready),
-      .response_last(1'b1),.response(m_axi_cpu_bresp),
-      .request(stats_req[10]),.select(stats_index[3:0]),.ack(stats_acks[10]),.value(stats_values[10]));
-    stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b0)) monitor11 (.clk(clk),.rst_n(rst_n),
-      .address_valid(m_axi_cpu_arvalid),.address_ready(m_axi_cpu_arready),
-      .data_valid(m_axi_cpu_rvalid),.data_ready(m_axi_cpu_rready),
-      .strobe({AXI_STRB_W{1'b1}}),
-      .response_valid(m_axi_cpu_rvalid),.response_ready(m_axi_cpu_rready),
-      .response_last(m_axi_cpu_rlast),.response(m_axi_cpu_rresp),
-      .request(stats_req[11]),.select(stats_index[3:0]),.ack(stats_acks[11]),.value(stats_values[11]));
-  end else begin : no_ddr_statistics
-    assign stats_acks[11:8] = stats_req[11:8];
-    assign stats_values[11:8] = '0;
-  end endgenerate
-  generate if (STATS_DEBUG) begin : debug_statistics
-    wire [15:0][31:0] inc;
-    for (genvar k=0;k<5;k=k+1) begin : stalls
-      assign inc[k] = 32'(phy_s_axis_tvalid[k] && !phy_s_axis_tready[k]);
-      assign inc[k+5] = 32'(phy_m_axis_tvalid[k] && !phy_m_axis_tready[k]);
-    end
-    assign inc[10] = 32'(cpu_s_axis_tvalid && !cpu_s_axis_tready);
-    assign inc[11] = 32'(cpu_m_axis_tvalid && !cpu_m_axis_tready);
-    assign inc[12] = 32'(cpu_alloc_req && !cpu_alloc_gnt);
-    assign inc[13] = 32'(cpu_enqueue_req && !cpu_enqueue_gnt);
-    assign inc[14] = 32'(link_flush_busy_o);
-    assign inc[15] = 32'(m_axi_ing_bvalid && m_axi_ing_bready && m_axi_ing_bresp[1]) +
-                     32'(m_axi_egr_rvalid && m_axi_egr_rready && m_axi_egr_rresp[1]) +
-                     32'(m_axi_cpu_bvalid && m_axi_cpu_bready && m_axi_cpu_bresp[1]) +
-                     32'(m_axi_cpu_rvalid && m_axi_cpu_rready && m_axi_cpu_rresp[1]);
-    stats_bank #(.N(16),.WIDTH(28)) bank (.clk(clk),.rst_n(rst_n),.increment(inc),
-      .request(stats_req[12]),.select(stats_index[3:0]),.ack(stats_acks[12]),.value(stats_values[12]));
-  end else begin : no_debug_statistics
-    assign stats_acks[12] = stats_req[12];
-    assign stats_values[12] = 0;
-  end endgenerate
 
 endmodule

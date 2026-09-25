@@ -1,13 +1,14 @@
 # R5 web interface
 
-The R5 serves a self-contained HTTP interface on TCP port 80 at its DHCP
-address. No login, browser credentials, external assets, or internet access
-are required. Both viewing and changing port configuration are unauthenticated.
-The current lab address is `http://10.0.1.214/`.
+The R5 serves a self-contained HTTP interface on TCP port 80 at its configured IPv4
+address (DHCP by default). Viewing is public and uses no external assets.
+Configuration changes require administrator credentials (factory `admin` / `admin`).
+The current lab address after the permanent-MAC change is `http://10.0.1.104/`
+(2026-09-24 DHCP lease).
 
 - `/configuration`: enable/disable GEM0 (right upper), GEM1 (right lower),
   PL0 (left upper), PL1 (left lower), and SFP. Physical link and effective
-  forwarding state are displayed separately. Apply submits the five-port mask;
+  forwarding state are displayed separately. Save writes port/IP preferences to microSD;
   Reload status fetches the latest settings without applying edits. Link and
   speed cells refresh every second without overwriting checkbox edits.
 - `/statistics` (also `/`): refresh accumulated port counters, compiled-in
@@ -15,10 +16,15 @@ The current lab address is `http://10.0.1.214/`.
   temperature/voltage/SOM power readings every second. Requests never overlap;
   failed requests mark the displayed information stale and polling continues.
 
-Settings are RAM-only and default to all five ports enabled on every firmware
-restart, with GEM0 advertising 1000FD and GEM1 advertising 10/100/1000 full duplex.
-The page offers GEM1 advertisement checkboxes; changing them interrupts negotiation.
-See [PS speed selection](ps-ethernet-speeds.md) for transition behavior and API. The CPU virtual port is not administratively configurable. Disabling
+Settings now persist in two files on the microSD card. Defaults enable all ports, request
+GEM0 1000FD and other copper ports 10/100/1000FD, select SFP Auto and DHCP.
+The page distinguishes future PL/SFP speeds from current implementation;
+unsupported-only selections disable admission. IP changes apply after restart.
+The five permanent MACs and administrator username are displayed; stored
+password verifiers are never returned. See [persistent configuration](configuration.md)
+for storage layout, credentials, recovery and current hardware limits.
+See [PS speed selection](ps-ethernet-speeds.md) for PS transition behavior.
+The CPU virtual port is not administratively configurable. Disabling
 ports changes MAC receive enables and masks the link task's desired fabric
 ports. The existing link-clear/queue flush/MAC-learning flush sequence handles
 removal. PHY negotiation remains active, so a disabled port can still report
@@ -29,8 +35,8 @@ flush-busy check and interval guard. PS GEM RX/TX are stopped while disabled;
 PL/SFP reception is stopped and fabric egress destinations are removed/flushed.
 
 Disabling the management uplink can disconnect the browser before it receives
-the response. Recover through another enabled port or reboot the board. There
-is no persistent configuration or automatic rollback in this initial version.
+the response. Recover through another enabled port or the documented JTAG
+recovery build. Saved disables survive reboot; there is no automatic rollback.
 
 Statistics use the same nondestructive `statistics_get` / `sensors_get` snapshots
 as SNMP. The processor remains the sole reader of hardware clear-on-read
@@ -45,14 +51,16 @@ readings use three decimal places (`1.800 V`, `0.800 A`); temperatures use one
 
 | Method/path | Result |
 | --- | --- |
+| `GET /api/config` | Saved port/IP preferences, MAC allocation, username and storage/capability status; no credential secrets |
+| `POST /api/config` | Save a complete port/IP form; see [configuration](configuration.md) |
 | `GET /api/ports` | JSON `admin`, `physical`, `forwarding` masks; bits 0–4 map to the five physical ports |
-| `POST /api/ports` | Form body `mask=0` through `mask=31`, optionally with both `adv0=4` and `adv1=1..7`; responds with the requested administrative and current physical/forwarding state |
+| `POST /api/ports` | Form body `mask=0` through `mask=31`, optionally with both `adv0=4` and `adv1=1..7`; saves to microSD and responds with effective administrative and current physical/forwarding state |
 | `GET /api/statistics` | JSON port arrays, optional DDR/debug arrays, health, timeout locations, and sensors |
 
 POST requires `Content-Length` and `X-KR260-Request: 1`, as sent by the supplied
 page. This custom header, with no cross-origin permission, prevents ordinary
-cross-origin browser forms from changing settings; it is not authentication.
-Port changes do not alter IP configuration. If the last forwarding link goes
+cross-origin browser forms from changing settings; administrator HTTP Basic authentication is required separately.
+Legacy port-only changes do not alter IP configuration. If the last forwarding link goes
 down, the existing network link hook can take the network stack down.
 HTTP is unencrypted. Responses disable caching and embedding in frames.
 
@@ -61,7 +69,9 @@ client, 2 KiB request storage, 24 KiB JSON storage, and a 4096-word stack.
 Headers/bodies may arrive in fragments. It rejects ambiguous lengths,
 chunked requests, pipelining, oversized requests and invalid masks. Socket
 operations have 250 ms waits, request handling has a two-second ceiling,
-sending a five-second total ceiling, and shutdown a two-second drain ceiling.
+response sending has a fresh five-second ceiling, and shutdown a two-second drain ceiling.
+USB operations have bounded polling/retry loops; USB recovery can extend total
+request time. The configuration page allows 20 seconds for a save response.
 It closes each connection after its response. This is a small lab-management
 server, not a high-concurrency service.
 

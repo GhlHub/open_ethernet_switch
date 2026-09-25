@@ -1,0 +1,30 @@
+{
+  "sources": [
+    "rtl/board/kr260_pl_top.sv",
+    "rtl/board/kr260_top.sv",
+    "rtl/common/fifo36_async_2kx18.sv",
+    "rtl/common/rst_sync.sv",
+    "rtl/common/sticky_xdomain.sv",
+    "rtl/mdio/mdio_controller.sv",
+    "rtl/mdio/open_eth_mdio_master.sv",
+    "rtl/mdio/phy_init_seq.sv",
+    "rtl/pl_gmii/pl_eth_clk_gen.sv",
+    "rtl/pl_gmii/rgmii_gmii_adapter.sv",
+    "rtl/pl_gmii/rgmii_rx_elastic.sv",
+    "rtl/sfp_pcs/gth_sfp_wrapper.sv",
+    "rtl/sfp_pcs/sfp_pcs_clk_gen.sv",
+    "rtl/sfp_pcs/sfp_sideband.sv",
+    "rtl/switch_top.sv"
+  ],
+  "vendor_ip": [
+    "rtl/sfp_pcs/ip/gth_sfp_ip.xci",
+    "rtl/sfp_pcs/ip/sfp_pcs_clk_gen_ip.xci",
+    "rtl/pl_gmii/ip/pl_eth_clk_gen_ip.xci"
+  ],
+  "constraints": [
+    "constraints/kr260_clocks.xdc",
+    "constraints/kr260_pl_ethernet.xdc",
+    "constraints/kr260_rgmii_io.xdc",
+    "constraints/kr260_sfp.xdc"
+  ]
+}

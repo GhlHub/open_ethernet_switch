@@ -712,9 +712,9 @@ module tb_switch_top;
           int t; t = 0;
           while (!got_grant && t < 20000) begin
             @(posedge clk);
-            if (dut.cpu_enqueue_req && dut.cpu_enqueue_gnt) begin
-              seen_armed_before = dut.cpu_tx_ovr_armed_q;
-              seen_mask         = dut.cpu_enqueue_destmask;
+            if (dut.u_fabric.cpu_enqueue_req && dut.u_fabric.cpu_enqueue_gnt) begin
+              seen_armed_before = dut.u_fabric.cpu_tx_ovr_armed_q;
+              seen_mask         = dut.u_fabric.cpu_enqueue_destmask;
               got_grant         = 1'b1;
             end
             t++;
@@ -729,7 +729,7 @@ module tb_switch_top;
       end else if (seen_mask !== 6'b000100) begin
         $display("FAIL: CPU TX override: enqueue destmask=%b, expected port 2 only (000100)", seen_mask);
         errors++;
-      end else if (dut.cpu_tx_ovr_armed_q !== 1'b0) begin
+      end else if (dut.u_fabric.cpu_tx_ovr_armed_q !== 1'b0) begin
         $display("FAIL: CPU TX override: still armed after the frame it was meant for was consumed"); errors++;
       end else $display("PASS: CPU TX override sends a frame to exactly the software-chosen port, then disarms");
 
@@ -742,8 +742,8 @@ module tb_switch_top;
           int t; t = 0;
           while (!got_grant && t < 20000) begin
             @(posedge clk);
-            if (dut.cpu_enqueue_req && dut.cpu_enqueue_gnt) begin
-              seen_mask = dut.cpu_enqueue_destmask;
+            if (dut.u_fabric.cpu_enqueue_req && dut.u_fabric.cpu_enqueue_gnt) begin
+              seen_mask = dut.u_fabric.cpu_enqueue_destmask;
               got_grant = 1'b1;
             end
             t++;

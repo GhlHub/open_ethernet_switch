@@ -11,13 +11,14 @@
  * original weak default) -- the switch behaves exactly as it did before
  * this feature existed. */
 #include "board.h"
+#include "config.h"
 #include "pstate.h"
 #include "stp.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "xil_printf.h"
 
-static const uint8_t stp_mac[6] = {0x02,0x4b,0x52,0x32,0x36,0x01}; /* same as network.c's own MAC */
+static uint8_t stp_mac[6]; /* first allocated board MAC, shared with network.c */
 static bool stp_enabled = false;
 static uint8_t applied_fwd = 0x1f, applied_learn = 0x1f; /* matches hardware's own reset default */
 static uint8_t last_forwarding;
@@ -105,6 +106,8 @@ void stp_set_enabled(bool enabled)
     } else {
         /* Start clean: re-init the engine and treat every currently-up
          * port as a fresh link-up event, same as at boot. */
+        struct switch_config cfg; settings_get(&cfg,NULL,NULL);
+        for (unsigned i=0;i<6;i++) stp_mac[i]=cfg.mac[0][i];
         stp_init(&g_stp, stp_mac, 32768);
         have_last_forwarding = false;
     }
@@ -113,6 +116,8 @@ void stp_set_enabled(bool enabled)
 void stp_task(void *unused)
 {
     (void)unused;
+    struct switch_config cfg; settings_get(&cfg,NULL,NULL);
+    for (unsigned i=0;i<6;i++) stp_mac[i]=cfg.mac[0][i];
     stp_init(&g_stp, stp_mac, 32768);
     xil_printf("STP: bridge %02x:%02x:%02x:%02x:%02x:%02x priority 32768, %u ports (disabled by default)\r\n",
         stp_mac[0],stp_mac[1],stp_mac[2],stp_mac[3],stp_mac[4],stp_mac[5], STP_NUM_PORTS);

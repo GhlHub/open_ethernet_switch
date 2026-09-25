@@ -1,5 +1,34 @@
 # Design inventory and pending development
 
+## IP repository partitioning (2026-09-25)
+
+Five digital IP manifests and reproducible Vivado packaging now live in
+[`ip_repo`](../ip_repo/README.md). The extracted fabric owns shared buffer
+management, forwarding and DDR engines; GEM endpoints own their local
+counters. All four counter-option combinations pass the old/new RTL
+comparison. See [partitioning](ip-partitioning.md) for the diagram, interfaces,
+validation evidence and remaining physical-shell/production-BD migration.
+The all-counter image has been routed and loaded over JTAG with matching
+R5 firmware. DHCP assigned `10.0.1.104`; CPU and settled endpoint pings,
+web access and SNMP passed on the connected GEM1/PL0 path. Initial DHCP
+and endpoint losses recovered but remain unexplained. Routed WNS is
++0.018 ns and hold slack is +0.010 ns; CDC sign-off remains incomplete.
+
+## Persistent configuration (2026-09-24, save/reload verified on board)
+
+Added five permanent board MACs (`00:0a:35:0f:37:45` through `:49`), first-MAC
+CPU/STP identity, an admin/admin password verifier, and redundant microSD configuration files.
+The web form saves copper/SFP preferences and DHCP/static IPv4 for next startup.
+Port admission follows current hardware support; this does not implement PL
+10/100 or SFP rates above 1G. Configuration writes now require administrator authentication; viewing stays public. See
+[configuration](configuration.md) for storage layout, recovery and validation.
+R5 USB0 host/hub/mass-storage and FAT support are deployed. FAT-card detection,
+authenticated save/readback and retention across full PS resets passed. All
+ports are restored enabled; DHCP is `10.0.1.104`. USB2244 unsupported cache flush
+is handled by a guarded write-through compatibility path. Physical power-cycle
+and hotplug checks remain pending, as does investigation of a transient ping
+outage that self-recovered. See [USB storage](usb-storage.md).
+
 ## 2026-09-23 counter observation and open issues
 
 The 30-second SNMP observation found no packet/AXI errors or collector
@@ -72,9 +101,11 @@ See [PS speed implementation and limitations](ps-ethernet-speeds.md).
 `software/r5/src/web_task.c` serves HTTP port 80; `web_protocol.c` provides
 bounded request parsing and snapshot JSON serialization. The embedded
 `software/r5/web/index.html` has separate configuration/statistics pages,
-unauthenticated port controls, and one-second statistics refresh. The link
+initially unauthenticated port controls, and one-second statistics refresh. The link
 task combines an administrative mask with observed PHY/PCS links and controls
-MAC receive enables. Settings are volatile. See [web-interface.md](web-interface.md).
+MAC receive enables. That deployed version has volatile settings; the pending
+2026-09-23 build adds authenticated, persistent settings. See
+[web-interface.md](web-interface.md).
 
 Deployed at `http://10.0.1.214/`. Browser polling, GEM0 disable/enable,
 management continuity over SFP, and restored endpoint pings passed. The user
@@ -193,17 +224,17 @@ The optional debug scripts and historical captures remain available.
 
 | Area | Files / modules | Implemented scope and status |
 | --- | --- | --- |
-| Digital switch assembly | [`switch_top.sv`](../rtl/switch_top.sv) | Joins two GEM bridges, two PL MAC ports, one SFP MAC/PCS port, physical ingress/egress, the CPU port, and MAC forwarding. Generates the aging tick (default 4 Hz at 100 MHz). GEM0-to-CPU smoke test passes. The board top now connects its external DDR, CPU DMA, GMII and GTH boundaries. Separate GEM RX/TX clocks replace the former single-clock interface. Now also synchronizes per-port `fwd_en_i`/`learn_en_i` into the fabric clock and arms a one-shot CPU TX destination override (via `ctrl_value_xdomain`) into `cpu_port_top`'s dest-mask inputs; see control-protocol hooks in [architecture](architecture.md#control-protocol-hooks-stplacplldp-no-protocol-logic). |
+| Digital switch assembly | [`switch_top.sv`](../rtl/switch_top.sv) | Joins two GEM bridges, two PL MAC ports, one SFP MAC/PCS port, physical ingress/egress, the CPU port, and MAC forwarding. The extracted `switch_fabric` generates the aging tick (default 4 Hz at 100 MHz). GEM0-to-CPU smoke test passes. The board top now connects its external DDR, CPU DMA, GMII and GTH boundaries. Separate GEM RX/TX clocks replace the former single-clock interface. Now also synchronizes per-port `fwd_en_i`/`learn_en_i` into the fabric clock and arms a one-shot CPU TX destination override (via `ctrl_value_xdomain`) into `cpu_port_top`'s dest-mask inputs; see control-protocol hooks in [architecture](architecture.md#control-protocol-hooks-stplacplldp-no-protocol-logic). |
 | Header parsing and forwarding | [`mac_addr_resolver.sv`](../rtl/mac_table/mac_addr_resolver.sv), [`mac_forwarding_top.sv`](../rtl/mac_table/mac_forwarding_top.sv) | Six ingress stream snoopers extract destination/source MACs, issue lookup/learning requests, and supply forwarding masks. Hits use the learned mask with the ingress port removed (zero means drop); misses flood all other ports (including CPU for physical ingress). Ports 6–7 of the eight-port table are unused. Learning/flood/short-frame and same-port-hit tests across all six ports pass; policy and error-path gaps are listed below. Each resolver now traps the reserved `01:80:C2:00:00:0x` block to the CPU port unconditionally (`ctrl_frame_o`), and per-port `fwd_en_i`/`learn_en_i` gate ordinary forwarding/learning independent of link state, bypassed for trapped frames — the STP/LACP/LLDP hardware hooks; no protocol logic is implemented. |
 | Common logic | [`async_fifo.sv`](../rtl/common/async_fifo.sv), [`sync_fifo.sv`](../rtl/common/sync_fifo.sv), [`rr_arbiter.sv`](../rtl/common/rr_arbiter.sv), [`rst_sync.sv`](../rtl/common/rst_sync.sv), [`ctrl_value_xdomain.sv`](../rtl/common/ctrl_value_xdomain.sv) | Async-assert/synchronous-release reset helper, dual-clock CDC FIFO (a Gray-pointer model in simulation, `xpm_fifo_async` in synthesis), synchronous FIFO, round-robin arbitration, and a generic one-shot WIDTH-bit value+toggle crossing (data-before-flag; may lose a closely-spaced write, never tears a value). Pointer, tick and reset synchronizers now carry ASYNC_REG. Async FIFO has its own test; the new reset helper has no dedicated portable test; `ctrl_value_xdomain` has `tb_ctrl_value_xdomain.sv` (random-phase and racing-write trials). |
 | MAC table configuration | [`mac_table_pkg.sv`](../rtl/mac_table/mac_table_pkg.sv) | Four 512-row banks, 48-bit MAC keys, eight-bit destination masks, nine-bit age, and eight learning/lookup request ports. |
 | MAC table integration | [`mac_addr_table_top.sv`](../rtl/mac_table/mac_addr_table_top.sv), [`mac_table_bank.sv`](../rtl/mac_table/mac_table_bank.sv), [`bank_arbiter.sv`](../rtl/mac_table/bank_arbiter.sv) | Four-way table, bank arbitration, request FIFOs and response routing. Connected to all six ingress streams through `mac_forwarding_top`. |
-| MAC learning and aging | [`mac_learn_port.sv`](../rtl/mac_table/mac_learn_port.sv), [`learn_engine_fsm.sv`](../rtl/mac_table/learn_engine_fsm.sv), [`aging_sweep_fsm.sv`](../rtl/mac_table/aging_sweep_fsm.sv) | Learns or refreshes a source-port mask, selects replacement entries, and ages entries using an external tick. Tick generation is in `switch_top`; software configuration remains external. Port flushes remove destination bits in a bank sweep; back-to-back requests are merged. |
+| MAC learning and aging | [`mac_learn_port.sv`](../rtl/mac_table/mac_learn_port.sv), [`learn_engine_fsm.sv`](../rtl/mac_table/learn_engine_fsm.sv), [`aging_sweep_fsm.sv`](../rtl/mac_table/aging_sweep_fsm.sv) | Learns or refreshes a source-port mask, selects replacement entries, and ages entries using an external tick. Tick generation is in `switch_fabric`; software configuration remains external. Port flushes remove destination bits in a bank sweep; back-to-back requests are merged. |
 | MAC lookup | [`mac_lookup_port.sv`](../rtl/mac_table/mac_lookup_port.sv), [`lookup_engine_fsm.sv`](../rtl/mac_table/lookup_engine_fsm.sv) | Queues lookup requests and returns hit/mask results using a pipelined bank read path. Connected to header extraction and miss-flood policy in `mac_addr_resolver`. |
 | Shared buffer control | [`buf_mgr_pkg.sv`](../rtl/buf_mgr/buf_mgr_pkg.sv), [`buf_mgr_core.sv`](../rtl/buf_mgr/buf_mgr_core.sv), [`free_list_mgr.sv`](../rtl/buf_mgr/free_list_mgr.sv), [`queue_mgr.sv`](../rtl/buf_mgr/queue_mgr.sv) | Six-port alloc/enqueue/dequeue/release protocol, free-ID pool, reference counts, lengths, and per-port linked lists. Supports multiple destination bits for one buffer. Link-state masks gate enqueue destinations; queued references can be flushed per port, including concurrent release races. Present and unit-tested. Per-buffer metadata now also carries a 3-bit ingress-port tag alongside length (`enqueue_meta_i`/`dequeue_meta_o`), read back only by the CPU port -- see [architecture: CPU RX ingress-port tag](architecture.md#stp-implementation-firmware-2026-09-23). |
 | DMA configuration | [`axi_dma_pkg.sv`](../rtl/dma/axi_dma_pkg.sv) | Five physical ports, 128-bit AXI data, 32-bit addresses, one-bit ID, and pool base `0x10000000`. |
-| Physical ingress | [`ingress_top.sv`](../rtl/dma/ingress_top.sv), [`ingress_port_wr.sv`](../rtl/dma/ingress_port_wr.sv), [`ingress_dma_wr.sv`](../rtl/dma/ingress_dma_wr.sv) | Five stream receivers, local frame RAMs, shared DDR write engine, and an instantiated `buf_mgr_core`. Forwarding masks are inputs supplied by `mac_forwarding_top` in the assembled switch. Present and subsystem-tested; the shared physical write engine now accepts one 128-bit beat every two fabric cycles. |
-| Physical egress | [`egress_top.sv`](../rtl/dma/egress_top.sv), [`egress_port_rd.sv`](../rtl/dma/egress_port_rd.sv), [`egress_dma_rd.sv`](../rtl/dma/egress_dma_rd.sv) | Five queue consumers, shared DDR read engine, local frame RAMs, and AXI-S transmit outputs. Buffer-manager and CPU handshakes are joined in `switch_top`. Frame-RAM prefetch removes the former gap every eight stream words; continuous output and stalls are tested. |
+| Physical ingress | [`ingress_top.sv`](../rtl/dma/ingress_top.sv), [`ingress_port_wr.sv`](../rtl/dma/ingress_port_wr.sv), [`ingress_dma_wr.sv`](../rtl/dma/ingress_dma_wr.sv) | `ingress_datapath` contains five stream receivers, local frame RAMs and the shared DDR write engine. The production `buf_mgr_core` is a sibling inside `switch_fabric`; `ingress_top` retains a compatibility assembly for subsystem tests. Forwarding masks are inputs supplied by `mac_forwarding_top` in the assembled switch. Present and subsystem-tested; the shared physical write engine now accepts one 128-bit beat every two fabric cycles. |
+| Physical egress | [`egress_top.sv`](../rtl/dma/egress_top.sv), [`egress_port_rd.sv`](../rtl/dma/egress_port_rd.sv), [`egress_dma_rd.sv`](../rtl/dma/egress_dma_rd.sv) | Five queue consumers, shared DDR read engine, local frame RAMs, and AXI-S transmit outputs. Buffer-manager and CPU handshakes are joined in `switch_fabric`. Frame-RAM prefetch removes the former gap every eight stream words; continuous output and stalls are tested. |
 | PS GEM port | [`ps_gem_axis_bridge.sv`](../rtl/ps_eth/ps_gem_axis_bridge.sv), [`gem_rx_w_to_axis.sv`](../rtl/ps_eth/gem_rx_w_to_axis.sv), [`axis_to_gem_tx_r.sv`](../rtl/ps_eth/axis_to_gem_tx_r.sv) | One reusable full-duplex GEM FIFO/AXI-S bridge, instantiated twice in `switch_top`. Separate RX/TX clocks, RX overflow/flush bad-frame termination and TX underflow/drain/flush recovery exist. Recovery tests pass; throughput, simultaneous-event corners and real GEM timing remain open. |
 | PL MAC port | [`pl_gmii_mac_top.sv`](../rtl/pl_gmii/pl_gmii_mac_top.sv), [`open_eth_mac_1g_switch.sv`](../rtl/pl_gmii/open_eth_mac_1g_switch.sv) | 1G full-duplex GMII MAC, switch-oriented receive acceptance, AXI-Lite register access, and wrapper. Instantiated twice in `switch_top`. The board wrapper joins both GMII interfaces to RGMII adapters. The imported core's resets are reclocked into each clock domain it uses (`tb_mac_reset_reclock.sv`). Its data read pointers are published to the other clock domain one word per clock (a CDC fix; `tb_sfp_port_top.sv` monitors it). |
 | PL MAC stream adaptation | [`mac_rxd_to_switch_ingress.sv`](../rtl/pl_gmii/mac_rxd_to_switch_ingress.sv), [`switch_egress_to_mac_txd.sv`](../rtl/pl_gmii/switch_egress_to_mac_txd.sv) | Converts 32-bit MAC data/control streams to/from the 16-bit switch streams across clock domains. Reused by the SFP port. Word-wide CDC FIFOs hold 256 16-bit words (512 payload bytes) each. Sustained one-word-per-fabric-cycle operation, lengths and backpressure are tested. |
@@ -242,7 +273,7 @@ The following development and verification remain incomplete.
 | Pending component | Required work / integration boundary |
 | --- | --- |
 | FreeRTOS firmware and boot flow | Initial R5 startup, TTC tick/timestamp, DMA network interface, 250 ms link service and DHCP minute retry are implemented and cross-linked. JTAG boot, UART, timer progress, DHCP acquisition and ping through all four copper ports are demonstrated. R5 D-cache now uses cacheable application DDR plus a reserved non-cacheable DMA region. Package FSBL/PMU/bitstream/application, measure cache-enabled performance and add fault restart. |
-| Management and status plane | MAC/MDIO/DMA, SFP IIC and RX/SFP diagnostics are connected. Counters, sensors, SNMP, and HTTP port configuration/statistics are implemented. Still needed: persistent configuration, broader forwarding policy and complete PCS configuration. Link status/events and flush controls now exist. Default age remains constant; PCS sync/link still drive LEDs. |
+| Management and status plane | MAC/MDIO/DMA, SFP IIC and RX/SFP diagnostics are connected. Counters, sensors, SNMP, and HTTP port configuration/statistics are implemented. Persistent microSD configuration passed board save/reload verification; broader forwarding policy and complete PCS configuration remain pending. Link status/events and flush controls now exist. Default age remains constant; PCS sync/link still drive LEDs. |
 | DMA descriptor and buffer cache policy | Current R5 implementation keeps descriptors and bounce buffers non-cacheable. Revisit descriptor and payload policies separately after measuring CPU cost and throughput. Cached DMA storage would require explicit ownership-based cache maintenance, cache-line isolation, and ring-reuse/reset/error-recovery validation. |
 | PS/DDR and CPU DMA verification | HP0 carries the three switch memory interfaces; HP1 carries the CPU AXI DMA masters. Verify generated address windows, arbitration, reset behavior, sustained throughput, descriptor/cache ownership and AXI error recovery. Basic DHCP/ping traffic is demonstrated; sustained bandwidth and fault recovery remain unverified. |
 | PL RGMII timing and PHY setup | Automatic PL PHY setup, I/O delays and RX elastic buffering now exist. Validate fitted-board reset behavior, delay variation and trace skew; review IDELAY calibration readiness and abnormal receive recovery. FPGA RX clock-delay branch remains unplaceable. |

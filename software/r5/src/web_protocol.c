@@ -17,17 +17,21 @@ int web_parse(const char *data,size_t length,struct web_request *out)
     char version[16], extra; struct web_request r={0};
     if (sscanf(buf,"%7s %63s %15s %c",r.method,r.path,version,&extra)!=3 ||
         (strcmp(version,"HTTP/1.1") && strcmp(version,"HTTP/1.0"))) return -1;
-    unsigned body=0; int seen=0, marker=0;
+    unsigned body=0; int seen=0, marker=0, auth_seen=0;
     for (char *p=line+2;p<end;) {
         char *next=strstr(p,"\r\n"); if (!next) return -1; *next=0;
         char *colon=strchr(p,':'); if (!colon) return -1;
         *colon=0; for (char *q=p;*q;q++) *q=(char)tolower((unsigned char)*q);
         char *value=colon+1; while (*value==' ' || *value=='\t') value++;
+        if (!strcmp(p,"authorization")) {
+            if (auth_seen++ || strlen(value)>=sizeof(r.authorization)) return -1;
+            strcpy(r.authorization,value);
+        }
         if (!strcmp(p,"transfer-encoding")) return -1;
         if (!strcmp(p,"content-length")) {
             if (seen++ || !isdigit((unsigned char)*value)) return -1;
             char *tail; unsigned long n=strtoul(value,&tail,10);
-            if (*tail || n>64) return -1;
+            if (*tail || n>(!strcmp(r.path,"/api/config")?512u:64u)) return -1;
             body=(unsigned)n;
         }
         if (!strcmp(p,"x-kr260-request") && !strcmp(value,"1")) marker=1;
@@ -37,6 +41,10 @@ int web_parse(const char *data,size_t length,struct web_request *out)
     if (length!=header+body) return -1;
     if (!strcmp(r.method,"POST")) {
         if (!marker || !seen || !body) return -1;
+        if (!strcmp(r.path,"/api/config")) {
+            if (!config_form(buf+header,&r.settings,&r.credentials)) return -1;
+            *out=r;return 1;
+        }
         unsigned fields=0;
         for (char *p=buf+header;*p;) {
             char *eq=strchr(p,'='); if (!eq) return -1;

@@ -16,7 +16,8 @@ _UNDEF_STACK_SIZE = DEFINED(_UNDEF_STACK_SIZE) ? _UNDEF_STACK_SIZE : 1024;
  * Fabric packet pool 0x10000000..0x1007ffff is deliberately excluded. */
 MEMORY {
  psu_r5_0_atcm_MEM_0 (rwx) : ORIGIN = 0x00000000, LENGTH = 0x10000
- r5_ddr (rwx) : ORIGIN = 0x20000000, LENGTH = 0x01ff8000
+ r5_ddr (rwx) : ORIGIN = 0x20000000, LENGTH = 0x01e00000
+ r5_usb (rw) : ORIGIN = 0x21e00000, LENGTH = 0x100000
  r5_dma (rw) : ORIGIN = 0x21ff8000, LENGTH = 0x8000
 }
 
@@ -249,6 +250,12 @@ SECTIONS
 
 /* Dedicated MPU region: normal non-cacheable, shareable, execute-never.
  * Explicitly initialized by fabric_dma_init; excluded from startup BSS. */
+.usb_nocache (NOLOAD) : {
+   __usb_nocache_start = .;
+   . += LENGTH(r5_usb);
+   __usb_nocache_end = .;
+} > r5_usb
+
 .dma_nocache (NOLOAD) : {
    __dma_nocache_start = .;
    KEEP (*(.dma_nocache))

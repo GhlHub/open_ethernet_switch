@@ -1,7 +1,7 @@
 # Read SFP identity and PHY status through the PL AXI IIC, leaving R5 running.
 # Requires exclusive IIC access (the current R5 firmware does not use this core).
 # No EEPROM data or PHY configuration is written; only read offsets are selected.
-connect -url [expr {[llength $argv] ? [lindex $argv 0] : "tcp:10.0.1.109:3121"}]
+connect -url [expr {[llength $argv] ? [lindex $argv 0] : "tcp:10.0.1.107:3121"}]
 targets -set -filter {name =~ "PSU"}
 proc iic_rd {off} {return [mrd -force -value [expr {0x80030000+$off}]]}
 proc iic_wr {off value} {mwr -force [expr {0x80030000+$off}] $value}

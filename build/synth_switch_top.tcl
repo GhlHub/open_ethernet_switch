@@ -1,15 +1,12 @@
 # Out-of-context synthesis of the assembled digital switch (switch_top).
 # Run from build/:  vivado -mode batch -source synth_switch_top.tcl -nolog -nojournal
-# File list is shared with the simulation Makefile (see switch_top_files.f);
-# paths are relative to this directory.
+# IP manifests are shared with simulation, packaging and the board build.
 set part xck26-sfvc784-2LV-c
 set here [file dirname [file normalize [info script]]]
 create_project -in_memory -part $part
-set fh [open $here/switch_top_files.f]
-foreach f [split [read $fh] "\n"] {
-  if {$f ne ""} { read_verilog -sv [file normalize $here/$f] }
+foreach f [split [exec python3 $here/../scripts/ip_sources.py --assembly] "\n"] {
+  if {$f ne ""} { read_verilog -sv $f }
 }
-close $fh
 set stats_generics {}
 foreach option {STATS_DDR STATS_DEBUG} {
   set value 0

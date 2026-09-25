@@ -1,4 +1,5 @@
 #include "board.h"
+#include "config.h"
 #include "statistics.h"
 #include "snmp.h"
 #include "web.h"
@@ -8,6 +9,7 @@
 static void startup(void *arg)
 {
     (void)arg;
+    settings_init();
     configASSERT(xTaskCreate(statistics_task,"stats",1024,NULL,3,NULL)==pdPASS);
     configASSERT(xTaskCreate(sensors_task,"sensors",1024,NULL,1,NULL)==pdPASS);
     network_start();

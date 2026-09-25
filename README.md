@@ -3,7 +3,8 @@
 A work-in-progress FPGA Ethernet switch for the AMD Kria KR260, with an initial R5
 FreeRTOS control plane. The current RTL joins port adapters, MAC
 learning/lookup/aging, and a shared DDR packet-buffer architecture under
-`rtl/switch_top.sv`.
+the reusable blocks described in [`ip_repo`](ip_repo/README.md), with
+`rtl/switch_top.sv` retaining the board-facing wiring interface.
 
 The intended port map is two PS GEM ports, two PL Ethernet ports, one SFP port,
 and one virtual CPU port. **The current SFP design is 1G 1000BASE-X, not 10GbE.**
@@ -37,6 +38,7 @@ endpoint with zero SFP receive errors. See [SFP results](docs/sfp-debug.md).
 **Sustained throughput, fault recovery, remaining CDC review and complete SFP
 hardware validation remain pending.**
 
+- [IP partitioning, packaging and verification](docs/ip-partitioning.md)
 - [Architecture diagrams and packet flow](docs/architecture.md)
 - [Memory map, cache policy and ownership](docs/memory-map.md)
 - [Statistics and environmental monitoring](docs/statistics.md)
@@ -44,6 +46,8 @@ hardware validation remain pending.**
 - [Web port configuration and live statistics](docs/web-interface.md)
 - [PS Ethernet speeds and full-duplex advertisement](docs/ps-ethernet-speeds.md)
 - [R5 FreeRTOS startup, timers and networking](software/r5/README.md)
+- [Persistent settings and administrator authentication](docs/configuration.md)
+- [Standalone R5 USB microSD storage](docs/usb-storage.md)
 - [Source inventory and development backlog](docs/inventory.md)
 - [Board wiring, clock plan, and integration gaps](docs/board-integration.md)
 - [GEM1 ILA debugging and transmit fixes](docs/gem1-debug.md)
@@ -54,20 +58,32 @@ hardware validation remain pending.**
 
 ## Current management interface
 
-The deployed R5 firmware serves [port configuration](http://10.0.1.214/configuration)
-and [live statistics](http://10.0.1.214/statistics) without login. Statistics
-refresh every second; port settings reset to enabled on reboot. The same
-accumulated counters remain available over SNMP, including timeout bank/slot
-diagnostics. The deployed FPGA uses the pipelined physical ingress DMA. See
-[verification](docs/verification.md) for build and board evidence and remaining
-SFP startup-negotiation/statistics-timeout investigations.
+The current DHCP address is **10.0.1.104**. Viewing
+[port configuration](http://10.0.1.104/configuration) and
+[live statistics](http://10.0.1.104/statistics) stays public; configuration
+changes require administrator authentication (default `admin` / `admin`).
+Statistics refresh every second and are also available through SNMP.
+Settings are saved on the FAT32 microSD card through the standalone R5 USB
+host stack. Missing cards or records select defaults; saves require a card.
+See [configuration](docs/configuration.md) for the stored settings and
+supported port capabilities.
+
+The first digital IP partition is deployed with all counter groups enabled.
+It passed the simulation comparisons, routed with WNS +0.018 ns and hold
+slack +0.010 ns, and passed settled CPU/endpoint connectivity checks over
+GEM1 and PL0. Initial DHCP and endpoint packet losses recovered but remain
+unexplained. Physical-port packaging, production block-design migration,
+complete CDC review and broader traffic qualification remain pending.
+See [partitioning](docs/ip-partitioning.md) and
+[verification](docs/verification.md) for scope and evidence.
 
 ## Source layout
 
 | Directory | Contents |
 | --- | --- |
+| `ip_repo/` | Five digital IP manifests, extracted fabric/GEM wrappers, packaging and validation scripts; generated catalog lives in `build/ip_catalog/` |
 | `rtl/board/` | Static KR260 board top and PL assembly joining the generated PS block design |
-| `rtl/switch_top.sv` | Six-port digital switch assembly and aging tick divider |
+| `rtl/switch_top.sv` | Compatibility wiring assembly around the fabric and physical endpoints |
 | `rtl/ps_eth/` | PS GEM external-FIFO to/from AXI-Stream adapters |
 | `rtl/pl_gmii/` | PL 1G MAC, stream/RGMII adapters, Clocking Wizard configuration and behavioral models |
 | `rtl/sfp_pcs/` | 1000BASE-X PCS and auto-negotiation, SFP MAC/PCS wrapper, GTH wrapper/configuration and behavioral model |
@@ -80,7 +96,7 @@ SFP startup-negotiation/statistics-timeout investigations.
 | `constraints/` | PL RGMII and SFP pins, primary clocks, and implementation CDC path bounds |
 | `tb/` | Portable and XSim testbenches, including DMA pipeline/statistics regressions, and an AXI memory model |
 | `build/` | Vivado block-design/synthesis/implementation scripts and digital-switch source list |
-| `third_party/` | FreeRTOS-LTS Git submodule, branch `202604-LTS`; used by the R5 kernel and TCP stack |
+| `third_party/` | FreeRTOS-LTS submodule (`202604-LTS`), libpayload USB subset, FatFs and SHA-256; provenance retained with each dependency |
 | `sim/Makefile` | Icarus simulation, Verilator lint, and XSim targets |
 
 ## Run the existing simulations

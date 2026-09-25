@@ -27,6 +27,13 @@ int main(void)
         assert(web_parse(req,strlen(req),&r)==(i<2?1:-1));
         if(i==0)assert(r.mask==31 && r.advertise[0]==4 && r.advertise[1]==2);
     }
+    const char *cfg="mask=31&adv0=4&adv1=7&adv2=3&adv3=7&sfp=2500&dhcp=0&ip=10.0.1.215&netmask=255.255.255.0&gateway=10.0.1.1";
+    char req[1024];snprintf(req,sizeof(req),"POST /api/config HTTP/1.1\r\nContent-Length: %u\r\nX-KR260-Request: 1\r\n\r\n%s",(unsigned)strlen(cfg),cfg);
+    for (size_t n=0;n<strlen(req);n++) assert(web_parse(req,n,&r)==0);
+    assert(web_parse(req,strlen(req),&r)==1 && !r.credentials && !r.settings.dhcp && r.settings.ip[3]==215 && r.settings.sfp_speed==2500);
+    const char *credentials="&username=operator&salt=00112233445566778899aabbccddeeff&hash=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    snprintf(req,sizeof(req),"POST /api/config HTTP/1.1\r\nContent-Length: %u\r\nX-KR260-Request: 1\r\n\r\n%s%s",(unsigned)(strlen(cfg)+strlen(credentials)),cfg,credentials);
+    assert(web_parse(req,strlen(req),&r)==1 && r.credentials && !strcmp(r.settings.username,"operator"));
     struct statistics_snapshot s={.available=true}; struct sensor_snapshot v={0};
     s.port[0][0]=UINT64_MAX;
     for(unsigned b=0;b<13;b++)for(unsigned i=0;i<16;i++){

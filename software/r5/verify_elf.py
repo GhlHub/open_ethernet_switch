@@ -42,6 +42,8 @@ for name, size in [('rx', 16*64), ('tx', 2*64),
                    ('rx_data', 16*1536), ('tx_data', 2*1536)]:
     addr = symbols[name]
     assert addr % 64 == 0 and base <= addr and addr + size <= end, name
-assert symbols['__bss_end__'] <= base and symbols['_stack'] <= base
+assert symbols['__usb_nocache_start'] == 0x21e00000
+assert symbols['__usb_nocache_end'] == 0x21f00000
+assert symbols['__bss_end__'] <= 0x21e00000 and symbols['_stack'] <= 0x21e00000
 print('PASS: DMA descriptors/buffers isolated in aligned 32 KiB non-cacheable region')
 print('PASS: R5 entry, RTOS low vectors, resolved symbols and reserved memory ranges')

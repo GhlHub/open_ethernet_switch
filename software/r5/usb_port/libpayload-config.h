@@ -1,0 +1,8 @@
+#pragma once
+#define CONFIG(x) CONFIG_##x
+#define CONFIG_LP_USB_PCI 0
+#define CONFIG_LP_ARCH_X86 0
+#define CONFIG_LP_USB_XHCI_MTK_QUIRK 0
+#define CONFIG_LP_USB_HID 0
+#define CONFIG_LP_USB_MSC 1
+#define CONFIG_LP_USB_HUB 1

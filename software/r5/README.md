@@ -27,8 +27,8 @@ Implemented:
   snapshots: the RTL pollers still run about every 10 ms. Firmware does not
   compete for their MDIO masters. SFP uses PCS state and module/LOS/fault
   signals, since it has no copper MDIO PHY.
-- Only valid 1 Gb/s full-duplex links are admitted. PS PHY advertisement is
-  restricted accordingly; lower-speed PL links remain disabled. PHY read
+- GEM1 supports 10/100/1000 full duplex; GEM0 and the PL/SFP paths currently
+  admit only 1 Gb/s full duplex. Lower-speed PL links remain disabled. PHY read
   failures disable the affected link; failed PL hardware polls now invalidate
   their cached state. PS PHY initialization failures are retried on later polls.
 - Link-down writes `LINK_CLR` once per transition. Re-enable waits at least
@@ -43,6 +43,23 @@ Implemented:
   assigned (defaults are zero). The stack may report its default-address event;
   firmware does not treat that event as a DHCP lease. Link recovery starts a
   fresh attempt. Retry policy uses the stack's success/failure trace callbacks.
+
+## Persistent settings
+
+The CPU uses the first of five allocated board MACs, `00:0a:35:0f:37:45`.
+microSD settings include the full allocation, administrator password verifier,
+port preferences and DHCP/static IPv4. The configuration webpage and
+`scripts/configure_switch.py` save them. See [configuration](../../docs/configuration.md)
+for supported speeds, storage ownership, authentication status and recovery.
+Build with `CONFIG_RECOVERY=1` only for a deliberate JTAG recovery session;
+it bypasses saved settings without automatic card writes.
+
+Storage stays entirely on R5: USB0 xHCI, the onboard hub/card reader, and FatFs.
+No card or no valid configuration selects defaults; saves require a FAT card.
+Viewing stays public, and configuration writes require `admin` / `admin` by
+factory default. USB DMA has a separate 1 MiB non-cacheable reservation.
+See [USB implementation and board verification](../../docs/usb-storage.md).
+The saved DHCP configuration currently acquires `10.0.1.104`.
 
 ## Build
 
@@ -72,12 +89,13 @@ already be complete, and the fabric must be programmed and clocked. Calling
 `main()` alone on an uninitialized PS is not supported. Platform creation also
 generates an FSBL, but this change does not package or flash a BOOT.BIN.
 
-The development board's hardware server is `10.0.1.109:3121`; its UART telnet
-bridge is `10.0.1.109:2323`. After building the platform, firmware and bitstream,
+The development board's hardware server is `10.0.1.107:3121`; its UART telnet
+bridge is `10.0.1.107:2323`. After building the platform, firmware and bitstream,
 start a volatile JTAG session from the repository root:
 
 ```sh
-/tools/Xilinx/2026.1/Vitis/bin/xsdb software/r5/boot_jtag.tcl
+/tools/Xilinx/2026.1/Vitis/bin/xsdb software/r5/boot_jtag.tcl tcp:10.0.1.107:3121 \
+  build/r5/ingress_pipeline_validation/kr260_ingress_pipeline.bit
 /tools/Xilinx/2026.1/Vitis/bin/xsdb software/r5/status_jtag.tcl
 ```
 
@@ -132,7 +150,7 @@ Values such as `xTickCount`, driver state and the UART software log can therefor
 appear stale in `status_jtag.tcl`. Use UART output and live network traffic for
 firmware liveness; MMIO and the non-cacheable DMA region remain directly readable.
 
-Development MAC: `02:4b:52:32:36:01`; assign a unique address per board before
+Board CPU MAC: `00:0a:35:0f:37:45`; use a separate allocation per board before
 connecting multiple boards. DHCP transaction/TCP sequence randomness is a
 noncryptographic timestamp-seeded PRNG; do not use it for security keys.
 The regenerated design enables **PS UART1 at `0xff010000`**, on MIO36/MIO37

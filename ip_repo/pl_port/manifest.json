@@ -1,0 +1,24 @@
+{
+  "name": "pl_port",
+  "version": "1.0",
+  "description": "PL copper MAC packet endpoint (board RGMII PHY shell external)",
+  "top": "pl_gmii_mac_top",
+  "sources": [
+    "rtl/common/async_fifo.sv",
+    "rtl/stats/stats_bank.sv",
+    "rtl/pl_gmii/open_eth_mac_1g_switch.sv",
+    "rtl/pl_gmii/mac_rxd_to_switch_ingress.sv",
+    "rtl/pl_gmii/switch_egress_to_mac_txd.sv",
+    "rtl/pl_gmii/pl_gmii_mac_top.sv"
+  ],
+  "clocks": {
+    "clk": [
+      "s_axis",
+      "m_axis"
+    ],
+    "axis_clk": [
+      "s_axi"
+    ],
+    "gtx_clk": []
+  }
+}
