@@ -1,0 +1,40 @@
+{
+  "tests": [
+    {
+      "top": "tb_ps_gem_axis_bridge",
+      "defines": [
+        "TEST_PACKAGED_GEM"
+      ],
+      "parameters": {
+        "GEM_HALF_NS": 4
+      },
+      "name": "bridge_4ns"
+    },
+    {
+      "top": "tb_ps_gem_axis_bridge",
+      "defines": [
+        "TEST_PACKAGED_GEM"
+      ],
+      "parameters": {
+        "GEM_HALF_NS": 20
+      },
+      "name": "bridge_20ns"
+    },
+    {
+      "top": "tb_ps_gem_axis_bridge",
+      "defines": [
+        "TEST_PACKAGED_GEM"
+      ],
+      "parameters": {
+        "GEM_HALF_NS": 200
+      },
+      "name": "bridge_200ns"
+    },
+    {
+      "top": "tb_statistics_ports",
+      "support": [
+        "rtl/stats/stats_axis.sv"
+      ]
+    }
+  ]
+}

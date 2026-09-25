@@ -67,3 +67,50 @@ The board script retains its usual `build/vivado_kr260` default; the
 explicit output override preserves the existing project during migration.
 Firmware retains the existing matching `STATS_DDR`/`STATS_DEBUG` options
 and register ABI. No firmware changes are required by this partition.
+
+## Independent IP regression suites
+
+Each package owns a `tests.json` list, run by `scripts/check_ip_tests.py`.
+The runner compiles only that IP's manifest dependencies plus explicitly
+listed test-boundary support. It independently elaborates the public top,
+then runs the behavioral cases. `--catalog` uses the staged RTL of that
+specific package after auditing its metadata and source hashes.
+
+```sh
+# All five IPs, from editable sources:
+make -C sim sim-ip-tests
+# One IP while developing it:
+python3 scripts/check_ip_tests.py --core gem_port
+# Run against a generated catalog:
+make -C sim sim-ip-tests-packaged IP_CATALOG=../build/ip_catalog
+# Native + packaged suites, followed by all four whole-switch comparisons:
+make -C sim sim-ip-regression
+```
+
+| Package | Behavioral coverage |
+| --- | --- |
+| GEM | Public wrapper packet/CDC regression at 125/25/2.5 MHz; RX/TX counter accounting |
+| PL | Public MAC loopback/line-rate/counters; adapters, reset/reclock |
+| SFP | Public MAC/PCS loopback; negotiation, clock correction, TX alignment, RX preamble |
+| Fabric | DMA burst pipeline/backpressure/reset; buffer ownership; forwarding/learning/control traffic; CPU DDR transfers; AXI counters |
+| Management | AXI-Lite controls/diagnostics; mailbox CDC, clear races, saturation, response backpressure and stopped-clock retry |
+
+The 19 cases reuse the established self-checking benches. The GEM bench can
+select the public `switch_gem_port` wrapper instead of its bridge leaf.
+Fabric cases exercise constituent blocks; the retained whole-switch miter
+checks their assembly. They do not constitute a new randomized six-port
+concurrent scoreboard or physical timing/CDC sign-off.
+
+Each compile/simulation has a wall-clock timeout. Nonzero exits, explicit
+FAIL/FATAL/ERROR messages, failed test summaries and missing success markers
+fail the runner, including legacy benches that report failure via `$finish`.
+Per-case logs and a completion-marked JSON report live under
+`build/ip_refactor/ip_tests/{native,packaged}/`. Running a selected core
+replaces that mode's report with the selected run only.
+
+The catalog audit checks VLNV identity, source contents and relocatable
+paths, clock associations, complete AXI/AXI-Stream port mappings and modes,
+and packet-stream widths/directions. Generate a fresh catalog using
+`package.tcl` before testing changed RTL; stale snapshots deliberately fail.
+The existing `validate.tcl` and generated-production-BD equivalence checks
+remain integration gates after packaging or connectivity changes.

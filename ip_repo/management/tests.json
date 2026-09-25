@@ -1,0 +1,16 @@
+{
+  "tests": [
+    {
+      "top": "tb_rx_diag",
+      "support": [
+        "rtl/common/sticky_xdomain.sv"
+      ]
+    },
+    {
+      "top": "tb_statistics",
+      "support": [
+        "rtl/stats/stats_bank.sv"
+      ]
+    }
+  ]
+}

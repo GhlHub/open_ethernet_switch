@@ -1,0 +1,19 @@
+{
+  "tests": [
+    {
+      "top": "tb_sfp_port_top"
+    },
+    {
+      "top": "tb_autoneg_1000base_x"
+    },
+    {
+      "top": "tb_sfp_tx_alignment"
+    },
+    {
+      "top": "tb_sfp_rx_preamble"
+    },
+    {
+      "top": "tb_autoneg_clock_correction"
+    }
+  ]
+}

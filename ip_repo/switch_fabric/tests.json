@@ -1,0 +1,22 @@
+{
+  "tests": [
+    {
+      "top": "tb_ingress_dma_pipeline"
+    },
+    {
+      "top": "tb_buf_mgr_core"
+    },
+    {
+      "top": "tb_mac_forwarding_top"
+    },
+    {
+      "top": "tb_cpu_port_top",
+      "support": [
+        "tb/axi_mem_bfm.sv"
+      ]
+    },
+    {
+      "top": "tb_statistics_axi"
+    }
+  ]
+}

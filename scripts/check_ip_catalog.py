@@ -20,11 +20,17 @@ def check(catalog):
         config = manifest(name)
         directory = catalog / name
         tree = ET.parse(directory / 'component.xml').getroot()
+        for field, value in {'vendor': 'ghlhub.org', 'library': 'ethernet',
+                             'name': name, 'version': config['version']}.items():
+            assert tree.findtext('s:' + field, namespaces=NS) == value, f'{name}: wrong {field}'
+        views = tree.findall('s:model/s:views/s:view/s:modelName', NS)
+        assert views and all(v.text == config['top'] for v in views), f'{name}: wrong HDL top'
         expected = {Path(p).name: ROOT / p for p in config['sources']}
         assert len(expected) == len(config['sources']), f'{name}: ambiguous source names'
         seen = set()
         for node in tree.findall('s:fileSets/s:fileSet/s:file/s:name', NS):
             path = directory / node.text
+            assert not Path(node.text).is_absolute() and path.resolve().is_relative_to(directory.resolve()), f'{name}: nonrelocatable file {path}'
             if path.suffix == '.sv':
                 assert path.name in expected, f'{name}: unexpected RTL {path}'
                 assert digest(path) == digest(expected[path.name]), f'{name}: stale RTL {path}'
@@ -49,6 +55,26 @@ def check(catalog):
         def width(port):
             v = ports[port].find('s:wire/s:vector', NS)
             return 1 if v is None else abs(int(v.findtext('s:left', namespaces=NS)) - int(v.findtext('s:right', namespaces=NS))) + 1
+
+        for bus in associations:
+            interface = buses[bus]
+            kind = interface.find('s:busType', NS).get('{' + NS['s'] + '}name')
+            expected_kind = 'axis' if bus.endswith('_axis') else 'aximm'
+            assert kind == expected_kind, f'{name}/{bus}: incorrect bus type'
+            mapping = {p.findtext('s:logicalPort/s:name', namespaces=NS):
+                       p.findtext('s:physicalPort/s:name', namespaces=NS)
+                       for p in interface.findall('s:portMaps/s:portMap', NS)}
+            expected_mapping = {p[len(bus) + 1:].upper(): p for p in ports if p.startswith(bus + '_')}
+            assert mapping == expected_mapping, f'{name}/{bus}: incomplete or crossed port mapping'
+            master = bus.startswith('m') or bus.startswith('cpu_m')
+            assert interface.find('s:' + ('master' if master else 'slave'), NS) is not None, f'{name}/{bus}: wrong interface mode'
+            if kind == 'axis':
+                assert {'TDATA', 'TKEEP', 'TVALID', 'TREADY', 'TLAST'} <= mapping.keys(), f'{name}/{bus}: incomplete stream'
+                for signal, port in mapping.items():
+                    assert width(port) == {'TDATA': 16, 'TKEEP': 2}.get(signal, 1), f'{name}/{port}: wrong width'
+                    output = master != (signal == 'TREADY')
+                    direction = ports[port].findtext('s:wire/s:direction', namespaces=NS)
+                    assert direction == ('out' if output else 'in'), f'{name}/{port}: wrong direction'
 
         for port in ports:
             if port.endswith('_axis_tdata'):

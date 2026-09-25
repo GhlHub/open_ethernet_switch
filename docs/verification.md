@@ -1,5 +1,37 @@
 # Design inventory verification
 
+## 2026-09-25 independent IP verification
+
+Added package-owned `tests.json` manifests and a shared isolated runner.
+Each IP public top is elaborated separately. Behavioral cases consume that
+package's manifest sources, or its audited catalog snapshot, with explicit
+external test-support dependencies. The GEM multirate bench now also runs
+through the public `switch_gem_port` wrapper.
+
+- All 19 cases passed against native RTL and the existing catalog snapshots.
+- A fresh Vivado catalog was generated at
+  `build/ip_refactor/ip_suite_catalog`; integrity and expanded metadata audits
+  passed, and all 19 cases passed using that fresh catalog. Packaging retains existing warnings about SystemVerilog tops,
+  unspecified clock frequencies, clocks without associated buses and missing
+  product-guide files; this is not a warning-free packaging claim.
+- All four native whole-switch optional-counter comparisons passed again:
+  29,922 sampled clock events and 114 outputs per configuration.
+- The deployed production BD audit passed unchanged register-map, catalog,
+  packet/control/DDR/GEM/IRQ wiring checks.
+- Deliberately corrupted temporary catalogs were rejected for wrong version,
+  crossed stream mapping, wrong stream width, missing clock association,
+  escaping source path and stale RTL.
+
+The runner rejects simulator failure messages even when legacy benches exit
+zero, requires a success marker, imposes per-command timeouts and writes a
+completion-marked JSON report. Logs are in `build/ip_refactor/ip_tests/`.
+See [coverage and commands](../ip_repo/README.md#independent-ip-regression-suites).
+This change affects verification tooling and testbench selection only;
+production RTL and firmware are unchanged from the board-tested milestone.
+A randomized concurrent six-port scoreboard and full physical CDC/timing
+sign-off remain outstanding.
+
+
 ## 2026-09-25 production catalog board acceptance
 
 Loaded the production catalog bitstream identified below through hw_server

@@ -161,6 +161,15 @@ with routed WNS +0.018 ns and hold slack +0.011 ns; see
 It was downloaded over JTAG and passed settled GEM1/PL0 connectivity, SNMP
 and HTTP checks; see the board acceptance results in verification.md.
 
+## Independent package verification
+
+Each digital IP now owns a test manifest. `make -C sim sim-ip-regression`
+runs its focused tests from native and packaged RTL, then the existing
+whole-switch comparisons for all four counter configurations. Public tops
+are independently elaborated; GEM/PL/SFP and management have direct boundary
+benches, while fabric behavior is checked through its constituent suites
+and assembly miter. See [suite coverage and commands](../ip_repo/README.md#independent-ip-regression-suites).
+
 ## Remaining migration and acceptance work
 
 The reusable **digital** IP boundaries are implemented. The complete

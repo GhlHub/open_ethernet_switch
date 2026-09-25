@@ -86,7 +86,14 @@ module tb_ps_gem_axis_bridge #(parameter integer GEM_HALF_NS = 4);
   logic       dma_tx_end_tog;
   logic       dma_tx_status_tog;
 
+`ifdef TEST_PACKAGED_GEM
+  `define GEM_BRIDGE dut.u_bridge
+  switch_gem_port dut (
+    .stats_req(2'b0), .stats_select(4'b0), .stats_acks(), .stats_values(),
+`else
+  `define GEM_BRIDGE dut
   ps_gem_axis_bridge dut (
+`endif
     .clk                 (clk),
     .rst_n               (rst_n),
     .gem_rx_clk          (gem_clk),
@@ -139,8 +146,8 @@ module tb_ps_gem_axis_bridge #(parameter integer GEM_HALF_NS = 4);
     return c;
   endfunction
   always @(posedge clk) begin
-    if (rst_n && pop16(16'(dut.u_tx.permit_gray_q) ^ permit_prev) > 1) permit_bad++;
-    permit_prev <= 16'(dut.u_tx.permit_gray_q);
+    if (rst_n && pop16(16'(`GEM_BRIDGE.u_tx.permit_gray_q) ^ permit_prev) > 1) permit_bad++;
+    permit_prev <= 16'(`GEM_BRIDGE.u_tx.permit_gray_q);
   end
 
   int errors = 0;
@@ -762,3 +769,5 @@ module tb_ps_gem_axis_bridge #(parameter integer GEM_HALF_NS = 4);
   end
 
 endmodule
+
+`undef GEM_BRIDGE

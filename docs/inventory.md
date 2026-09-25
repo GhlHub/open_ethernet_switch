@@ -1,5 +1,14 @@
 # Design inventory and pending development
 
+## IP repository verification suites (2026-09-25)
+
+All five digital packages own focused test manifests. The runner checks
+native or packaged dependencies, elaborates public tops and rejects legacy
+simulator failure messages as well as nonzero exits and timeouts. Catalog
+audits also check identity, relocation and bus mappings. Whole-switch
+counter-option equivalence remains required. See
+[IP repository commands and coverage](../ip_repo/README.md#independent-ip-regression-suites).
+
 ## IP repository partitioning (2026-09-25)
 
 Five digital IP manifests and reproducible Vivado packaging now live in

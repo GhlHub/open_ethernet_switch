@@ -1,6 +1,19 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := sim
 
+IP_CATALOG ?= ../build/ip_catalog
+.PHONY: sim-ip-tests sim-ip-tests-packaged check-ip-catalog sim-ip-regression
+sim-ip-tests:
+	python3 ../scripts/check_ip_tests.py
+
+check-ip-catalog:
+	python3 ../scripts/check_ip_catalog.py $(IP_CATALOG)
+
+sim-ip-tests-packaged:
+	python3 ../scripts/check_ip_tests.py --catalog $(IP_CATALOG)
+
+sim-ip-regression: sim-ip-tests sim-ip-tests-packaged sim-ip-equivalence
+
 .PHONY: sim-ip-equivalence
 sim-ip-equivalence:
 	@set -e; for ddr in 0 1; do for debug in 0 1; do \

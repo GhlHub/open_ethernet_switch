@@ -1,0 +1,13 @@
+{
+  "tests": [
+    {
+      "top": "tb_pl_mac_linerate"
+    },
+    {
+      "top": "tb_pl_gmii_adapters"
+    },
+    {
+      "top": "tb_mac_reset_reclock"
+    }
+  ]
+}
