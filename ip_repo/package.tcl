@@ -26,7 +26,7 @@ foreach name {gem_port pl_port sfp_port switch_fabric management} {
     ipx::package_project -root_dir $dest -vendor ghlhub.org -library ethernet -taxonomy /Networking -import_files -set_current true
     set core [ipx::current_core]
     set_property name $name $core
-    set_property version 1.0 $core
+    set_property version [exec python3 -c {import json,sys; print(json.load(open(sys.argv[1]))["version"])} $root/ip_repo/$name/manifest.json] $core
     set_property display_name "Open Ethernet Switch: $name" $core
     set_property description [exec python3 -c {import json,sys; print(json.load(open(sys.argv[1]))['description'])} $root/ip_repo/$name/manifest.json] $core
     set_property supported_families {zynquplus Production} $core

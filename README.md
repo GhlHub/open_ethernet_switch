@@ -76,7 +76,11 @@ unexplained. The production block design now instantiates the digital catalog IP
 has passed JTAG deployment and settled connectivity checks.
 Physical-port packaging, complete CDC review and broader traffic
 qualification remain pending.
-See [partitioning](docs/ip-partitioning.md) and
+The latest source additionally moves the statistics decoder into management
+1.1 and passes fresh catalog/BD and simulation acceptance; that update has
+not yet been implemented or downloaded.
+See [interface contracts](ip_repo/INTERFACES.md),
+[partitioning](docs/ip-partitioning.md) and
 [verification](docs/verification.md) for scope and evidence.
 
 ## Source layout

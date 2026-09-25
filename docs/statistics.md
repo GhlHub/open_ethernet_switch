@@ -27,8 +27,8 @@ STATS_DDR=1 STATS_DEBUG=1 /tools/Xilinx/2026.1/Vivado/bin/vivado \
 make -C software/r5 STATS_DDR=1 STATS_DEBUG=1
 ```
 
-Omit the options for the standard build. The hardware script records them as
-`kr260_top` generics; they propagate through the board wrapper into the switch.
+Omit the options for the standard build. The hardware script sets matching parameters on the catalog fabric and
+management cells in the production block design.
 Changing R5 options updates a configuration dependency and rebuilds objects;
 a clean build is not required. Complete implementation/timing checks before
 programming a new image.

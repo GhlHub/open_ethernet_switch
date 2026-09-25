@@ -12,6 +12,10 @@ retry, settled CPU/endpoint forwarding and SNMP/web checks on GEM1/PL0. See
 [verification](verification.md) for build-specific evidence and timing/CDC
 limitations, and [partitioning](ip-partitioning.md) for migration scope.
 
+Management 1.1 now includes the statistics decoder in source and passes fresh
+BD/simulation acceptance. It has not been routed or downloaded; deployed
+results above refer to the preceding management 1.0 image.
+
 ## Reference material and revision scope
 
 The local AMD XTP743 download contains

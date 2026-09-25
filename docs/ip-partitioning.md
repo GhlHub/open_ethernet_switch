@@ -182,10 +182,9 @@ is not complete:
    this requires a separate physical timing check.
 2. Move the GTH, PCS clock generator and SFP sideband shell into the SFP
    package, with reproducible vendor-IP dependencies and scoped clocks.
-3. Package the statistics bank decoder with the management assembly.
-   Production already uses catalog endpoints/fabric/management; its
-   unchanged decoder is currently a small BD module reference. The
-   separate `partition_validation.bd` remains an interface test fixture.
+3. Management 1.1 now includes the statistics decoder. The separate
+   `partition_validation.bd` remains an interface test fixture; keep its
+   clock/address defaults distinct from production.
 4. Add a six-port concurrent packet scoreboard with randomized DDR
    backpressure/errors, exhaustion, link/reset transitions and ownership
    invariants. Existing subsystem tests and the finite comparison do not
@@ -200,3 +199,18 @@ DHCP, CPU connectivity, web/SNMP access and settled endpoint forwarding
 passed on the connected GEM1/PL0 path. Initial DHCP/endpoint losses were
 observed before recovery; see [hardware results](verification.md). The
 remaining all-port and speed-matrix acceptance work still applies.
+
+## Management 1.1 and reproducible acceptance
+
+The statistics router is now inside `switch_management`; production no longer
+uses a router module reference. Public per-bank signals replace the four raw
+mailbox wires. Firmware ABI, register offsets and bank numbering are unchanged.
+A public-wrapper test covers all 256 index values, clear-on-read isolation,
+invalid banks, saturation, backpressure and stopped-clock timeout recovery.
+
+[Interface contracts](../ip_repo/INTERFACES.md) describe the current packages.
+`python3 scripts/verify_ip_flow.py` regenerates a catalog and production BD in
+fresh output directories, then runs package and assembly regressions. Use
+`--implement` to add PNR/bitstream generation and routed reports. The production
+packet miter substitutes the CSR source with its existing mailbox stimulus;
+the separate management-wrapper test verifies AXI-Lite-to-bank behavior.

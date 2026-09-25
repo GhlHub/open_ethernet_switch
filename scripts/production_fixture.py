@@ -24,7 +24,7 @@ def fixture(bd, out):
     native = subprocess.check_output(['git', 'show', f'{NATIVE}:rtl/switch_top.sv'], cwd=ROOT, text=True)
     board = subprocess.check_output(['git', 'show', f'{NATIVE}:rtl/board/kr260_pl_top.sv'], cwd=ROOT, text=True)
     generated = (bd / 'sim/system.v').read_text()
-    actual = {cell: connections(generated, cell) for cell in [*CELLS, 'management', 'stats_router']}
+    actual = {cell: connections(generated, cell) for cell in [*CELLS, 'management']}
     expected = {cell: connections(native, inst) for cell, inst in CELLS.items()}
     header = native[:native.index('\n);') + 3]
     ports = dict((name, direction) for direction, name in re.findall(
@@ -35,7 +35,7 @@ def fixture(bd, out):
     def rename(text):
         return re.sub(r'\b\w+\b', lambda m: 'bd_' + m[0] if m[0] in wires else m[0], text)
     instances = []
-    for cell in [*CELLS, 'stats_router']:
+    for cell in CELLS:
         inst = re.search(r'^  (\w+) ' + cell + r'\s*\([\s\S]*?\);', generated, re.M)
         assert inst, cell
         # Rename only connection expressions, never a formal pin name.
@@ -55,9 +55,14 @@ def fixture(bd, out):
                 internal.setdefault(net, []).append(value)
     for net, values in internal.items():
         assert len(values) == 2 and len(set(values)) == 1 and values[0], (net, values)
+    router_ports = ['stats_select', 'gem0_req', 'gem0_acks', 'gem0_values',
+                    'gem1_req', 'gem1_acks', 'gem1_values', 'pl0_req', 'pl0_acks',
+                    'pl0_values', 'pl1_req', 'pl1_acks', 'pl1_values', 'sfp_req',
+                    'sfp_acks', 'sfp_values', 'fabric_req', 'fabric_acks', 'fabric_values']
+    router_connections = [f'.{p}({rename(actual["management"][p])})' for p in router_ports]
     for pin in ['stats_request', 'stats_index', 'stats_ack', 'stats_value']:
-        boundary[pin] = [actual['stats_router'][pin]]
-        assert actual['management'][pin] == actual['stats_router'][pin], pin
+        router_connections.append(f'.{pin}({pin})')
+    instances.append('switch_stats_router stats_router (' + ', '.join(router_connections) + ');')
     # Check management-to-fabric controls against the previous board assembly.
     board_switch = connections(board, 'u_switch')
     board_mgmt = connections(board, 'u_rx_diag')
@@ -67,6 +72,8 @@ def fixture(bd, out):
                 assert actual['management'][mp] in boundary[sp], (mp, sp)
     assignments = []
     for port, direction in ports.items():
+        if port in ['stats_request', 'stats_index', 'stats_ack', 'stats_value']:
+            continue
         values = boundary.get(port, [])
         assert values, f'unmapped switch port {port}'
         assert len(set(values)) == 1, (port, values)
@@ -80,7 +87,7 @@ def fixture(bd, out):
     # Copy only wrappers needed by the digital fixture. Accelerate aging and PCS
     # timers for simulation; production parameters remain unchanged on disk.
     wrappers = []
-    for cell in [*CELLS, 'stats_router']:
+    for cell in CELLS:
         paths = list(bd.glob(f'ip/system_{cell}_0/sim/*.[sv]*'))
         assert len(paths) == 1, (cell, paths)
         text = paths[0].read_text()

@@ -33,8 +33,7 @@ flowchart TB
             PL[pl_port ×2]
             SFP[sfp_port: 1000BASE-X MAC and PCS]
             FAB[switch_fabric: forwarding, buffer manager,<br/>ingress/egress DMA and CPU virtual port]
-            MGMT[management: registers and snapshot mailbox]
-            ROUTER[Statistics bank router: module reference]
+            MGMT[management 1.1: registers, snapshot mailbox and bank decoder]
             CTL[Control SmartConnect]
             HP0[DDR SmartConnect → PS HP0]
             DMA[CPU AXI DMA]
@@ -55,11 +54,10 @@ flowchart TB
             CTL --> SFP
             CTL --> DMA
             CTL --> IIC
-            MGMT <--> ROUTER
-            ROUTER <--> GEM
-            ROUTER <--> PL
-            ROUTER <--> SFP
-            ROUTER <--> FAB
+            MGMT <--> GEM
+            MGMT <--> PL
+            MGMT <--> SFP
+            MGMT <--> FAB
             MGMT <-->|Link, forwarding and CPU controls| FAB
         end
         RGMII <-->|GMII| PL

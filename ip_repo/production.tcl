@@ -1,13 +1,13 @@
 # Production digital IP assembly. Connections preserve the native switch ABI.
 # Sourced after PS, DMA and board-facing ports exist, before address assignment.
 foreach {cell type} {fabric switch_fabric gem0 gem_port gem1 gem_port pl0 pl_port pl1 pl_port sfp sfp_port management management} {
-    create_bd_cell -type ip -vlnv ghlhub.org:ethernet:$type:1.0 $cell
+    set version [exec python3 -c {import json,sys; print(json.load(open(sys.argv[1]))["version"])} $root/ip_repo/$type/manifest.json]
+    create_bd_cell -type ip -vlnv ghlhub.org:ethernet:$type:$version $cell
 }
 foreach cell {fabric management} {
     set_property -dict [list CONFIG.STATS_DDR $stats_ddr CONFIG.STATS_DEBUG $stats_debug] [get_bd_cells $cell]
 }
 set_property -dict {CONFIG.AN_BREAK_LINK_CYCLES 1250000 CONFIG.AN_LINK_TIMER_CYCLES 1250000 CONFIG.AN_IDLE_DETECT_CYCLES 1250000} [get_bd_cells sfp]
-create_bd_cell -type module -reference switch_stats_router stats_router
 # Replace former RTL-facing interfaces with catalog IP connections.
 proc replace_external_interface {name pin} {
     set port [get_bd_intf_ports $name]
@@ -81,13 +81,13 @@ digital_net cpu_ovr_go_axi 0 {fabric/cpu_tx_ovr_go_i management/cpu_tx_ovr_go_o}
 digital_net cpu_rx_tag 0 {fabric/cpu_rx_ingress_port_o management/cpu_rx_tag_i}
 digital_net cpu_rx_tag_valid 0 {fabric/cpu_rx_ingress_valid_o management/cpu_rx_tag_valid_i}
 digital_net cpu_rx_tag_pop 0 {fabric/cpu_rx_ingress_pop_i management/cpu_rx_tag_pop_o}
-digital_net fabric_req 0 {fabric/stats_req stats_router/fabric_req}
-digital_net stats_select 0 {fabric/stats_select gem0/stats_select gem1/stats_select pl0/stats_select pl1/stats_select sfp/stats_select stats_router/stats_select}
-digital_net fabric_acks 0 {fabric/stats_acks stats_router/fabric_acks}
-digital_net fabric_values 0 {fabric/stats_values stats_router/fabric_values}
-digital_net gem0_req 0 {gem0/stats_req stats_router/gem0_req}
-digital_net gem0_acks 0 {gem0/stats_acks stats_router/gem0_acks}
-digital_net gem0_values 0 {gem0/stats_values stats_router/gem0_values}
+digital_net fabric_req 0 {fabric/stats_req management/fabric_req}
+digital_net stats_select 0 {fabric/stats_select gem0/stats_select gem1/stats_select pl0/stats_select pl1/stats_select sfp/stats_select management/stats_select}
+digital_net fabric_acks 0 {fabric/stats_acks management/fabric_acks}
+digital_net fabric_values 0 {fabric/stats_values management/fabric_values}
+digital_net gem0_req 0 {gem0/stats_req management/gem0_req}
+digital_net gem0_acks 0 {gem0/stats_acks management/gem0_acks}
+digital_net gem0_values 0 {gem0/stats_values management/gem0_values}
 digital_net gem0_rx_clk 1 {gem0/gem_rx_clk}
 digital_net gem0_rx_rst_n 1 {gem0/gem_rx_rst_n}
 digital_net gem0_tx_clk 1 {gem0/gem_tx_clk}
@@ -114,9 +114,9 @@ digital_net gem0_tx_r_control_o 0 {gem0/tx_r_control_o}
 digital_net gem0_dma_tx_end_tog_i 0 {gem0/dma_tx_end_tog_i}
 digital_net gem0_dma_tx_status_tog_o 0 {gem0/dma_tx_status_tog_o}
 digital_net gem0_tx_r_status_i 0 {gem0/tx_r_status_i}
-digital_net gem1_req 0 {gem1/stats_req stats_router/gem1_req}
-digital_net gem1_acks 0 {gem1/stats_acks stats_router/gem1_acks}
-digital_net gem1_values 0 {gem1/stats_values stats_router/gem1_values}
+digital_net gem1_req 0 {gem1/stats_req management/gem1_req}
+digital_net gem1_acks 0 {gem1/stats_acks management/gem1_acks}
+digital_net gem1_values 0 {gem1/stats_values management/gem1_values}
 digital_net gem1_rx_clk 1 {gem1/gem_rx_clk}
 digital_net gem1_rx_rst_n 1 {gem1/gem_rx_rst_n}
 digital_net gem1_tx_clk 1 {gem1/gem_tx_clk}
@@ -143,9 +143,9 @@ digital_net gem1_tx_r_control_o 0 {gem1/tx_r_control_o}
 digital_net gem1_dma_tx_end_tog_i 0 {gem1/dma_tx_end_tog_i}
 digital_net gem1_dma_tx_status_tog_o 0 {gem1/dma_tx_status_tog_o}
 digital_net gem1_tx_r_status_i 0 {gem1/tx_r_status_i}
-digital_net pl0_req 0 {pl0/stats_request stats_router/pl0_req}
-digital_net pl0_acks 0 {pl0/stats_ack stats_router/pl0_acks}
-digital_net pl0_values 0 {pl0/stats_value stats_router/pl0_values}
+digital_net pl0_req 0 {pl0/stats_request management/pl0_req}
+digital_net pl0_acks 0 {pl0/stats_ack management/pl0_acks}
+digital_net pl0_values 0 {pl0/stats_value management/pl0_values}
 digital_net gtx_clk_pl0 1 {pl0/gtx_clk}
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant mac_enable
 set_property -dict {CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 1} [get_bd_cells mac_enable]
@@ -158,9 +158,9 @@ digital_net pl0_gmii_tx_en 1 {pl0/gmii_tx_en}
 digital_net pl0_gmii_tx_er 1 {pl0/gmii_tx_er}
 digital_net pl0_interrupt 0 {pl0/interrupt}
 digital_net pl0_mac_irq 0 {pl0/mac_irq}
-digital_net pl1_req 0 {pl1/stats_request stats_router/pl1_req}
-digital_net pl1_acks 0 {pl1/stats_ack stats_router/pl1_acks}
-digital_net pl1_values 0 {pl1/stats_value stats_router/pl1_values}
+digital_net pl1_req 0 {pl1/stats_request management/pl1_req}
+digital_net pl1_acks 0 {pl1/stats_ack management/pl1_acks}
+digital_net pl1_values 0 {pl1/stats_value management/pl1_values}
 digital_net gtx_clk_pl1 1 {pl1/gtx_clk}
 digital_net pl1_gmii_rxd 1 {pl1/gmii_rxd}
 digital_net pl1_gmii_rx_dv 1 {pl1/gmii_rx_dv}
@@ -170,9 +170,9 @@ digital_net pl1_gmii_tx_en 1 {pl1/gmii_tx_en}
 digital_net pl1_gmii_tx_er 1 {pl1/gmii_tx_er}
 digital_net pl1_interrupt 0 {pl1/interrupt}
 digital_net pl1_mac_irq 0 {pl1/mac_irq}
-digital_net sfp_req 0 {sfp/stats_request stats_router/sfp_req}
-digital_net sfp_acks 0 {sfp/stats_ack stats_router/sfp_acks}
-digital_net sfp_values 0 {sfp/stats_value stats_router/sfp_values}
+digital_net sfp_req 0 {sfp/stats_request management/sfp_req}
+digital_net sfp_acks 0 {sfp/stats_ack management/sfp_acks}
+digital_net sfp_values 0 {sfp/stats_value management/sfp_values}
 digital_net gtx_clk_sfp 1 {sfp/gtx_clk}
 digital_net gtx_rst_n_sfp 1 {sfp/gtx_rst_n}
 digital_net gth_clk_sfp 1 {sfp/gth_clk}
@@ -190,10 +190,6 @@ digital_net sfp_an_duplex_full 1 {sfp/an_duplex_full_o}
 digital_net sfp_an_remote_fault 1 {sfp/an_remote_fault_o}
 digital_net sfp_interrupt 0 {sfp/interrupt}
 digital_net sfp_mac_irq 0 {sfp/mac_irq}
-digital_net stats_request 0 {management/stats_request stats_router/stats_request}
-digital_net stats_index 0 {management/stats_index stats_router/stats_index}
-digital_net stats_ack 0 {management/stats_ack stats_router/stats_ack}
-digital_net stats_value 0 {management/stats_value stats_router/stats_value}
 digital_net diag_flags 1 {management/flags_i}
 digital_net idelay_rdy_axi 1 {management/idelay_rdy_i}
 digital_net diag_clr 1 {management/clear_o}

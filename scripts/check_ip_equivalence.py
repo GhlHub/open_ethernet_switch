@@ -30,13 +30,14 @@ def main():
     parser.add_argument('--packaged-bd', type=Path, help='Use generated IP simulation wrappers from validate.tcl')
     parser.add_argument('--production-bd', type=Path, help='Generated production system BD directory')
     parser.add_argument('--catalog', type=Path, help='Catalog used to generate --packaged-bd')
+    parser.add_argument('--output', type=Path, help='Parent directory for isolated comparison artifacts')
     args = parser.parse_args()
     if args.packaged_bd and (not args.catalog or (args.stats_ddr, args.stats_debug) != (1, 1)):
         parser.error('--packaged-bd requires --catalog and both statistics options enabled')
     suffix = '_production' if args.production_bd else ('_packaged' if args.packaged_bd else '')
     if args.production_bd and (not args.catalog or args.packaged_bd or (args.stats_ddr, args.stats_debug) != (1, 1)):
         parser.error('--production-bd requires --catalog, both counter groups, and no --packaged-bd')
-    out = ROOT / 'build/ip_refactor' / f'equivalence_{args.stats_ddr}{args.stats_debug}{suffix}'
+    out = (args.output.resolve() if args.output else ROOT / 'build/ip_refactor') / f'equivalence_{args.stats_ddr}{args.stats_debug}{suffix}'
     out.mkdir(parents=True, exist_ok=True)
     # This fixture proves a structural partition, not arbitrary leaf-RTL
     # edits. Sharing a modified leaf with the golden assembly would conceal
@@ -143,7 +144,7 @@ def main():
         files = [staged[Path(p).name] for p in sources()] + files[len(sources()):]
         assembly, wrappers = fixture(args.production_bd.resolve(), out)
         files[files.index(str(ROOT / 'rtl/switch_top.sv'))] = assembly
-        files += wrappers + [str(ROOT / 'ip_repo/switch_stats_router.sv')]
+        files += wrappers
         tb = tb.replace('dut.u_fabric.', 'dut.fabric.inst.')
         # The legacy fixture releases reset on sampling edges. Added BD net
         # aliases change delta-cycle ordering; release on the inactive edge

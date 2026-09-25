@@ -9,7 +9,8 @@ update_ip_catalog
 file delete -force $root/build/ip_refactor/partition_validation
 create_bd_design partition_validation -dir $root/build/ip_refactor
 foreach {cell type} {fabric switch_fabric gem0 gem_port gem1 gem_port pl0 pl_port pl1 pl_port sfp sfp_port management management} {
-    create_bd_cell -type ip -vlnv ghlhub.org:ethernet:$type:1.0 $cell
+    set version [exec python3 -c {import json,sys; print(json.load(open(sys.argv[1]))["version"])} $root/ip_repo/$type/manifest.json]
+    create_bd_cell -type ip -vlnv ghlhub.org:ethernet:$type:$version $cell
 }
 # Match the all-counter equivalence fixture; this is a validation design,
 # not the board address/clock assembly.

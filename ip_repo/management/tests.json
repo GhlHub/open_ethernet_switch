@@ -11,6 +11,12 @@
       "support": [
         "rtl/stats/stats_bank.sv"
       ]
+    },
+    {
+      "top": "tb_management",
+      "support": [
+        "rtl/stats/stats_bank.sv"
+      ]
     }
   ]
 }

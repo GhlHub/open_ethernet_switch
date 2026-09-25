@@ -5,20 +5,20 @@ digital blocks. `board.json` lists the KR260 physical shell, vendor IP and
 constraints. Paths are relative to the repository root. Existing leaf RTL
 stays in `rtl/`; each dependency has one editable source copy.
 
-| Catalog IP (`ghlhub.org:ethernet:<name>:1.0`) | Top module | Responsibility |
+| Catalog IP (`ghlhub.org:ethernet:<name>:<version>`) | Top module | Responsibility |
 | --- | --- | --- |
 | `switch_fabric` | `switch_fabric` | Five physical packet streams, CPU virtual port, forwarding, shared buffers, DDR masters, fabric counters |
 | `gem_port` | `switch_gem_port` | One PS external-FIFO bridge, RX/TX CDC and local packet counters |
 | `pl_port` | `pl_gmii_mac_top` | One GMII MAC, packet-stream adapters, local counters and AXI-Lite registers |
 | `sfp_port` | `sfp_port_top` | One 1000BASE-X MAC/PCS, negotiation, packet adapters and counters |
-| `management` | `rx_diag_regs` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
+| `management` (1.1) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
 
 The first partition retains RGMII I/O/MDIO, GTH/clock generation and SFP
 sideband handling in the board layer. These physical shells are **not yet
 inside the port IPs**. The production `system.bd` instantiates all seven digital catalog cells
 through `production.tcl`. `rtl/switch_top.sv` remains the native simulation
-assembly. `switch_stats_router.sv` is a small BD module reference preserving
-the existing 13-bank mailbox routing. See [migration and verification](../docs/ip-partitioning.md).
+assembly. Management 1.1 owns the existing 13-bank mailbox router internally.
+The other four packages remain at version 1.0. See [migration and verification](../docs/ip-partitioning.md).
 
 ## Generate and validate a catalog
 
@@ -60,7 +60,7 @@ vivado -mode batch -nolog -nojournal -source ip_repo/review_board.tcl -tclargs \
 ```
 
 The board build checks catalog source hashes before using its staged RTL.
-Only physical-shell RTL and the mailbox router are added directly; digital
+Only physical-shell RTL is added directly; digital
 RTL comes from the catalog cells. Simulation resolves the same manifests.
 `KR260_IP_CATALOG` selects an alternative generated catalog directory.
 The board script retains its usual `build/vivado_kr260` default; the
@@ -93,9 +93,9 @@ make -C sim sim-ip-regression
 | PL | Public MAC loopback/line-rate/counters; adapters, reset/reclock |
 | SFP | Public MAC/PCS loopback; negotiation, clock correction, TX alignment, RX preamble |
 | Fabric | DMA burst pipeline/backpressure/reset; buffer ownership; forwarding/learning/control traffic; CPU DDR transfers; AXI counters |
-| Management | AXI-Lite controls/diagnostics; mailbox CDC, clear races, saturation, response backpressure and stopped-clock retry |
+| Management | AXI-Lite controls/diagnostics; mailbox CDC, clear races, saturation, response backpressure and stopped-clock retry; public wrapper bank routing across all 256 indices |
 
-The 19 cases reuse the established self-checking benches. The GEM bench can
+The 20 cases reuse the established self-checking benches. The GEM bench can
 select the public `switch_gem_port` wrapper instead of its bridge leaf.
 Fabric cases exercise constituent blocks; the retained whole-switch miter
 checks their assembly. They do not constitute a new randomized six-port
@@ -114,3 +114,32 @@ and packet-stream widths/directions. Generate a fresh catalog using
 `package.tcl` before testing changed RTL; stale snapshots deliberately fail.
 The existing `validate.tcl` and generated-production-BD equivalence checks
 remain integration gates after packaging or connectivity changes.
+
+## Contracts and fresh acceptance flow
+
+[Interface contracts](INTERFACES.md) define clock/reset ownership, packet and
+DDR interfaces, register ownership, parameters, bank routing and versioning.
+Management 1.1 replaces the old external raw mailbox with per-bank request,
+acknowledgment and value pins; firmware addresses and bank numbers are unchanged.
+Existing generated catalogs must be regenerated after this change.
+
+From a checkout with the historical Git objects used by the equivalence miter,
+Vivado 2026.1, Python 3 and Icarus Verilog available:
+
+```sh
+python3 scripts/verify_ip_flow.py
+# Or: make -C sim verify-ip-flow
+# Optionally include implementation, bitstream and routed reports:
+python3 scripts/verify_ip_flow.py --implement
+```
+
+The default uses a new directory under `build/ip_refactor/acceptance_*` and
+preserves existing projects/catalogs. `--output` accepts only a new directory;
+`--vivado` selects the Vivado executable. It packages the catalog, audits it,
+generates and audits the production BD with all counters, runs native and
+packaged IP suites, and compares all four native counter combinations plus
+the generated production datapath. Every stage has a log, a timeout and a
+record in `results.json`; `complete` becomes true only after all stages pass.
+Default execution stops before synthesis. The optional routed report stage
+collects timing/CDC findings; report generation alone is not timing sign-off.
+Board programming and traffic checks remain separate hardware acceptance.

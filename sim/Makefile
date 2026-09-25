@@ -2,6 +2,10 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := sim
 
 IP_CATALOG ?= ../build/ip_catalog
+.PHONY: verify-ip-flow
+verify-ip-flow:
+	python3 ../scripts/verify_ip_flow.py
+
 .PHONY: sim-ip-tests sim-ip-tests-packaged check-ip-catalog sim-ip-regression
 sim-ip-tests:
 	python3 ../scripts/check_ip_tests.py

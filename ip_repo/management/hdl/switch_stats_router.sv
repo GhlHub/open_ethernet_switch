@@ -1,4 +1,4 @@
-// Production BD routing only: preserves switch_top's 13-bank mailbox decode.
+// Management statistics routing: preserves switch_top's 13-bank mailbox decode.
 module switch_stats_router (
   input wire stats_request,
   input wire [7:0] stats_index,

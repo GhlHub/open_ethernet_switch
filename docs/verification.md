@@ -1,5 +1,35 @@
 # Design inventory verification
 
+## 2026-09-25 management package 1.1 and clean acceptance
+
+Management now owns the 13-bank statistics router as an internal submodule.
+The catalog top is `switch_management`, version 1.1; register offsets, bank
+numbers and firmware ABI remain unchanged. The standalone production-BD
+router reference is removed. Other digital packages remain at version 1.0.
+
+`python3 scripts/verify_ip_flow.py --output build/ip_refactor/management_acceptance`
+completed fresh catalog packaging, metadata/source audits, production BD
+regeneration and connection/address audits, 20 native IP cases, 20 packaged
+IP cases, all four native counter-option comparisons and the generated
+production datapath comparison. The last comparison passed 29,934 clock
+samples, 114 outputs and 1,327 statistics snapshots. The management boundary
+test separately checks all 256 bank/slot addresses, distinct-bank values,
+clear isolation, invalid indices, saturation, response backpressure and
+stopped-clock timeout recovery. Its decoder uses the exact prior decode logic.
+
+The acceptance command refuses an existing output directory. Its logs and
+completion report are under the directory above; comparison outputs can now
+also be isolated with `--output`. The optional `--implement` path runs synthesis
+and PNR only after simulation, then collects routed reports. That optional
+path has not been run for management 1.1; this revision has no new bitstream,
+timing result or board-download evidence. The board still runs the prior
+production-catalog image documented below. Physical copper/SFP packaging,
+startup-loss diagnosis and wider board traffic tests remain pending.
+
+See [interface contracts](../ip_repo/INTERFACES.md) and the
+[fresh acceptance command](../ip_repo/README.md#contracts-and-fresh-acceptance-flow).
+
+
 ## 2026-09-25 independent IP verification
 
 Added package-owned `tests.json` manifests and a shared isolated runner.

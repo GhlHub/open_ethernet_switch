@@ -4,7 +4,7 @@ import argparse
 import json
 import subprocess
 from pathlib import Path
-from ip_sources import ROOT
+from ip_sources import ROOT, manifest
 from production_fixture import NATIVE, CELLS, connections
 
 
@@ -18,8 +18,9 @@ def check(path, compare_physical=False):
 
     kinds = dict(zip(CELLS, ['switch_fabric', 'gem_port', 'gem_port', 'pl_port', 'pl_port', 'sfp_port']))
     kinds['management'] = 'management'
+    assert 'stats_router' not in design['components'], 'statistics router must be inside management'
     for cell, kind in kinds.items():
-        assert design['components'][cell]['vlnv'] == f'ghlhub.org:ethernet:{kind}:1.0'
+        assert design['components'][cell]['vlnv'] == f'ghlhub.org:ethernet:{kind}:{manifest(kind)["version"]}'
     for option in ['AN_BREAK_LINK_CYCLES', 'AN_LINK_TIMER_CYCLES', 'AN_IDLE_DETECT_CYCLES']:
         assert design['components']['sfp']['parameters'][option]['value'] == '1250000', option
     for cell, width, value in [('default_age', '9', '300'), ('mac_enable', '1', '1')]:
@@ -36,6 +37,11 @@ def check(path, compare_physical=False):
     for i, cell in enumerate(['gem0', 'gem1', 'pl0', 'pl1', 'sfp']):
         connected(f'{cell}/m_axis', f'fabric/s{i:02}_axis', bus=True)
         connected(f'{cell}/s_axis', f'fabric/m{i:02}_axis', bus=True)
+    for cell in CELLS:
+        connected('management/stats_select', cell + '/stats_select')
+        suffixes = ('stats_request', 'stats_ack', 'stats_value') if cell in ['pl0', 'pl1', 'sfp'] else ('stats_req', 'stats_acks', 'stats_values')
+        for pin, suffix in zip(('req', 'acks', 'values'), suffixes):
+            connected(f'management/{cell}_{pin}', f'{cell}/{suffix}')
     for a, b in [('fabric/cpu_s_axis', 'dma/M_AXIS_MM2S'), ('fabric/cpu_m_axis', 'dma/S_AXIS_S2MM'),
                  ('fabric/m_axi_ing', 'sc_ddr/S00_AXI'), ('fabric/m_axi_egr', 'sc_ddr/S01_AXI'),
                  ('fabric/m_axi_cpu', 'sc_ddr/S02_AXI'), ('sc_ddr/M00_AXI', 'ps/S_AXI_HP0_FPD'),
