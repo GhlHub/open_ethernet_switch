@@ -7,8 +7,13 @@ versioned `switch_management` top and unchanged firmware ABI. The fresh
 acceptance flow passes catalog/BD audits, 20 focused native and packaged cases,
 and whole-switch comparisons. [Interface contracts](../ip_repo/INTERFACES.md)
 now define ownership and integration requirements. This source revision has
-not been implemented or downloaded; earlier deployed-image evidence below
-still applies to management 1.0. Physical copper/SFP packaging remains pending.
+passed synthesis, PNR and bitstream generation (WNS +0.018 ns, hold
++0.010 ns) and was downloaded with matching firmware. Sustained GEM1/PL0
+CPU/endpoint pings and SNMP passed. The DHCP single-Discover failure is fixed
+with a readiness delay and corrected retransmission ceiling. A short R5
+startup gap remains unresolved; HTTP connection capacity is confirmed as a
+separate architectural limitation. See startup-and-http-investigation.md.
+Physical copper/SFP packaging remains pending.
 
 
 ## IP repository verification suites (2026-09-25)

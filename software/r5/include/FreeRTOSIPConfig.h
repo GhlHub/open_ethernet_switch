@@ -2,6 +2,7 @@
 #define FREERTOS_IP_CONFIG_H
 #include <stdint.h>
 void network_dhcp_result(int leased);
+void network_dhcp_message(const char *message);
 #define ipconfigBYTE_ORDER pdFREERTOS_LITTLE_ENDIAN
 #define ipconfigUSE_IPv4 1
 #define ipconfigUSE_IPv6 0
@@ -10,7 +11,10 @@ void network_dhcp_result(int leased);
 #define ipconfigUSE_DHCP 1
 #define ipconfigUSE_DHCP_HOOK 0
 #define ipconfigDHCP_REGISTER_HOSTNAME 1
-#define ipconfigMAXIMUM_DISCOVER_TX_PERIOD pdMS_TO_TICKS(8000)
+/* The stack starts at 5 s and doubles BEFORE deciding to resend. An 8 s
+ * ceiling allowed only one Discover, possibly before the uplink was ready.
+ * Allow the 10/20 s retransmissions; failed acquisitions still retry in 60 s. */
+#define ipconfigMAXIMUM_DISCOVER_TX_PERIOD pdMS_TO_TICKS(32000)
 #define ipconfigUSE_NETWORK_EVENT_HOOK 1
 #define ipconfigNETWORK_MTU 1500
 #define ipconfigNUM_NETWORK_BUFFER_DESCRIPTORS 32
@@ -32,5 +36,7 @@ void network_dhcp_result(int leased);
 #define ipconfigTCP_TX_BUFFER_LENGTH (4 * 1460)
 #define ipconfigTCP_RX_BUFFER_LENGTH (4 * 1460)
 #define iptraceDHCP_SUCCEEDED(ip) network_dhcp_result(1)
+#define iptraceSENDING_DHCP_DISCOVER() network_dhcp_message("discover")
+#define iptraceSENDING_DHCP_REQUEST() network_dhcp_message("request")
 #define iptraceDHCP_REQUESTS_FAILED_USING_DEFAULT_IP_ADDRESS(ip) network_dhcp_result(0)
 #endif

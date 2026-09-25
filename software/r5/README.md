@@ -35,8 +35,12 @@ Implemented:
   one poll interval and for flush busy to clear. The CPU port remains enabled
   while all physical ports are down. A DMA fault disables all destinations and
   requires reboot; descriptors possibly owned by DMA are never reused.
-- DHCP starts when any admitted physical link is available. FreeRTOS+TCP handles
-  discovery, request, lease renewal and rebinding. After its initial attempt
+- DHCP starts after any admitted physical link has remained available for at
+  least one second (evaluated on the 250 ms poll). This does not hold physical
+  forwarding. FreeRTOS+TCP handles discovery, request, renewal and rebinding.
+  Its maximum retransmission period is 32 seconds, allowing retries after the
+  initial 5-second interval; the previous 8-second ceiling suppressed every
+  Discover retransmission. After an acquisition attempt
   fails, the firmware waits **60 seconds from failure** and requests another
   attempt through `FreeRTOS_NetworkDown()` in task context. Each subsequent
   failure schedules another 60-second wait. No static fallback address is
@@ -245,3 +249,6 @@ GEM1 (right lower, RGMII) supports 10/100/1000 full duplex with selectable
 PHY advertisement on the web page. GEM0 (right upper, PS SGMII) remains
 1000-only due to the PS interface restriction. Both interfaces report
 physical speed via HTTP and SNMP. See [PS speeds](../../docs/ps-ethernet-speeds.md).
+
+Startup timing and the confirmed HTTP connection-capacity limitation are
+documented in [the investigation](../../docs/startup-and-http-investigation.md).

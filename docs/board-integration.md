@@ -13,8 +13,10 @@ retry, settled CPU/endpoint forwarding and SNMP/web checks on GEM1/PL0. See
 limitations, and [partitioning](ip-partitioning.md) for migration scope.
 
 Management 1.1 now includes the statistics decoder in source and passes fresh
-BD/simulation acceptance. It has not been routed or downloaded; deployed
-results above refer to the preceding management 1.0 image.
+BD/simulation acceptance. It has passed synthesis and PNR (WNS +0.018 ns, hold +0.010 ns),
+and is now deployed. GEM1/PL0 sustained pings and SNMP passed. The DHCP retransmission/startup policy is corrected; a short R5 startup gap
+and the confirmed HTTP connection-capacity limitation remain open. See
+startup-and-http-investigation.md and current verification results.
 
 ## Reference material and revision scope
 

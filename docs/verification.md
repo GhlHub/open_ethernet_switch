@@ -1,5 +1,112 @@
 # Design inventory verification
 
+## 2026-09-25 startup policy and HTTP investigation
+
+Added at least one second of continuous admitted-link readiness before DHCP,
+without holding fabric forwarding or static-IP startup. A controlled boot
+showed that this alone still failed: PL0 preceded the GEM1 uplink, and the
+8-second retransmission ceiling suppressed the first DHCP resend (the stack
+doubles its initial 5-second period before comparing). Raising the ceiling to
+32 seconds allowed Discover at 3,088 and 8,338 ms; Request followed at 8,340 ms
+and DHCP acquired `10.0.1.104` without a one-minute fallback. Failed cycles still
+retry after 60 seconds. Host tests and the firmware/ELF checks passed. The simultaneous post-lease
+full-MTU test passed 500/500 endpoint replies but 395/500 R5 replies (a gap
+after sequence 1); a later R5 test passed 200/200. This residual startup gap
+is unresolved. Counter health, packet-error and DDR-error checks were clean.
+
+A second boot of the final readiness-latch firmware again acquired DHCP at
+about 8.34 seconds. Its subsequent simultaneous full-MTU checks passed
+200/200 replies each for R5 and endpoint, with no packet, DDR or mailbox
+errors. This settled check does not erase the earlier startup-gap observation.
+
+The HTTP listener's two-child-socket limit was reproduced in five controlled
+trials: two connections accepted, third refused. One serial serving task and
+shared buffers explain the architectural limitation. HTTP is unchanged.
+See [startup and HTTP investigation](startup-and-http-investigation.md) for
+source reasoning, timestamps, limits and recommended follow-up. Earlier board
+results below describe the firmware before these startup changes.
+
+
+## 2026-09-25 management 1.1 board verification
+
+Downloaded the management 1.1 bitstream recorded below through JTAG at
+`10.0.1.107:3121`, together with the matching all-counter R5 application.
+Firmware build/ELF checks passed; UART confirmed D-cache enabled, the
+noncacheable DMA region, SD configuration loaded and capabilities `0x53540107`.
+R5-0 is running; R5-1 remains reset. STP remains disabled. Active physical
+links are GEM1 (right lower uplink) and PL0 (left upper endpoint), both 1 Gb/s.
+DHCP again required its one-minute retry, then acquired `10.0.1.104`.
+
+| Test | Result |
+| --- | --- |
+| Initial endpoint full-MTU ping | 101/200 replies; 99 startup losses |
+| Subsequent endpoint full-MTU ping | 200/200 replies |
+| Simultaneous sustained R5 and endpoint full-MTU ping | 1,000/1,000 each |
+| SNMP collection | Correct capabilities, 803 polls at final measurement; zero late/saturation/mailbox timeout errors |
+| Packet / DDR errors | Zero bad packets and AXI response errors |
+| Sensors | Valid mask 7, zero sensor errors |
+| Sequential page/API GETs | Statistics, configuration, configuration API and port API returned successfully |
+| Unauthenticated configuration POST | HTTP 401; settings unchanged |
+| Isolated one-second statistics polling after browser tests | 55/55 successful, no counter-health errors |
+
+During the SNMP measurement interval, ingress transferred 4,713,287 bytes
+in 4,374 bursts with 8,855 write-data stall cycles (about 2.02 per burst).
+Other DDR paths had zero data stalls. This run is not an assertion of an
+exact two-cycle-per-burst ratio under every traffic pattern.
+
+Browser statistics refreshed, but configuration navigation and direct reload
+both encountered `net::ERR_CONNECTION_REFUSED` on `/api/config`; the page
+remained at its fetch-error message. A simultaneous curl polling loop also
+encountered a refused connection. The firmware serves HTTP clients serially
+with listen backlog 2, while configuration loads two APIs concurrently.
+Connection capacity/handling is a candidate cause, not a confirmed diagnosis.
+This is a web-service verification failure; it did not interrupt the measured
+ping/SNMP paths. No firmware change was made during this deployment.
+
+Startup packet loss, DHCP retry and HTTP concurrency need investigation.
+Unconnected ports, other link speeds and all-port simultaneous load were not
+retested. Logs, SNMP snapshots and browser diagnostics are under
+`build/ip_refactor/management_1_1_impl/board_test/`.
+
+
+## 2026-09-25 management 1.1 synthesis and routed acceptance
+
+Ran `python3 scripts/verify_ip_flow.py --implement --output
+build/ip_refactor/management_1_1_impl` against source commit `9ef4cd9`.
+All 13 acceptance stages passed: fresh packaging, catalog audit, production
+BD regeneration/audit, 20 native and 20 packaged IP cases, four native
+counter-option comparisons, generated-production equivalence, synthesis,
+PNR/bitstream generation and routed reports. Both optional counter groups
+were enabled. No source or constraint changes were needed.
+
+| Routed metric | Result |
+| --- | ---: |
+| Setup WNS / TNS | +0.018 ns / 0.000 ns |
+| Hold WHS / THS | +0.010 ns / 0.000 ns |
+| LUTs | 29,062 (24.81%) |
+| Registers | 36,982 (15.79%) |
+| BRAM tiles | 51.5 (35.76%) |
+| DSPs | 0 |
+| Unclocked pins / unconstrained internal endpoints | 0 / 0 |
+
+Bitstream generation completed with zero critical warnings/errors. Retained
+RGMII instance targets and all expected constrained clocks resolve. DRC has
+only the two existing AXI DMA BRAM collision advisories. CDC critical counts
+remain 2,632 CDC-1, 13 CDC-10 and 8 CDC-12; seven inputs and eleven outputs
+still lack external delays. These findings are not waived by passing timing.
+Compared with the preceding production assembly, LUT count increased by 12;
+register and BRAM counts are unchanged, and hold margin changed from
++0.011 ns to +0.010 ns. Full CDC/external-I/O sign-off remains outstanding.
+
+Artifacts are under `build/ip_refactor/management_1_1_impl/`:
+`results.json`, stage logs, `reports/`, and
+`project/kr260_switch.runs/impl_1/kr260_top.bit`.
+Bitstream SHA-256:
+`1a242fa379c1322c9fabdcd045d813cac5e6d33bba8c8b72e7065fb59cad223a`.
+This image was subsequently downloaded; see management 1.1 board verification
+above. Older board sections retain their original image-specific evidence.
+
+
 ## 2026-09-25 management package 1.1 and clean acceptance
 
 Management now owns the 13-bank statistics router as an internal submodule.
@@ -20,10 +127,8 @@ stopped-clock timeout recovery. Its decoder uses the exact prior decode logic.
 The acceptance command refuses an existing output directory. Its logs and
 completion report are under the directory above; comparison outputs can now
 also be isolated with `--output`. The optional `--implement` path runs synthesis
-and PNR only after simulation, then collects routed reports. That optional
-path has not been run for management 1.1; this revision has no new bitstream,
-timing result or board-download evidence. The board still runs the prior
-production-catalog image documented below. Physical copper/SFP packaging,
+and PNR only after simulation, then collects routed reports. The subsequent implementation and board-download runs are recorded above.
+The board now runs management 1.1. Physical copper/SFP packaging,
 startup-loss diagnosis and wider board traffic tests remain pending.
 
 See [interface contracts](../ip_repo/INTERFACES.md) and the

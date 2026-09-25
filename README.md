@@ -78,7 +78,12 @@ Physical-port packaging, complete CDC review and broader traffic
 qualification remain pending.
 The latest source additionally moves the statistics decoder into management
 1.1 and passes fresh catalog/BD and simulation acceptance; that update has
-not yet been implemented or downloaded.
+now passed synthesis, PNR and bitstream generation (WNS +0.018 ns, hold
++0.010 ns) and is deployed at `10.0.1.104`. Sustained CPU/endpoint pings
+and SNMP passed. DHCP now waits for one second of admitted-link readiness
+and permits retransmissions, eliminating the minute-long initial delay in
+the measured boot. A short R5 startup gap and HTTP connection refusals remain
+under investigation; see [findings](docs/startup-and-http-investigation.md).
 See [interface contracts](ip_repo/INTERFACES.md),
 [partitioning](docs/ip-partitioning.md) and
 [verification](docs/verification.md) for scope and evidence.

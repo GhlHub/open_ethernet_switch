@@ -41,7 +41,10 @@ multirate PCS, transceiver reconfiguration, or module compatibility guarantees.
 Static settings require a unicast IPv4 host, contiguous /1 through /30 netmask,
 and either `0.0.0.0` (no default route) or another host in the same subnet as
 the gateway. /31 and /32 management subnets are not supported in this version.
-DHCP remains the factory default, with the existing one-minute retry policy.
+DHCP remains the factory default. The R5 waits at least one second after an
+admitted physical link becomes available, then permits DHCP retransmissions
+within each acquisition cycle. Failed cycles retry after one minute. See
+[startup timing](startup-and-http-investigation.md).
 Port changes apply after successful save; IP changes require firmware restart.
 There is no automatic reboot or IP change that interrupts the save response.
 

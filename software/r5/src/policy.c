@@ -1,4 +1,14 @@
 #include "policy.h"
+bool network_link_ready(struct network_link_policy *s, bool up, uint32_t now, uint32_t settle_ms)
+{
+    if (!up || !s->physical) {
+        s->up_since_ms=now;
+        s->ready=false;
+    }
+    s->physical=up;
+    if (up && (uint32_t)(now-s->up_since_ms)>=settle_ms) s->ready=true;
+    return s->ready;
+}
 struct link_action link_update(struct link_policy *s, uint8_t desired, bool busy, uint32_t now)
 {
     struct link_action a={0,0}; desired &= 0x1f;

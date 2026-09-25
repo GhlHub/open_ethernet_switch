@@ -14,6 +14,7 @@ static NetworkInterface_t interface;
 static NetworkEndPoint_t endpoint;
 static bool use_dhcp;
 static volatile bool link_up;
+static struct network_link_policy readiness;
 static struct dhcp_policy dhcp;
 static TaskHandle_t service;
 static uint32_t now_ms(void) { return (uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS); }
@@ -30,10 +31,19 @@ static BaseType_t output(NetworkInterface_t *i, NetworkBufferDescriptor_t *const
 }
 void network_link_changed(bool up)
 {
-    if (link_up==up) return;
-    link_up=up;
+    /* Called on every 250 ms link poll. Gate only the R5 interface, not
+     * physical fabric forwarding. Loss cancels the settling interval. */
+    uint32_t now=now_ms();
+    if (up!=readiness.physical)
+        xil_printf("Network physical %s at %lu ms\r\n",up?"up":"down",(unsigned long)now);
+    bool ready=network_link_ready(&readiness,up,now,use_dhcp?1000u:0u);
+    if (link_up==ready) return;
+    link_up=ready;
+    xil_printf("Network interface %s at %lu ms\r\n",ready?"ready":"down",(unsigned long)now);
     if (service) xTaskNotify(service,1u,eSetBits);
 }
+void network_dhcp_message(const char *message)
+{ xil_printf("DHCP %s at %lu ms\r\n",message,(unsigned long)now_ms()); }
 void network_dhcp_result(int leased)
 {
     /* Called in IP task, possibly already in a critical section. */
