@@ -10,9 +10,11 @@ now define ownership and integration requirements. This source revision has
 passed synthesis, PNR and bitstream generation (WNS +0.018 ns, hold
 +0.010 ns) and was downloaded with matching firmware. Sustained GEM1/PL0
 CPU/endpoint pings and SNMP passed. The DHCP single-Discover failure is fixed
-with a readiness delay and corrected retransmission ceiling. A short R5
-startup gap remains unresolved; HTTP connection capacity is confirmed as a
-separate architectural limitation. See startup-and-http-investigation.md.
+with a readiness delay and corrected retransmission ceiling. Intermittent R5
+and forwarded endpoint ping loss remains unresolved. HTTP now uses four workers with independent
+buffers and serialized configuration access; parallel-client/browser tests
+pass. See [startup investigation](startup-and-http-investigation.md) and
+[verification](verification.md).
 Physical copper/SFP packaging remains pending.
 
 

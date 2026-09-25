@@ -240,9 +240,11 @@ DHCP and full-MTU pings to the R5 and forwarded endpoint passed.
 
 ## Web management
 
-The firmware serves `/configuration` and `/statistics` on HTTP port 80 without
-login. Configure the five physical ports and view all available statistics and
-sensors; statistics refresh every second. Port settings reset on reboot.
+The firmware serves `/configuration` and `/statistics` on HTTP port 80.
+Viewing is public; configuration changes require administrator credentials
+and persist on microSD. Statistics refresh every second. Four HTTP workers
+with independent buffers serve parallel browser requests; USB-backed
+configuration operations remain serialized.
 See [web interface](../../docs/web-interface.md) for API, behavior, and tests.
 
 GEM1 (right lower, RGMII) supports 10/100/1000 full duplex with selectable

@@ -1,5 +1,51 @@
 # Design inventory verification
 
+## 2026-09-25 HTTP concurrency fix
+
+Replaced serial HTTP serving with a dedicated acceptor, four fixed workers,
+per-worker buffers, an eight-entry queue and a 12-child-socket listener limit.
+Configuration authentication/read/modify/save and USB/FAT probes share a mutex;
+public statistics/pages do not. Lock timeout returns 503, and authentication
+penalty/socket transmission/close do not hold the mutex. Queue age and socket
+work remain bounded. No FPGA change was required.
+
+Firmware/ELF checks and the complete R5 host suite passed. HTTP handler tests
+now also assert serialized media access, mutex release on rejection/failure,
+busy responses without writes and independent telemetry access. The all-counter
+firmware was loaded over JTAG with the management 1.1 bitstream. DHCP acquired
+`10.0.1.104` during the initial acquisition cycle.
+
+Live results:
+
+- Third-client requests succeeded alongside two idle clients in all five trials.
+- 120 mixed page/API requests across six clients passed; maximum response time
+  was 0.200 seconds on the initial run and 0.129 seconds on the final run.
+- Statistics were served while an unauthenticated POST was still in its penalty.
+- Overload admitted 12 idle clients, refused four more, and recovered afterward.
+- Playwright passed ten configuration/statistics round trips with another tab
+  refreshing statistics (11 automatic refreshes); no request/page errors.
+- Saved administration/advertisement settings were unchanged. No successful
+  configuration writes were performed on the board; write/error paths are
+  covered by host tests.
+
+Traffic validation exposed a separate unresolved limitation. An initial
+`eth1`-bound R5 ping test lost all 1,000 probes although HTTP/SNMP stayed live;
+subsequent source-address-bound and `eth1`-bound R5 full-MTU tests each passed
+200/200. The final source-address-bound R5 test also passed 200/200 during the
+parallel HTTP regression. Endpoint forwarding tests showed intermittent loss
+(913/1,000 initially, 176/200 later, and 184/200 during the last HTTP run).
+These losses are not claimed resolved or attributed to HTTP. Both workstation
+Ethernet and Wi-Fi share the subnet, and interface-bound versus source-bound
+behavior differed; interface counters from a later successful run did not
+establish that the earlier missing replies arrived over Wi-Fi. Packet capture
+or ARP-path instrumentation is still needed. Counter snapshots showed no bad
+packets, DDR response errors or mailbox errors.
+
+Logs are under `build/ip_refactor/http_concurrency/`. The reusable live HTTP
+regression is `scripts/check_http_concurrency.py`. The board is running the
+new HTTP firmware; the FPGA remains the same management 1.1 image.
+
+
 ## 2026-09-25 startup policy and HTTP investigation
 
 Added at least one second of continuous admitted-link readiness before DHCP,
@@ -21,7 +67,8 @@ errors. This settled check does not erase the earlier startup-gap observation.
 
 The HTTP listener's two-child-socket limit was reproduced in five controlled
 trials: two connections accepted, third refused. One serial serving task and
-shared buffers explain the architectural limitation. HTTP is unchanged.
+shared buffers explain the architectural limitation. HTTP was unchanged at
+that stage; the subsequent concurrency fix is recorded above.
 See [startup and HTTP investigation](startup-and-http-investigation.md) for
 source reasoning, timestamps, limits and recommended follow-up. Earlier board
 results below describe the firmware before these startup changes.

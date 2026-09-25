@@ -47,6 +47,36 @@ readings use three decimal places (`1.800 V`, `0.800 A`); temperatures use one
 (`30.0 °C`). DDR/debug cycles are
 100 MHz fabric cycles (10 ns). CPU RX means CPU to fabric; TX means fabric to CPU.
 
+## Concurrent request handling
+
+The HTTP task accepts connections into an eight-entry queue, serviced by four
+fixed workers. Each worker has its own 2 KiB request and 24 KiB response buffer
+and a 16 KiB stack. FreeRTOS+TCP's listener capacity is 12 total child sockets,
+including accepted clients; it previously allowed only two. The pool and queue
+are bounded, so excess clients can still be refused or closed under overload.
+Queued jobs older than two seconds are closed instead of accumulating work.
+Receive/send calls retain 250 ms socket timeouts and the handler's overall
+request, transmission and close deadlines remain bounded.
+
+Configuration POSTs take a mutex across authentication and read/modify/save.
+GET `/api/config` uses the same mutex because probing card writability touches
+the single-owner USB/FAT stack. A two-second lock timeout returns HTTP 503;
+statistics, port snapshots and HTML pages do not take this mutex. Failed
+authentication releases it before the one-second penalty, so it occupies only
+one worker. Response transmission and socket teardown happen after unlocking.
+
+Read-only live regression (the POST case is deliberately unauthenticated and
+must return 401 without changing settings):
+
+```sh
+python3 scripts/check_http_concurrency.py 10.0.1.104 --source 10.0.1.24
+```
+
+It tests two idle clients plus a third request, 120 mixed requests across six
+clients, public reads during authentication rejection, recovery after exceeding
+the connection limit, response length/type consistency and unchanged settings.
+See [verification](verification.md) for board/browser results and traffic limits.
+
 ## HTTP API
 
 | Method/path | Result |

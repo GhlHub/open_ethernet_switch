@@ -112,7 +112,10 @@ The legacy POST `/api/ports` also saves through the same configuration store.
 Viewing pages, statistics and configuration remains public. **Every configuration
 POST requires HTTP Basic authentication**, including the legacy `/api/ports` API.
 Factory credentials are `admin` / `admin`. Failed authentication returns 401
-before any write, with a one-second retry delay. Passwords are verified using
+before any write, with a one-second delay affecting only the handling worker.
+Configuration operations are serialized by a mutex; a two-second lock wait
+returns HTTP 503 without a write. Other HTTP workers can serve statistics and
+pages without taking the mutex. Passwords are verified using
 PBKDF2-HMAC-SHA256 with 100000 iterations; the record holds a salt and verifier.
 GET responses never return the password, salt or verifier. The helper prompts
 for the current password and uses a fresh OS-random salt for replacements.

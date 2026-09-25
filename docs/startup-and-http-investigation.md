@@ -92,7 +92,10 @@ per-client request/response buffers and deadlines, and serialized persistent
 configuration writes. Simply adding worker tasks around the current global
 buffers is unsafe. Raising the listener limit can reduce refusals but alone
 does not remove head-of-line blocking. No HTTP implementation change was made
-in this investigation.
+in this initial investigation. The subsequent fix now uses four workers,
+per-worker buffers, an eight-client queue, a 12-child-socket listener limit,
+and a configuration/storage mutex. Live parallel-request and browser checks
+passed; see [web interface](web-interface.md#concurrent-request-handling).
 
 ## Validation and artifacts
 

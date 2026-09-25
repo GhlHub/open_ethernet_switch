@@ -5,15 +5,15 @@
 #include "../src/web_task.c"
 static struct switch_config current;
 static unsigned saves;
-static bool save_fails;
+static bool save_fails, lock_held, lock_busy;
 static char incoming[2048],outgoing[65536];
 static size_t read_offset,written;
 static TickType_t ticks;
 TickType_t xTaskGetTickCount(void){return ticks++;}
-void vTaskDelay(TickType_t n){ticks+=n;}
+void vTaskDelay(TickType_t n){assert(!lock_held);ticks+=n;}
 int xil_printf(const char *fmt,...){(void)fmt;return 0;}
-void settings_get(struct switch_config *c,bool *s,bool *w){*c=current;if(s)*s=true;if(w)*w=true;}
-bool settings_save(const struct switch_config *c){saves++;if(save_fails)return false;current=*c;return true;}
+void settings_get(struct switch_config *c,bool *s,bool *w){if(w)assert(lock_held);*c=current;if(s)*s=true;if(w)*w=true;}
+bool settings_save(const struct switch_config *c){assert(lock_held);saves++;if(save_fails)return false;current=*c;return true;}
 void board_ports_snapshot(struct port_snapshot *p){memset(p,0,sizeof(*p));p->admin=current.admin;}
 void statistics_get(struct statistics_snapshot *s){memset(s,0,sizeof(*s));}
 void sensors_get(struct sensor_snapshot *s){memset(s,0,sizeof(*s));}
@@ -36,15 +36,25 @@ int FreeRTOS_recv(Socket_t socket,void *p,size_t size,int flags)
 }
 int FreeRTOS_send(Socket_t socket,const void *p,size_t n,int flags)
 {
-    (void)socket;(void)flags;assert(written+n<sizeof(outgoing));memcpy(outgoing+written,p,n);written+=n;outgoing[written]=0;return (int)n;
+    (void)socket;(void)flags;assert(!lock_held);assert(written+n<sizeof(outgoing));memcpy(outgoing+written,p,n);written+=n;outgoing[written]=0;return (int)n;
 }
 static void query(const char *method,const char *path,const char *auth,const char *body,unsigned status)
 {
     snprintf(incoming,sizeof(incoming),"%s %s HTTP/1.1\r\n%sContent-Length: %u\r\nX-KR260-Request: 1\r\n\r\n%s",method,path,auth,(unsigned)strlen(body),body);
-    read_offset=written=0;serve((void *)1);
+    read_offset=written=0;serve((void *)1,&buffers[0]);assert(!lock_held);
     char expected[32];snprintf(expected,sizeof(expected),"HTTP/1.1 %u ",status);assert(!strncmp(outgoing,expected,strlen(expected)));
     if(status==401)assert(strstr(outgoing,"WWW-Authenticate: Basic"));
 }
+QueueHandle_t xQueueCreate(unsigned n,size_t s){(void)n;(void)s;return (void *)1;}
+BaseType_t xQueueReceive(QueueHandle_t q,void *v,TickType_t t){(void)q;(void)v;(void)t;return 0;}
+BaseType_t xQueueSend(QueueHandle_t q,const void *v,TickType_t t){(void)q;(void)v;(void)t;return 0;}
+BaseType_t xTaskCreate(void (*f)(void *),const char *n,unsigned s,void *a,unsigned p,void *h)
+{(void)f;(void)n;(void)s;(void)a;(void)p;(void)h;return pdPASS;}
+SemaphoreHandle_t xSemaphoreCreateMutex(void){return (void *)1;}
+BaseType_t xSemaphoreTake(SemaphoreHandle_t m,TickType_t t)
+{(void)m;(void)t;assert(!lock_held);if(lock_busy)return 0;lock_held=true;return pdTRUE;}
+BaseType_t xSemaphoreGive(SemaphoreHandle_t m)
+{(void)m;assert(lock_held);lock_held=false;return pdTRUE;}
 int main(void)
 {
     config_defaults(&current);
@@ -61,5 +71,12 @@ int main(void)
     save_fails=true;query("POST","/api/ports",good,"mask=29",503);assert(current.admin==31);
     query("POST","/api/ports","Authorization: Basic YWRtaW46YWRtaW4=\r\nAuthorization: Basic YWRtaW46YWRtaW4=\r\n","mask=30",400);
     query("POST","/api/ports",good,"mask=32",400);assert(saves==3);
+    lock_busy=true;
+    query("GET","/api/config","","",503);
+    query("POST","/api/ports",good,"mask=31",503);assert(saves==3);
+    query("GET","/api/statistics","","",200); /* storage contention cannot block telemetry */
+    query("GET","/api/ports","","",200);
+    lock_busy=false;
+    query("GET","/api/config","","",200);
     puts("PASS: real HTTP handler keeps viewing public, rejects missing/wrong/duplicate credentials, gates both write APIs and reports failed saves");
 }
