@@ -278,7 +278,7 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
           8'h24:   s_axi_rdata <= 32'h53540101 | (32'(STATS_DDR)<<1) | (32'(STATS_DEBUG)<<2);
           8'h28:   s_axi_rdata <= {24'd0,stats_index};
           8'h30:   s_axi_rdata <= {30'd0,stats_ack_sync[1],stats_request};
-          8'h34:   s_axi_rdata <= 100000000;
+          8'h34:   s_axi_rdata <= 125000000;
           8'h20:   s_axi_rdata <= {28'd0, sfp_pcs_status_i};
           8'h48:   s_axi_rdata <= {18'd0, learn_en_o, fwd_en_o};
           8'h4C:   s_axi_rdata <= 0; // retired override register; writes ignored

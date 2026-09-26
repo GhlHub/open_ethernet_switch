@@ -95,7 +95,7 @@ lost during reset is not retained as a completed packet.
 
 ## Category 2: fabric-to-DDR instrumentation
 
-There are four independent monitors, all in the 100 MHz fabric clock domain:
+There are four independent monitors, all in the 125 MHz fabric clock domain:
 
 | Bank | Path | Direction |
 | --- | --- | --- |
@@ -132,7 +132,8 @@ including unused trailing lanes. Counts describe traffic at the AXI interface,
 not Ethernet payload bytes or internal DDR-controller bus utilization. A read
 error counts per accepted erroneous response beat; a write error counts per B.
 
-Average completed latency is latency sum / burst count, multiplied by 10 ns.
+Average completed latency is latency sum / burst count, divided by the
+hardware-reported fabric frequency (8 ns per cycle at 125 MHz).
 DDR bandwidth is the change in byte totals / elapsed time. Polling individual
 registers introduces small boundary skew; these are not an atomic bank snapshot.
 
@@ -160,9 +161,9 @@ flags remain available through their existing interfaces.
 
 | Counter family | Hardware payload width | Half-second upper bound |
 | --- | ---: | --- |
-| Port counts | 27 bits | 62.5 million bytes per 1 Gb/s direction; CPU stream at most 100 million bytes at 16 bits × 100 MHz |
-| DDR counts | 30 bits | 800 million bytes per 128-bit × 100 MHz direction; 50 million clocks |
-| Debug counts | 28 bits | 50 million cycles; at most 200 million combined AXI error events |
+| Port counts | 27 bits | 62.5 million bytes per 1 Gb/s direction; CPU stream at most 125 million bytes at 16 bits × 125 MHz |
+| DDR counts | 30 bits | 1,000 million bytes per 128-bit × 125 MHz direction; 62.5 million clocks |
+| Debug counts | 28 bits | 62.5 million cycles; at most 250 million combined AXI error events |
 
 The port width also accommodates malformed tiny-frame event rates. Individual
 completed-frame updates can carry bytes from just before the polling boundary.
@@ -216,7 +217,7 @@ The interface extends the existing diagnostic aperture at `0x80100000`:
 | `0x28` | INDEX | Bits 7:4 bank, bits 3:0 slot; writable only when idle |
 | `0x2C` | DATA | Read/clear selected counter; `0xFFFFFFFF` means timeout, not a count |
 | `0x30` | BUSY | Bit 0 request held, bit 1 synchronized ack; wait for zero before changing INDEX |
-| `0x34` | FABRIC_HZ | `100000000` |
+| `0x34` | FABRIC_HZ | `125000000` |
 
 Banks 0/1 are GEM0 RX/TX, banks 2/3 GEM1 RX/TX, each with four
 slots (good packets, bad packets, good bytes, bad bytes). Banks 4/5/6/7 are
@@ -284,3 +285,8 @@ with final WNS +0.018 ns and WHS +0.010 ns. Matching firmware and hardware
 artifacts are preserved under `build/r5/statistics_artifacts/`. They were loaded
 through JTAG on 2026-09-21: DHCP and full-MTU R5/forwarded-endpoint pings passed.
 Numerical sensor/counter accuracy and sustained polling validation remain pending.
+
+The processor reads `FABRIC_HZ` and publishes it as HTTP `fabric_hz` and SNMP
+`krFabricHz` (health scalar 15). At 125 MHz a DDR/debug cycle is 8 ns.
+The TTC timestamp frequency is separate and unchanged. Future widening of the
+SFP packet interface to 128 bits requires a new port-byte counter width review.

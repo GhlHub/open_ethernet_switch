@@ -3,14 +3,14 @@
 // open_eth_mac_1g_switch's m_axis_rxd (32-bit AXI4-Stream, its own
 // axis_clk domain -- 150MHz per that core's README, fixed by its
 // internal packet buffer/descriptor logic, not reclockable) -> this
-// switch's ingress AXI4-Stream convention (16-bit, clk domain, 100MHz).
+// switch's ingress AXI4-Stream convention (16-bit, clk domain, 125MHz).
 // Two clock domains. WORD-WIDE datapath (a byte-serial version capped each
 // port at 0.8 Gbit/s, below the wire rate): an axis_clk-side splitter turns
 // each accepted 32-bit/tkeep beat into one or two 16-bit words
 // {eop, upper-byte-valid, data16}, pushed one per cycle into
 // rtl/common/async_fifo.sv; the clk side simply presents the FIFO head as the
 // 16-bit AXI4-Stream, one word per cycle. Sustained throughput is one word
-// per cycle on both sides: 1.6 Gbit/s on the fabric side at 100MHz, 2.3 Gbit/s
+// per cycle on both sides: 2.0 Gbit/s on the fabric side at 125MHz, 2.3 Gbit/s
 // on the MAC side at 142.86MHz.
 //
 // m_axis_tuser (the switch ingress bad-frame flag) is tied permanently
@@ -31,7 +31,7 @@ module mac_rxd_to_switch_ingress #(
 ) (
   input  logic axis_clk,   // MAC's AXI4-Stream clock (its own required rate)
   input  logic axis_rst_n,
-  input  logic clk,        // fabric clock (100 MHz)
+  input  logic clk,        // fabric clock (125 MHz)
   input  logic rst_n,
 
   // open_eth_mac_1g_switch's m_axis_rxd, axis_clk domain

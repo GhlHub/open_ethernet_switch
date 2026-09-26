@@ -167,6 +167,7 @@ module tb_rx_diag;
     // The retired arm register cannot affect framed CPU traffic.
     axi_write(8'h4C,32'h80000004,4'hF);
     axi_read(8'h4C,r); check(r === 0,"retired CPU override reads zero");
+    axi_read(8'h34,r); check(r === 32'd125000000,"fabric frequency is 125 MHz");
     axi_read(8'h54,r); check(r === 32'h43545801,"CPU framed TX ABI 1");
 
     // ---- CPU RX ingress-port tag ----

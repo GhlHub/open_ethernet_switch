@@ -43,7 +43,7 @@ async function save(){if(busy)return;busy=true;const button=document.querySelect
 function failed(e){status.textContent=`Unable to refresh: ${e.message}. Displayed values may be stale.`;status.className='bad';}
 async function refresh(){if(busy)return;busy=true;try{
  const s=await api('/api/statistics');
- let html='<h2>Statistics</h2><p>Refreshes every second · Cumulative totals since firmware restart · Counter reads do not clear these totals. DDR and debug cycle counts use the 100 MHz fabric clock (10 ns/cycle).</p>';
+ let html=`<h2>Statistics</h2><p>Refreshes every second · Cumulative totals since firmware restart · Counter reads do not clear these totals. DDR and debug cycle counts use ${s.fabric_hz?`${esc(s.fabric_hz/1e6)} MHz (${esc(1e9/s.fabric_hz)} ns/cycle)`:'an unavailable fabric clock frequency'}.</p>`;
  html+=table('Ethernet ports',['Port','Link speed',...portCols],s.ports.map((v,i)=>[ports[i],speed(s.speed_mbps[i],i),...v]));
  html+='<p>CPU RX is processor → fabric; CPU TX is fabric → processor.</p>';
  const st=s.stp;

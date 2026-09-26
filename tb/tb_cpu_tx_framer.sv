@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 module tb_cpu_tx_framer;
-  reg clk=0; always #5 clk=~clk;
+  reg clk=0; always #4 clk=~clk;
   reg rst_n=0;
   reg [15:0] s_data=0;
   reg [1:0] s_keep=0;

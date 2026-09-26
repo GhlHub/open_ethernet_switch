@@ -31,7 +31,7 @@ module tb_cpu_port_top;
 
   logic clk = 0;
   logic rst_n = 0;
-  always #5 clk = ~clk;
+  always #4 clk = ~clk;
 
   // ---- buf_mgr_core (instantiated directly -- see file header) ----
   logic [NUM_PORTS-1:0]               alloc_req;

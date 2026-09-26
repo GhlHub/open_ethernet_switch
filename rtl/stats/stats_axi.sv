@@ -2,7 +2,7 @@
 // 0 accepted bytes, 1 completed bursts, 2 completed latency sum, 3 max latency,
 // 4 address stall cycles, 5 data stall cycles, 6 error responses,
 // 7 outstanding cycles. Latency: accepted AW/AR through B/last-R, inclusive.
-// Width 30 covers 0.5 s at 100 MHz x 16 bytes; time counters saturate as well.
+// Width 30 covers 0.5 s at 125 MHz x 16 bytes; time counters saturate as well.
 module stats_axi #(
   parameter integer BYTES = 16,
   parameter bit WRITE = 1

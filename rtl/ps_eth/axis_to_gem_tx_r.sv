@@ -16,7 +16,7 @@
 //
 // Two clock domains, same rationale as gem_rx_w_to_axis.sv: the GEM side
 // (gem_clk = the GEM's tx_clk) pulls one byte per ~8 ns (1 Gb/s at 8-bit
-// width); the KR260 fabric side (clk) runs at 100 MHz / 16 bits. The crossing carries whole 16-bit words
+// width); the KR260 fabric side (clk) runs at 125 MHz / 16 bits. The crossing carries whole 16-bit words
 // -- each accepted AXI4-Stream word is written into rtl/common/async_fifo.sv
 // as one entry {eop, keep_hi, data[15:0]}, one write per fabric cycle -- and
 // the 16-to-8 unpack happens on the GEM side, after the crossing. (An
@@ -60,7 +60,7 @@ module axis_to_gem_tx_r #(
   parameter int FIFO_DEPTH  = 256, // in 16-bit words; power of 2
   parameter int START_WORDS = 128  // words of a frame buffered before the GEM may start it
 ) (
-  input  logic clk,      // fabric clock (100 MHz in KR260)
+  input  logic clk,      // fabric clock (125 MHz in KR260)
   input  logic rst_n,
   input  logic gem_clk,
   input  logic gem_rst_n,

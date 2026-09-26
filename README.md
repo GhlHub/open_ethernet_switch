@@ -12,6 +12,11 @@ engine. Matching FPGA and R5 firmware were deployed over JTAG; DHCP acquired
 `10.0.1.104`. CPU and forwarded miner tests each passed 1,000 full-size pings,
 and HTTP concurrency passed. See [deployment and timing results](docs/verification.md#2026-09-26-cpu-tx-metadata-and-dma-pipeline-board-deployment).
 
+The subsequent 125 MHz fabric build is now deployed and passes routed timing
+(fabric WNS +1.655 ns), DHCP, HTTP/SNMP and 1,000 full-size pings each to the CPU
+and miner. A 128-bit SFP packet interface is recorded as future work for the
+high-speed trunk. See [125 MHz board validation](docs/verification.md#2026-09-26-125-mhz-fabric-board-deployment).
+
 The intended port map is two PS GEM ports, two PL Ethernet ports, one SFP port,
 and one virtual CPU port. **The current SFP design is 1G 1000BASE-X, not 10GbE.**
 
@@ -19,7 +24,7 @@ The board top includes automatic PL PHY initialization and link polling,
 RGMII receive clock adaptation, calibration gating, link-event interrupts,
 software-controlled port flushing, and SFP I²C/sideband control. The GEM bridges
 carry whole 16-bit words across the clock boundary and use buffered TX start
-permits. The switch fabric now runs at 100 MHz; MAC adapters transfer whole
+permits. The switch fabric now runs at 125 MHz; MAC adapters transfer whole
 words and the egress frame RAM is prefetched for continuous streaming. The board top connects the digital switch to the PS external GEM FIFOs,
 DDR interconnect, CPU-facing AXI DMA, two RGMII ports, and the SFP GTH path.
 Vivado build scripts and three IP configurations are included. Existing local

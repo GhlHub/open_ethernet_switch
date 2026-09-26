@@ -37,7 +37,7 @@ contracts are not physical CDC sign-off.
 | `switch_fabric` | 1.1 / `switch_fabric` | `clk/rst_n`; `axis_clk/axis_rst_n` | Five physical packet-stream pairs, CPU stream pair, three DDR AXI masters, shared packet buffers/queues, forwarding table, six counter banks |
 | `management` | 1.2 / `switch_management` | `clk/rst_n` (production control clock) | 32-bit AXI-Lite controls, link/forward/learn masks, CPU TX ABI identifier and RX tag, statistics mailbox and 13-bank decoder |
 
-In production, the fabric runs at 100 MHz, control at approximately
+In production, the fabric runs at 125 MHz, control at approximately
 142.857 MHz, PL GMII at 125 MHz, and SFP PCS/GTH at 125/62.5 MHz. Packet
 streams on all packages use `clk`; MAC AXI-Lite uses `axis_clk`.
 The GEM FIFO clocks follow the negotiated link. The bridge is tested at

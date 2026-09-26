@@ -100,6 +100,7 @@ size_t web_stats(char *out,size_t size,const struct statistics_snapshot *s,
         s->available?"true":"false",s->capabilities,s->polls,s->late_polls,s->saturated_reads,s->read_timeouts,s->mailbox_release_timeouts,s->snapshot_response_timeouts,s->last_release_index,s->last_release_target_index,s->last_response_index,
         (unsigned long long)((hz && s->timestamp && now>=s->timestamp)?(now-s->timestamp)*1000/hz:UINT32_MAX));
     values(&w,&s->port[0][0],6,8);
+    put(&w,",\"fabric_hz\":%u",s->fabric_hz);
     put(&w,",\"speed_mbps\":[%u,%u,%u,%u,%u,%u]",ports->speed_mbps[0],ports->speed_mbps[1],ports->speed_mbps[2],ports->speed_mbps[3],ports->speed_mbps[4],ports->speed_mbps[5]);
 #if STATS_DDR
     put(&w,",\"ddr\":"); values(&w,&s->ddr[0][0],4,8);

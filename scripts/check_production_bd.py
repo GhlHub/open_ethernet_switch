@@ -10,6 +10,7 @@ from production_fixture import NATIVE, CELLS, connections
 
 def check(path, compare_physical=False):
     design = json.loads(path.read_text())['design']
+    assert design['ports']['fabric_clk_o']['parameters']['FREQ_HZ']['value'] == '125000000'
     scalar = [set(n['ports']) for n in design['nets'].values()]
     interfaces = [set(n['interface_ports']) for n in design['interface_nets'].values()]
 

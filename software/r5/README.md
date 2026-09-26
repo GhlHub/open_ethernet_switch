@@ -99,7 +99,7 @@ start a volatile JTAG session from the repository root:
 
 ```sh
 /tools/Xilinx/2026.1/Vitis/bin/xsdb software/r5/boot_jtag.tcl tcp:10.0.1.107:3121 \
-  build/ip_refactor/cpu_tx_pipeline_impl/project/kr260_switch.runs/impl_1/kr260_top.bit
+  build/ip_refactor/fabric125_impl/project/kr260_switch.runs/impl_1/kr260_top.bit
 /tools/Xilinx/2026.1/Vitis/bin/xsdb software/r5/status_jtag.tcl
 ```
 
@@ -209,7 +209,7 @@ RGMII delay assumptions require board confirmation. Existing SFP negotiation
 simulation-scale timers and interoperability gaps remain; do not treat this
 firmware as SFP hardware sign-off. The unacknowledged link-flush protocol still
 needs stronger RTL completion semantics; the current guard assumes a running
-100 MHz fabric. DMA automatic restart, cache-enabled throughput and production
+125 MHz fabric. DMA automatic restart, cache-enabled throughput and production
 entropy provisioning are later work.
 
 Register references: [AMD GEM external FIFO register](https://docs.amd.com/r/en-US/ug1087-zynq-ultrascale-registers/external_fifo_interface-GEM-Register),
@@ -265,3 +265,7 @@ See [metadata contract and matching-image requirement](../../docs/cpu-tx-metadat
 The 2026-09-26 deployment uses `STATS_DDR=1 STATS_DEBUG=1`, includes the
 pipelined CPU DDR writer, and passed DHCP, CPU/forwarded ping and HTTP tests.
 See [deployment evidence](../../docs/verification.md#2026-09-26-cpu-tx-metadata-and-dma-pipeline-board-deployment).
+
+The current board runs the 125 MHz build. `FABRIC_HZ` is exposed through HTTP
+`fabric_hz` and SNMP `krFabricHz`; DDR/debug cycles are 8 ns. MAC aging remains
+250 ms and the TTC timestamp stays at 781,250 Hz. See [125 MHz board validation](../../docs/verification.md#2026-09-26-125-mhz-fabric-board-deployment).

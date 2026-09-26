@@ -14,7 +14,7 @@ import time
 HEALTH = ('available', 'capabilities', 'polls', 'late_polls', 'saturated_reads',
           'read_timeouts', 'age_ms', 'timestamp_hz', 'build_flags',
           'mailbox_release_timeouts', 'snapshot_response_timeouts',
-          'last_release_index', 'last_release_target_index', 'last_response_index')
+          'last_release_index', 'last_release_target_index', 'last_response_index', 'fabric_hz')
 PORT = ('rx_good_packets', 'rx_bad_packets', 'rx_good_bytes', 'rx_bad_bytes',
         'tx_good_packets', 'tx_bad_packets', 'tx_good_bytes', 'tx_bad_bytes')
 DDR = ('bytes', 'bursts', 'latency_cycles', 'max_latency_cycles',
@@ -122,7 +122,8 @@ def display(data):
             print(f"{port['name'] + ' ' + direction.upper():27} {port['link']:5} "
                   f'{formatted[0]:>14} {formatted[1]:>12} {formatted[2]:>16} {formatted[3]:>12}')
     print('RX = toward fabric; CPU RX = R5 to fabric. Bytes exclude FCS/preamble/IFG.')
-    print('\nDDR (cycles at 100 MHz; maximum is since restart):')
+    clock = f"{h['fabric_hz']/1e6:g} MHz" if h.get('fabric_hz') else 'unknown fabric frequency'
+    print(f'\nDDR (cycles at {clock}; maximum is since restart):')
     for entry in data['ddr']:
         print(f"  {entry['name']}: " + ', '.join(f'{k}={entry[k]}' for k in DDR))
     if not data['ddr']:

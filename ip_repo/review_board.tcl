@@ -26,6 +26,11 @@ foreach pattern {clk_pl_0 clk_out3_pl_eth_clk_gen_ip clk_out1_pl_eth_clk_gen_ip
                  clk_gem1_rx_0 clk_gem1_tx_0} {
     if {![llength [get_clocks -quiet $pattern]]} {error "Missing constrained clock $pattern"}
 }
+set fabric_clock [get_clocks clk_out3_pl_eth_clk_gen_ip]
+if {abs([get_property PERIOD $fabric_clock] - 8.0) > 0.001} {
+    error "Fabric clock must be 125 MHz (8 ns)"
+}
+puts "PASS: 125 MHz fabric clock"
 puts "PASS: retained RGMII clock/instance constraints resolve"
 } message options]} {
     puts stderr [dict get $options -errorinfo]

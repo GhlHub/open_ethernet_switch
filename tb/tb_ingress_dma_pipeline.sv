@@ -3,7 +3,7 @@ module tb_ingress_dma_pipeline;
   import buf_mgr_pkg::*;
   import axi_dma_pkg::*;
   logic clk=0, rst_n=0;
-  always #5 clk=~clk;
+  always #4 clk=~clk;
   logic [NUM_PHYS_PORTS-1:0] frame_ready_i='0, frame_gnt_o, frame_rd_en_o, frame_dma_done_o;
   logic [NUM_PHYS_PORTS-1:0][BUF_ID_W-1:0] frame_bufid_i='0;
   logic [NUM_PHYS_PORTS-1:0][LENGTH_W-1:0] frame_length_i='0;

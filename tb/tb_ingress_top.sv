@@ -155,7 +155,7 @@ module tb_ingress_top;
     .s_axi_rready  (1'b0)
   );
 
-  always #5 clk = ~clk;
+  always #4 clk = ~clk;
 
   int errors = 0;
 

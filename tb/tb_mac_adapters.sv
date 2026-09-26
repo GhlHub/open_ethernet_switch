@@ -2,7 +2,7 @@
 //
 // Stand-alone bench for the word-wide MAC adapters:
 //   mac_rxd_to_switch_ingress (MAC 32-bit stream, axis_clk 142.86 MHz -> switch
-//   16-bit stream, fabric 100 MHz) and switch_egress_to_mac_txd (the reverse,
+//   16-bit stream, fabric 125 MHz) and switch_egress_to_mac_txd (the reverse,
 //   including the per-frame txc beat).
 //   A. every frame length 1..40 bytes plus 63/64/65/1518 in both directions,
 //      byte-for-byte, with correct tlast and tkeep (partial final word/beat),
@@ -16,7 +16,7 @@
 
 module tb_mac_adapters;
   logic clk = 0, axis_clk = 0;
-  always #5.0   clk = ~clk;         // 100 MHz fabric
+  always #4   clk = ~clk;         // 125 MHz fabric
   always #3.5   axis_clk = ~axis_clk; // ~142.9 MHz
   logic rst_n = 0, axis_rst_n = 0;
 

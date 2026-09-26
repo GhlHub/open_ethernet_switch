@@ -37,7 +37,7 @@ module tb_switch_top;
   import mac_table_pkg::*;
 
   logic clk = 0;
-  always #5 clk = ~clk; // 100 MHz (fabric)
+  always #4 clk = ~clk; // 125 MHz (fabric)
   logic rst_n = 0;
 
   logic axis_clk = 0;

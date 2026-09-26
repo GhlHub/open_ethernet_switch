@@ -1,5 +1,70 @@
 # Design inventory verification
 
+## 2026-09-26 125 MHz fabric board deployment
+
+Deployed the SHA-256-verified 125 MHz bitstream and matching all-counter R5
+firmware over JTAG (`10.0.1.107:3121`). UART confirms SD settings loaded and
+DHCP acquired `10.0.1.104`; STP remains disabled. The HTTP statistics API and
+SNMP `krFabricHz` both report `125000000`, and the served web page uses that
+value for 8 ns cycle units. The independent TTC timestamp remains 781,250 Hz.
+
+GEM1 uplink and PL0 miner links report 1 Gb/s full duplex with physical and
+forwarding masks `0x06`. Through workstation `eth1`, simultaneous full-size
+ping runs at 20 requests/s each passed 1,000/1,000 to the CPU and 1,000/1,000
+to the miner (`10.0.1.140`). HTTP regression passed all 120 mixed requests
+with six concurrent clients (maximum 0.119 s), idle-client handling,
+authentication isolation and overload recovery; administrator settings stayed
+unchanged.
+
+Post-test SNMP shows no bad packets, AXI error responses, late polls,
+saturation, mailbox-release timeouts or snapshot-response timeouts. CPU write
+transferred 2,414,751 bytes in 2,671 bursts across the sampled interval.
+Its data-stall increment was 5,342, still two WREADY-backpressure cycles per
+burst, as for physical ingress. JTAG shows no GEM1 TX underruns or UART drops.
+
+Artifacts are in `build/ip_refactor/fabric125_impl/`: `deploy.log`, `uart.log`,
+`postboot_web.json`, `postboot_ports.json`, `postboot_snmp.json`,
+`posttest_snmp.json`, `cpu_ping.log`, `miner_ping.log`, `http_regression.log`,
+`live_status.log`, and `artifacts.sha256`. Deployment is volatile; flash was
+not updated. This verifies the connected GEM1/PL0 paths and CPU management;
+unconnected ports, sustained line-rate throughput and high-speed SFP operation
+were not exercised.
+
+## 2026-09-26 125 MHz fabric build
+
+Regenerated the PL clock IP through Vivado: outputs are 125/300/125 MHz,
+with PL0's third output driving the fabric. Production BD frequency metadata,
+native assembly defaults, simulation clocks and FABRIC_HZ readback now match
+125 MHz. MAC aging remains 4 Hz using 31,250,000 fabric cycles per tick.
+The fabric/SFP-62.5-MHz CDC maximum-delay bounds tighten from 10 to 8 ns;
+other CDC structures and independent line clocks are preserved.
+
+Routed setup passes: fabric intra-clock WNS **+1.655 ns**, overall WNS
+**+0.018 ns**, worst hold **+0.010 ns**, zero failing endpoints. The overall
+setup limit remains PL0 RGMII output timing. All 26 bus-skew checks pass
+(minimum +5.601 ns); CDC finding counts are unchanged from the preceding
+build, including the known statistics-mailbox findings. These checks do not
+close the existing external-interface or mailbox protocol sign-off items.
+
+Validation includes 22 native and 22 packaged IP cases, all four counter
+configurations and current-native/production assembly comparison (21,860 clock
+samples, 114 outputs, 1,063 statistics snapshots). The clock-model regression
+checks the 8 ns output period. The Verilator CPU DMA pipeline regression passes
+2,372 cases at 125 MHz. R5 host tests and all-counter firmware build pass.
+HTTP JSON and SNMP health scalar 15 now publish the hardware fabric frequency;
+web display checks cover 125 MHz / 8 ns, 100 MHz / 10 ns and missing frequency.
+DDR/debug counts remain raw cycles; the processor TTC timestamp is unchanged.
+Existing port/DDR/debug widths still cover half a second at 125 MHz.
+
+Artifacts: `build/ip_refactor/fabric125_impl/` contains the fresh production
+project, bitstream, routed reports and matching `kr260_r5.elf`.
+`build/ip_refactor/fabric125_clock/` contains clock regeneration, focused
+simulation and firmware test logs. This initial build step did not deploy
+the image; the subsequent board validation is recorded above. Future work is
+the **128-bit SFP packet interface**, documented in
+[architecture](architecture.md#areas-for-investigation-and-improvement-roughly-by-expected-value)
+and [inventory](inventory.md).
+
 ## 2026-09-26 CPU TX metadata and DMA pipeline board deployment
 
 Built a fresh catalog and production design with fabric 1.1, management 1.2

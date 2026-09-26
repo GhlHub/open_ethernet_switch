@@ -102,8 +102,10 @@ CPU read. Column 1 is name; columns 2–9 are bytes, completed bursts,
 latency cycle sum, maximum latency cycles, address stalls, data stalls,
 error responses, outstanding cycles. Maximum latency is a `Gauge32`
 maximum **since R5 restart**; all other metrics are `Counter64` sums.
-DDR cycles are at 100 MHz; mean latency in seconds is
-`delta(latencyCycles) / delta(completedBursts) / 100000000` when bursts > 0.
+DDR cycles use the hardware-reported `krFabricHz` (health scalar 15), now
+125,000,000 Hz. Mean latency in seconds is
+`delta(latencyCycles) / delta(completedBursts) / krFabricHz` when bursts > 0.
+This differs from health scalar 8, the processor timestamp frequency.
 
 Debug columns are 1 name and 2 `Counter64` total; rows 1–16 match slots
 0–15 in [statistics.md](statistics.md). This also documents the precise
@@ -229,4 +231,4 @@ Port-table column 12 reports supported physical link speed in Mb/s (0, 10,
 100, 1000); column 13 reports requested PS advertisement bits (1=10FD,
 2=100FD, 4=1000FD; other ports return zero). Column 11 remains the inaccessible
 index. See [PS speed selection](ps-ethernet-speeds.md). All-counter builds now
-expose 364 total objects, including four standard system objects.
+expose 365 total objects, including four standard system objects.

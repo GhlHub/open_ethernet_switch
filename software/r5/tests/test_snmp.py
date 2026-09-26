@@ -117,9 +117,9 @@ class SnmpTests(unittest.TestCase):
         self.assertEqual([v[1] for v in values],[0x46]*3+[2,2])
 
     def test_system_and_health(self):
-        names=[(1,3,6,1,2,1,1,2,0),ROOT+(1,7,0),ROOT+(1,9,0)]
+        names=[(1,3,6,1,2,1,1,2,0),ROOT+(1,7,0),ROOT+(1,9,0),ROOT+(1,15,0)]
         vals=decode(respond(request(names)))[3]
-        self.assertEqual([v[2] for v in vals],[ROOT,100,FLAGS])
+        self.assertEqual([v[2] for v in vals],[ROOT,100,FLAGS,125000000])
 
     def test_port_speeds_and_advertisement(self):
         names=[ROOT+(2,1,12,i) for i in range(1,7)] + [ROOT+(2,1,13,i) for i in range(1,7)]
@@ -157,7 +157,7 @@ class SnmpTests(unittest.TestCase):
             self.assertGreater(val[0],cursor)
             cursor=val[0]
             walk.append(val)
-        expected=200+(100 if FLAGS&2 else 0)+(64 if FLAGS&4 else 0)
+        expected=201+(100 if FLAGS&2 else 0)+(64 if FLAGS&4 else 0)
         self.assertEqual(len(walk),expected)
         for group,bit in [(3,2),(4,4)]:
             self.assertEqual(any(v[0][:9]==ROOT+(group,) for v in walk), bool(FLAGS&bit))

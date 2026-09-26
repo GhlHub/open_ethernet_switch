@@ -3,7 +3,7 @@
 // End-to-end wire-rate check of one PL GMII port: the real
 // open_eth_mac_1g_switch plus both width adapters (pl_gmii_mac_top), with the
 // GMII transmit pins looped straight back into the GMII receive pins.
-// The switch-side egress stream (16-bit, 100 MHz fabric) is driven as fast as
+// The switch-side egress stream (16-bit, 125 MHz fabric) is driven as fast as
 // tready allows; the switch-side ingress stream is consumed as fast as it
 // arrives. If either adapter (or the MAC hand-off) moved less than the wire rate,
 // the transmit side would show gaps between frames on the GMII pins or the
@@ -21,7 +21,7 @@
 
 module tb_pl_mac_linerate;
   logic clk = 0, axis_clk = 0, gtx_clk = 0;
-  always #5.0 clk = ~clk;              // 100 MHz fabric
+  always #4 clk = ~clk;              // 125 MHz fabric
   always #3.5 axis_clk = ~axis_clk;    // ~142.9 MHz
   always #4.0 gtx_clk = ~gtx_clk;      // 125 MHz
   logic rst_n = 0, axis_rst_n = 0;

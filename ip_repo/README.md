@@ -5,6 +5,11 @@ digital blocks. `board.json` lists the KR260 physical shell, vendor IP and
 constraints. Paths are relative to the repository root. Existing leaf RTL
 stays in `rtl/`; each dependency has one editable source copy.
 
+The production fabric clock is 125 MHz. The production BD audit checks its
+frequency metadata, and the routed audit checks the actual 8 ns period.
+MAC aging remains 4 Hz. See [deployed validation](../docs/verification.md#2026-09-26-125-mhz-fabric-board-deployment)
+and the [future 128-bit SFP interface](../docs/inventory.md#125-mhz-fabric-and-trunk-preparation-2026-09-26-deployed).
+
 | Catalog IP (`ghlhub.org:ethernet:<name>:<version>`) | Top module | Responsibility |
 | --- | --- | --- |
 | `switch_fabric` | `switch_fabric` | Five physical packet streams, CPU virtual port, forwarding, shared buffers, DDR masters, fabric counters |

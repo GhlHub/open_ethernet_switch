@@ -7,13 +7,13 @@
 // schematic), three clocks out -- 125MHz (`gtx_clk_o`, GMII-side, shared
 // by pl_gmii_mac_top.sv and rgmii_gmii_adapter.sv's TX/RX domain),
 // 300MHz (`idelay_refclk_o`, rgmii_gmii_adapter.sv's IDELAYE3/
-// IDELAYCTRL reference), and 100MHz (`clk_o`). One instance per PL
+// IDELAYCTRL reference), and 125MHz (`clk_o`). One instance per PL
 // port -- IDELAYCTRL's calibration domain is bank-local (see
 // rgmii_gmii_adapter.sv's header), PL0 and PL1 are in different I/O
 // banks, so there is no benefit to (and no real way to) share a single
 // instance across both ports for gtx_clk_o/idelay_refclk_o.
 //
-// clk_o (100MHz) is a different story: switch_top.sv's `clk` is the
+// clk_o (125MHz) is a different story: switch_top.sv's `clk` is the
 // single switch fabric clock shared by *everything* (ingress/egress,
 // buf_mgr_core, the MAC table, the CPU port, both PL ports, SFP -- not
 // scoped to one port the way gtx_clk_o/idelay_refclk_o are), so only
@@ -27,7 +27,7 @@
 // (Clocking Wizard) IP core -- generated and validated against
 // xck26-sfvc784-2LV-c rather than hand-computed (MMCM multiply/divide
 // values aren't something to guess at): all three output frequencies
-// land exactly on target (125.00000 MHz, 300.00000 MHz, 100.00000 MHz),
+// land exactly on target (125.00000 MHz, 300.00000 MHz, 125.00000 MHz),
 // confirmed by the tool, not assumed. Regenerate
 // rtl/pl_gmii/ip/pl_eth_clk_gen_ip.xci's output products in Vivado
 // before synthesis/simulation of this file; only the .xci itself is
@@ -49,7 +49,7 @@ module pl_eth_clk_gen (
   output logic idelay_refclk_o,       // 300 MHz
   output logic idelay_refclk_rst_n_o, // synchronized to idelay_refclk_o
 
-  output logic clk_o,       // 100 MHz -- see header: PL0 instance only
+  output logic clk_o,       // 125 MHz -- see header: PL0 instance only
   output logic rst_n_o,     // synchronized to clk_o
 
   output logic locked_o // raw MMCM lock status, informational

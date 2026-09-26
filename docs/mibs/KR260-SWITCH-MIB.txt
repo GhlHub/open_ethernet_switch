@@ -5,7 +5,7 @@ IMPORTS
     Gauge32, enterprises FROM SNMPv2-SMI;
 
 kr260Switch MODULE-IDENTITY
-    LAST-UPDATED "202609220000Z"
+    LAST-UPDATED "202609260000Z"
     ORGANIZATION "Open Ethernet Switch project"
     CONTACT-INFO "https://github.com/GhlHub/open_ethernet_switch"
     DESCRIPTION
@@ -15,6 +15,8 @@ kr260Switch MODULE-IDENTITY
          processor-accumulated totals since R5 restart; retrieval does not
          clear them. A walk spans multiple collection intervals. Check
          collection health and sensor validity before interpreting values."
+    REVISION "202609260000Z"
+    DESCRIPTION "Add hardware fabric frequency for DDR/debug cycle interpretation."
     REVISION "202609220000Z"
     DESCRIPTION "Separate timeout causes and add per-bank/slot counts and latest indices."
     REVISION "202609210000Z"
@@ -128,6 +130,14 @@ krStatsLastResponseIndex OBJECT-TYPE
     DESCRIPTION "Selected index at the most recent hardware snapshot-response timeout. Index = bank * 16 + slot.
         Value 4294967295 means no event since R5 restart."
     ::= { krHealth 14 }
+
+krFabricHz OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "Hz"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Fabric clock frequency reported by hardware. DDR and debug cycle counters use this frequency; distinct from the processor timestamp clock."
+    ::= { krHealth 15 }
 
 krPortTable OBJECT-TYPE
     SYNTAX SEQUENCE OF KrPortEntry

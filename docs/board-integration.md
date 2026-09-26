@@ -67,7 +67,7 @@ The board assembly uses two instances of
 [`pl_eth_clk_gen`](../rtl/pl_gmii/pl_eth_clk_gen.sv). Each wraps the same
 [`Clocking Wizard configuration`](../rtl/pl_gmii/ip/pl_eth_clk_gen_ip.xci).
 Its configured ratios are input divide 1, feedback multiply 60, and output
-divides 12, 5, and 15: a nominal 1500 MHz VCO yields 125, 300, and 100 MHz.
+divides 12, 5, and 12: a nominal 1500 MHz VCO yields 125, 300, and 125 MHz.
 This describes the checked-in configuration, not measured hardware clocks.
 
 ```mermaid
@@ -80,16 +80,16 @@ flowchart TB
     C1 -->|125 MHz| P1["PL1 MAC + RGMII TX"]
     C0 -->|300 MHz| D0["PL0 RX data-delay calibration"]
     C1 -->|300 MHz| D1["PL1 RX data-delay calibration"]
-    C0 -->|100 MHz| FAB["Shared switch fabric"]
-    C1 -->|100 MHz| UNUSED["Unused"]
+    C0 -->|125 MHz| FAB["Shared switch fabric"]
+    C1 -->|125 MHz| UNUSED["Unused"]
     PHY -->|Separate RXC + data per port| RX["DDR RX capture + async FIFO"]
     RX -->|Local 125 MHz domain| MAC["Port MAC receive logic"]
 ```
 
 Each output has reset release synchronized to its own clock after MMCM lock.
-PL0's 100 MHz clock/reset drives the switch fabric, switch DDR masters,
+PL0's 125 MHz clock/reset drives the switch fabric, switch DDR masters,
 CPU AXI DMA, both DDR SmartConnects and PS HP interface clocks. PL1's
-100 MHz output is unused. The 300 MHz outputs calibrate the active RX data/control IDELAYE3 stages.
+125 MHz output is unused. The 300 MHz outputs calibrate the active RX data/control IDELAYE3 stages.
 FPGA RX clock delay remains disabled.
 
 | Clock | Source | Consumers |
@@ -97,7 +97,7 @@ FPGA RX clock delay remains disabled.
 | 125 MHz per PL port | Each PL MMCM, from its 25 MHz input | MAC and RGMII TX; local RX FIFO read side |
 | PHY RXC per PL port | Each external PHY | RGMII DDR receive and FIFO write side |
 | 300 MHz per PL port | Each PL MMCM | RX data/control IDELAYE3 calibration |
-| 100 MHz fabric | PL0 MMCM | Switch, DDR masters/interconnects, CPU DMA and HP0/HP1 clocks |
+| 125 MHz fabric | PL0 MMCM | Switch, DDR masters/interconnects, CPU DMA and HP0/HP1 clocks |
 | About 142.857 MHz | PS PL0 output, requested as 150 MHz | MAC/MDIO AXI-Lite, HPM0_LPD and control interconnect |
 | 50 MHz | PS PL1 output | GTH reset/calibration free-running clock |
 | GEM0/1 RX and TX FIFO clocks | Four separate buffered PS outputs | Corresponding bridge RX/TX halves; per-domain `rst_sync` |

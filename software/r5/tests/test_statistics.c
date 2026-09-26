@@ -23,6 +23,7 @@ void mmio_write(uintptr_t address,uint32_t value)
 }
 uint32_t mmio_read(uintptr_t address)
 {
+    if (address==DIAG_BASE+0x34) return 125000000;
     if (address==DIAG_BASE+0x24) return mode==1?0:0x53540107;
     if (address==DIAG_BASE+0x28) return mode==3?0x32:index;
     if (address==DIAG_BASE+0x30) return mode==3?2:0;
@@ -41,6 +42,7 @@ int main(int argc,char **argv)
     mode=argc>1?(unsigned)atoi(argv[1]):0;
     if (!setjmp(done)) statistics_task(NULL);
     struct statistics_snapshot snapshot;statistics_get(&snapshot);
+    assert(snapshot.fabric_hz==125000000);
     assert(snapshot.available==(mode!=1));
     if (mode==1) {assert(reads==0);puts("PASS: firmware capability mismatch rejects collection");return 0;}
     assert(snapshot.polls==40);

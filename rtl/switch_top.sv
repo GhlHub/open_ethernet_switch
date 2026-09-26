@@ -5,11 +5,11 @@ module switch_top
   import mac_table_pkg::*;
 #(
   // age_tick's clock divider (see below); overridable so a testbench can
-  // use a small value instead of the real ~4Hz-at-100MHz divide count,
+  // use a small value instead of the real ~4Hz-at-125MHz divide count,
   // which is far too slow to usefully simulate
   parameter bit STATS_DDR = 0,
   parameter bit STATS_DEBUG = 0,
-  parameter int AGE_TICK_DIVIDE_COUNT = 100_000_000 / 4,
+  parameter int AGE_TICK_DIVIDE_COUNT = 125_000_000 / 4,
   // Simulation defaults; the board top supplies the 125 MHz timer values.
   parameter int SFP_AN_BREAK_LINK_CYCLES = 8,
   parameter int SFP_AN_LINK_TIMER_CYCLES = 8,
@@ -19,7 +19,7 @@ module switch_top
   input wire [7:0] stats_index,
   output wire stats_ack,
   output wire [31:0] stats_value,
-  input  logic clk,      // fabric clock (100 MHz) -- shared by everything
+  input  logic clk,      // fabric clock (125 MHz) -- shared by everything
   input  logic rst_n,
 
   // MAC AXI4-Stream + AXI4-Lite clock (150 MHz), shared by all 3 PL

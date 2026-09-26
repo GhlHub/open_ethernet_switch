@@ -23,7 +23,7 @@ foreach cell {gem0 gem1 pl0 pl1 sfp} {
     incr i
 }
 # One fabric clock/reset; MAC control and physical clocks stay independent.
-set fabric_clk [create_bd_port -dir I -type clk -freq_hz 100000000 fabric_clk]
+set fabric_clk [create_bd_port -dir I -type clk -freq_hz 125000000 fabric_clk]
 set fabric_reset [create_bd_port -dir I -type rst fabric_reset_n]
 set_property CONFIG.POLARITY ACTIVE_LOW $fabric_reset
 foreach cell {fabric gem0 gem1 pl0 pl1 sfp} {

@@ -4,7 +4,7 @@ module switch_fabric
   import axi_dma_pkg::*;
   import mac_table_pkg::*;
 #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
-  parameter int AGE_TICK_DIVIDE_COUNT=100_000_000/4) (
+  parameter int AGE_TICK_DIVIDE_COUNT=125_000_000/4) (
   input wire  clk,
   input wire  rst_n,
   input wire  axis_clk,
@@ -218,7 +218,7 @@ module switch_fabric
 
   // =========================================================================
   // age_tick: free-running clock divider off the fabric clock (clk,
-  // 100 MHz by default), pulsing age_tick for exactly 1 cycle every
+  // 125 MHz by default), pulsing age_tick for exactly 1 cycle every
   // AGE_TICK_DIVIDE_COUNT cycles (~1/4 second at the default count) --
   // mac_addr_table_top.sv synchronizes/edge-detects this itself (it need
   // not already be clean in this clock domain, though it already is), so

@@ -29,7 +29,7 @@ module tb_pl_gmii_adapters;
 
   logic clk = 0;
   logic rst_n = 0;
-  always #5 clk = ~clk; // 100 MHz (switch fabric side)
+  always #4 clk = ~clk; // 125 MHz (switch fabric side)
 
   logic axis_clk = 0;
   logic axis_rst_n = 0;

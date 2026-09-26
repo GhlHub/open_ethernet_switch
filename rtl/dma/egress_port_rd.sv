@@ -8,7 +8,7 @@
 // pool entry isn't needed past that point), then drains the local copy
 // out one 16-bit word per cycle, with the next 128-bit beat prefetched from the
 // frame RAM while the current one drains so there are no idle cycles between
-// beats (100 MHz core clock domain -- widened
+// beats (125 MHz core clock domain -- widened
 // from an earlier 8-bit/125 MHz convention specifically to ease timing
 // closure on the fabric) to the MAC (or a ps_gem_axis_bridge's s_axis_*
 // slave, for a PS GEM port).

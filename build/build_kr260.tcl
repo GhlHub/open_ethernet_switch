@@ -150,7 +150,7 @@ create_bd_port -dir O -type clk axis_clk
 create_bd_port -dir O -type rst axis_rst_n
 create_bd_port -dir O -type clk freerun_clk
 create_bd_port -dir O -type rst ps_rst_n
-create_bd_port -dir I -type clk -freq_hz 100000000 fabric_clk_o
+create_bd_port -dir I -type clk -freq_hz 125000000 fabric_clk_o
 create_bd_port -dir I -type rst fabric_rst_n_o
 connect_bd_net [get_bd_pins ps/pl_clk0] [get_bd_ports axis_clk] [get_bd_pins ps/maxihpm0_lpd_aclk] \
   [get_bd_pins rst150/slowest_sync_clk] [get_bd_pins sc_ctl/aclk]

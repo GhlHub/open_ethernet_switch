@@ -72,6 +72,7 @@ void snmp_mib_build(struct snmp_mib *m,const struct statistics_snapshot *s,
     add(m,1,12,0,GAUGE,s->last_release_index,NULL);
     add(m,1,13,0,GAUGE,s->last_release_target_index,NULL);
     add(m,1,14,0,GAUGE,s->last_response_index,NULL);
+    add(m,1,15,0,GAUGE,s->fabric_hz,NULL);
     for (unsigned col=1;col<=10;col++) for (unsigned row=0;row<6;row++)
         add(m,2,col,row+1,col==1?STRING:col==2?INTEGER:COUNTER64,
             col==1?0:col==2?((links>>row)&1?1:2):s->port[row][col-3],

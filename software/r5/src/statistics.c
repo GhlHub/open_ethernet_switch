@@ -71,6 +71,7 @@ void statistics_task(void *unused)
 {
     (void)unused;
     totals.capabilities=mmio_read(CAPS);
+    totals.fabric_hz=mmio_read(DIAG_BASE+0x34);
     totals.available=totals.capabilities==EXPECTED_CAPS;
     xil_printf("Statistics ABI/caps %08x expected %08x: %s\r\n",totals.capabilities,
                EXPECTED_CAPS,totals.available?"250 ms polling":"MISMATCH; collection disabled");

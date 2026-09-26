@@ -4,7 +4,7 @@
 // Icarus/Verilator simulation -- MMCME4_ADV is a real UltraScale+
 // primitive neither tool can simulate (see that file's header; validated
 // instead by real synth_design against Vivado, confirmed 0 errors/0
-// critical warnings and the exact expected 125.000/300.000/100.000MHz
+// critical warnings and the exact expected 125.000/300.000/125.000MHz
 // outputs via report_clocks). A behavioral clock *multiplier* can't be built
 // from ref_clk_25m_i with plain digital logic the way a divider can (you
 // can't reconstruct sub-period timing from a slower edge without a real
@@ -43,7 +43,7 @@ module pl_eth_clk_gen_sim_model #(
   output logic idelay_refclk_o,
   output logic idelay_refclk_rst_n_o,
 
-  output logic clk_o,   // 100 MHz -- see pl_eth_clk_gen.sv's header:
+  output logic clk_o,   // 125 MHz -- see pl_eth_clk_gen.sv's header:
   output logic rst_n_o, // intended to be used from the PL0 instance only
 
   output logic locked_o
@@ -60,7 +60,7 @@ module pl_eth_clk_gen_sim_model #(
   assign idelay_refclk_o = idelay_clk_q;
 
   logic clk_q = 1'b0;
-  always #5.000 clk_q = ~clk_q; // 100 MHz
+  always #4.000 clk_q = ~clk_q; // 125 MHz
   assign clk_o = clk_q;
 
   logic [$clog2(LOCK_DELAY_CYCLES+1):0] lock_cnt_q;

@@ -1,6 +1,7 @@
 # Clock-domain-crossing review
 
-**Current routed evidence:** [2026-09-26 rebuild/deployment](verification.md#2026-09-26-cpu-tx-metadata-and-dma-pipeline-board-deployment).
+**Current routed evidence:** [125 MHz build](verification.md#2026-09-26-125-mhz-fabric-build)
+and [board deployment](verification.md#2026-09-26-125-mhz-fabric-board-deployment).
 The [preceding timing/CDC review](timing-cdc-review-20260926.md) records the
 mailbox and external-interface analysis.
 The historical counts below are superseded. The current image meets its timing
@@ -22,7 +23,7 @@ not blanket waivers.
 | Clock | Source | Nominal |
 | --- | --- | --- |
 | `clk_pl_0` | PS `pl_clk0` | ~142.9 MHz (MAC stream + AXI-Lite) |
-| `clk_out3_pl_eth_clk_gen_ip` | PL0 MMCM | 100 MHz (switch fabric, all AXI masters) |
+| `clk_out3_pl_eth_clk_gen_ip` | PL0 MMCM | 125 MHz (switch fabric, all AXI masters) |
 | `clk_out1_pl_eth_clk_gen_ip[_1]`, `clk_out1_sfp_pcs_clk_gen_ip` | MMCMs | 125 MHz (GMII, PCS) |
 | `clk_gem{0,1}_{rx,tx}_0` | PS | 125 MHz (GEM FIFO interface, independent RX and TX) |
 | `plN_rgmii_rxc` | PHY | 125 MHz (RGMII receive; also the write clock of the elastic buffer) |
@@ -113,7 +114,7 @@ not blanket waivers.
 ## Port-link control and polling additions
 
 `port_link_ctrl` synchronizes software levels and flush toggles into the
-100 MHz fabric. A four-cycle delay separates link masking from the flush
+125 MHz fabric. A four-cycle delay separates link masking from the flush
 pulse. Queue and MAC-table engines merge pending masks, and their combined
 busy status is registered before synchronization back to AXI-Lite. Tests cover
 queue/refcount release races, multiple flushes, learned-entry expiry and a

@@ -34,7 +34,7 @@ int main(void)
     const char *credentials="&username=operator&salt=00112233445566778899aabbccddeeff&hash=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     snprintf(req,sizeof(req),"POST /api/config HTTP/1.1\r\nContent-Length: %u\r\nX-KR260-Request: 1\r\n\r\n%s%s",(unsigned)(strlen(cfg)+strlen(credentials)),cfg,credentials);
     assert(web_parse(req,strlen(req),&r)==1 && r.credentials && !strcmp(r.settings.username,"operator"));
-    struct statistics_snapshot s={.available=true}; struct sensor_snapshot v={0};
+    struct statistics_snapshot s={.available=true,.fabric_hz=125000000}; struct sensor_snapshot v={0};
     s.port[0][0]=UINT64_MAX;
     for(unsigned b=0;b<13;b++)for(unsigned i=0;i<16;i++){
         s.release_timeout_by_index[b][i]=UINT32_MAX;s.response_timeout_by_index[b][i]=UINT32_MAX;
@@ -45,6 +45,7 @@ int main(void)
     assert(web_stats(output,10,&s,&v,100,200,&ports,&st)==0);
     assert(web_stats(output,sizeof(output),&s,&v,100,200,&ports,&st)>0);
     assert(strstr(output,"\"18446744073709551615\""));
+    assert(strstr(output,"\"fabric_hz\":125000000"));
     puts(output);
     return 0;
 }

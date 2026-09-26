@@ -38,6 +38,7 @@ const fs=require('fs'),path=require('path');
   await page.goto('http://kr260.test/statistics');
   await page.getByRole('heading',{name:'Ethernet ports',exact:true}).waitFor();
   await page.waitForTimeout(2300);
+  if(!(await page.locator('#content').innerText()).includes('125 MHz (8 ns/cycle)'))throw Error('Fabric frequency display');
   if(refreshes<3)throw Error('Refresh cadence');
   for(const text of ['18446744073709551615','30.0 °C','31.6 °C','1.800 V','5.000 V','10 Mb/s full duplex'])
    if(!await page.getByText(text,{exact:true}).count())throw Error('Missing exact display: '+text);

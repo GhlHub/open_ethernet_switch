@@ -5,7 +5,7 @@
 //      rst_n_o all stay low through reset and while waiting out the
 //      fake lock delay, then all assert
 //   B. gtx_clk_o period is 8ns (125MHz), idelay_refclk_o period is
-//      ~1.667ns (300MHz), clk_o period is 10ns (100MHz), measured
+//      ~1.667ns (300MHz), clk_o period is 8ns (125MHz), measured
 //      directly from edge timestamps
 
 `timescale 1ns/1ps
@@ -105,12 +105,12 @@ module tb_pl_eth_clk_gen_sim_model;
       @(posedge clk); t0 = $realtime;
       @(posedge clk); t1 = $realtime;
       clk_period = t1 - t0;
-      if (clk_period < 9.999 || clk_period > 10.001) begin
-        $display("FAIL: testB clk_o period = %0fns, expected 10ns (100MHz)", clk_period);
+      if (clk_period < 7.999 || clk_period > 8.001) begin
+        $display("FAIL: testB clk_o period = %0fns, expected 8ns (125MHz)", clk_period);
         ok = 1'b0;
       end
 
-      if (ok) $display("PASS: testB gtx_clk_o=125MHz, idelay_refclk_o=300MHz, clk_o=100MHz (measured from edge timestamps)");
+      if (ok) $display("PASS: testB gtx_clk_o=125MHz, idelay_refclk_o=300MHz, clk_o=125MHz (measured from edge timestamps)");
       else errors++;
     end
 

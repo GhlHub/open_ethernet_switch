@@ -31,7 +31,7 @@ module tb_egress_gem_tx_integration;
 
   logic clk = 0;
   logic rst_n = 0;
-  always #5 clk = ~clk; // 100 MHz (fabric side)
+  always #4 clk = ~clk; // 125 MHz (fabric side)
 
   logic gem_clk = 0;
   logic gem_rst_n = 0;

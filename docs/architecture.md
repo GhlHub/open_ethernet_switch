@@ -345,26 +345,25 @@ ABI. Shared STP task-state and CPU RX tag risks remain recorded in [verification
 ## Switch-fabric bandwidth limitations and areas to investigate
 
 Status: updated 2026-09-26 for the pipelined physical and CPU ingress write
-engines (one beat per cycle after fill). Fabric clock is 100 MHz, and per-port stream
+engines (one beat per cycle after fill). Fabric clock is 125 MHz, and per-port stream
 stages transfer one word per cycle. **The DDR throughput estimates below are analytical, not measured system
 performance.** A single-port MAC loopback bench measures frame integrity and
 GMII gaps; no bench exercises sustained traffic on several ports through a
-realistic shared-memory model. Figures marked "assumed" use an
-assumed 30-cycle (300 ns) latency for both an AXI read (address to first data) and
-a write response (last data to response) through SmartConnect, the PS HP0 port
-and DDR, plus about 6 cycles of state overhead per frame.
+realistic shared-memory model. The previous 100 MHz estimates based on an
+assumed fixed 30-cycle memory latency are retired: DDR and interconnect delays
+must be remeasured at 125 MHz rather than presumed to shrink with the clock.
 
-### Raw capacity (128-bit AXI, 100 MHz fabric)
+### Raw capacity (128-bit AXI, 125 MHz fabric)
 
 | Path | Data-phase ceiling | Notes |
 | --- | --- | --- |
-| HP0 port, per direction | 12.8 Gbit/s (1.6 GB/s) | Shared by ingress writes, egress reads and the CPU-port master; DDR is also shared with the PS |
-| Ingress write master | 12.8 Gbit/s (1.6 GB/s) | 1 cycle per 16-byte beat after pipeline fill, with AXI ready; one burst outstanding |
-| Egress read master | 12.8 Gbit/s | 1 beat per cycle; one burst outstanding |
-| Per-port egress stream out of `egress_port_rd` | 1.6 Gbit/s | One word per cycle; the next 128-bit beat is prefetched while the current one drains (it was 8 words per 10 cycles) |
-| PL/SFP port adapters, each direction | 1.6 Gbit/s | Word-wide FIFOs (`switch_egress_to_mac_txd.sv`, `mac_rxd_to_switch_ingress.sv`): one 16-bit word per fabric cycle on the fabric side and per MAC-clock cycle on the MAC side (2.3 Gbit/s). This replaced a byte-serial version that limited each port to 0.8 Gbit/s (0.5 Gbit/s at 62.5 MHz). |
-| CPU-port AXI DMA (32-bit) | 3.2 Gbit/s | Separate HP1 path |
-| `cpu_dma_wr.sv` | 12.8 Gbit/s | Two-word read pipeline; 1 cycle per 16-byte beat after fill, with AXI ready; one burst outstanding. Simulation verified and board deployed 2026-09-26 |
+| HP0 port, per direction | 16 Gbit/s (2 GB/s) | Shared by ingress writes, egress reads and the CPU-port master; DDR is also shared with the PS |
+| Ingress write master | 16 Gbit/s (2 GB/s) | 1 cycle per 16-byte beat after pipeline fill, with AXI ready; one burst outstanding |
+| Egress read master | 16 Gbit/s | 1 beat per cycle; one burst outstanding |
+| Per-port egress stream out of `egress_port_rd` | 2 Gbit/s | One word per cycle; the next 128-bit beat is prefetched while the current one drains (it was 8 words per 10 cycles) |
+| PL/SFP port adapters, each direction | 2 Gbit/s | Word-wide FIFOs (`switch_egress_to_mac_txd.sv`, `mac_rxd_to_switch_ingress.sv`): one 16-bit word per fabric cycle on the fabric side and per MAC-clock cycle on the MAC side (2.3 Gbit/s). This replaced a byte-serial version that limited each port to 0.8 Gbit/s (0.5 Gbit/s at 62.5 MHz). |
+| CPU-port AXI DMA (32-bit) | 4 Gbit/s | Separate HP1 path |
+| `cpu_dma_wr.sv` | 16 Gbit/s | Two-word read pipeline; 1 cycle per 16-byte beat after fill, with AXI ready; one burst outstanding. Simulation verified and board deployed 2026-09-26 |
 | Aggregate offered load | 5 Gbit/s | 5 physical ports at 1 Gbit/s; flooded frames multiply the egress side |
 
 ### Ingress limitations
@@ -426,9 +425,10 @@ and DDR, plus about 6 cycles of state overhead per frame.
    frames from the 128-byte FIFO alone; that ignored the MAC's buffer and is
    withdrawn.)
 3. **One shared read master, one burst outstanding**: each frame pays the full read
-   latency. For 64-byte frames the master could sustain about 2.6 million frames/s
-   (assumed), against 7.4 million offered at five-port small-frame line rate,
-   before any flood multiplication. About 1.18 GB/s for 1518-byte frames (assumed).
+   latency. The idealized frame rate is fabric frequency divided by the sum
+   of data beats, memory latency cycles and state overhead. Small frames remain
+   especially sensitive to memory latency and flooding; sustainable throughput
+   at 125 MHz must be measured.
 5. **Shared HP0**: ingress, egress and the CPU-port master contend for one HP port
    and for DDR with the rest of the PS.
 
@@ -445,7 +445,7 @@ and DDR, plus about 6 cycles of state overhead per frame.
 3. **Ingress write engine**: physical-port beat pipelining is implemented and
    simulation-tested. Allowing several bursts in flight to hide response latency
    remains future work and requires updating the statistics monitor
-   single-outstanding contract. The separate `cpu_dma_wr.sv` remains unoptimized.
+   single-outstanding contract. The CPU write engine uses the same two-word pipeline.
 4. **Egress read engine**: allow several outstanding reads and overlap the next
    frame's fetch with the current stream (double-buffered frame RAM or a larger
    transmit FIFO). Beat-boundary prefetch is already implemented.
@@ -454,9 +454,17 @@ and DDR, plus about 6 cycles of state overhead per frame.
 6. **Memory system**: consider a second HP port for egress (HP0 is shared by three
    masters), larger bursts across frames, cache/DDR-controller QoS settings, and the
    pool location relative to other PS traffic.
-7. **Clock**: the board fabric is now 100 MHz. Review per-domain timing and
+7. **Clock**: the source fabric target is now 125 MHz. Review per-domain timing and
    resource use before any further increase; global routed slack is dominated
    by other paths and does not establish performance headroom.
+
+8. **High-speed SFP trunk:** widen the SFP packet interface to **128 bits**,
+   including byte enables and packet boundaries, for the eventual
+   1/2.5/5/10 Gb/s trunk. The current 16-bit interface has only 2 Gb/s raw
+   capacity at 125 MHz; 128 bits provides 16 Gb/s before overhead. This requires
+   adapting the SFP ingress/egress buffering, parser and DDR transfer boundaries,
+   plus revisiting statistics widths for higher byte rates. Higher-rate MAC/PCS,
+   transceiver configuration and module interoperability are separate future work.
 
 ### Bug found while building the wire-rate test
 

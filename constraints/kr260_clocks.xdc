@@ -19,7 +19,7 @@ set_max_delay -datapath_only -from [get_clocks clk_pl_0] -to [get_clocks clk_out
 set_max_delay -datapath_only -from [get_clocks clk_out3_pl_eth_clk_gen_ip] -to [get_clocks clk_pl_0] 7.000
 set_max_delay -datapath_only -from [get_clocks clk_out3_pl_eth_clk_gen_ip] -to [get_clocks clk_out1_pl_eth_clk_gen_ip_1] 8.000
 set_max_delay -datapath_only -from [get_clocks clk_out3_pl_eth_clk_gen_ip] -to [get_clocks clk_out1_sfp_pcs_clk_gen_ip*] 8.000
-set_max_delay -datapath_only -from [get_clocks clk_out3_pl_eth_clk_gen_ip] -to [get_clocks clk_out2_sfp_pcs_clk_gen_ip*] 10.000
+set_max_delay -datapath_only -from [get_clocks clk_out3_pl_eth_clk_gen_ip] -to [get_clocks clk_out2_sfp_pcs_clk_gen_ip*] 8.000
 set_max_delay -datapath_only -from [get_clocks clk_out3_pl_eth_clk_gen_ip] -to [get_clocks clk_gem0_rx_0] 8.000
 set_max_delay -datapath_only -from [get_clocks clk_out3_pl_eth_clk_gen_ip] -to [get_clocks clk_gem0_tx_0] 8.000
 set_max_delay -datapath_only -from [get_clocks clk_out3_pl_eth_clk_gen_ip] -to [get_clocks clk_gem1_rx_0] 8.000
@@ -40,7 +40,7 @@ set_max_delay -datapath_only -from [get_clocks clk_out1_sfp_pcs_clk_gen_ip*] -to
 set_max_delay -datapath_only -from [get_clocks clk_out1_sfp_pcs_clk_gen_ip*] -to [get_clocks clk_out1_pl_eth_clk_gen_ip] 8.000
 set_max_delay -datapath_only -from [get_clocks clk_out1_sfp_pcs_clk_gen_ip*] -to [get_clocks clk_out1_pl_eth_clk_gen_ip_1] 8.000
 set_max_delay -datapath_only -from [get_clocks clk_out2_sfp_pcs_clk_gen_ip*] -to [get_clocks clk_pl_0] 7.000
-set_max_delay -datapath_only -from [get_clocks clk_out2_sfp_pcs_clk_gen_ip*] -to [get_clocks clk_out3_pl_eth_clk_gen_ip] 10.000
+set_max_delay -datapath_only -from [get_clocks clk_out2_sfp_pcs_clk_gen_ip*] -to [get_clocks clk_out3_pl_eth_clk_gen_ip] 8.000
 set_max_delay -datapath_only -from [get_clocks clk_out2_sfp_pcs_clk_gen_ip*] -to [get_clocks clk_out1_pl_eth_clk_gen_ip] 8.000
 set_max_delay -datapath_only -from [get_clocks clk_out2_sfp_pcs_clk_gen_ip*] -to [get_clocks clk_out1_pl_eth_clk_gen_ip_1] 8.000
 set_max_delay -datapath_only -from [get_clocks clk_gem0_rx_0] -to [get_clocks clk_out3_pl_eth_clk_gen_ip] 8.000

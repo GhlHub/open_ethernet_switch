@@ -122,7 +122,7 @@ module kr260_pl_top (
 );
 
   // ---------------------------------------------------------------------
-  // PL0/PL1 clock generation (25 MHz -> 125/300/100 MHz each)
+  // PL0/PL1 clock generation (25 MHz -> 125/300/125 MHz each)
   // ---------------------------------------------------------------------
   wire fab_clk, fab_rst_n;
   logic gtx_rst_n_pl0, idly_clk_pl0, idly_rst_n_pl0, lock_pl0;

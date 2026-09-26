@@ -18,6 +18,7 @@ struct statistics_snapshot {
 #if STATS_DEBUG
     uint64_t debug[16];
 #endif
+    uint32_t fabric_hz; /* hardware FABRIC_HZ CSR; DDR/debug cycle units */
     uint64_t timestamp;
     uint32_t polls, late_polls, saturated_reads, read_timeouts, capabilities;
     /* Total above remains the sum of these two timeout classes (mod 2^32). */

@@ -1,7 +1,7 @@
 // switch_egress_to_mac_txd.sv
 //
 // This switch's egress AXI4-Stream convention (16-bit, clk domain,
-// 100MHz) -> open_eth_mac_1g_switch's s_axis_txd (32-bit AXI4-Stream,
+// 125MHz) -> open_eth_mac_1g_switch's s_axis_txd (32-bit AXI4-Stream,
 // its own axis_clk domain -- 142.86MHz here, fixed by its internal packet
 // buffer, not reclockable). Two clock domains. WORD-WIDE datapath (a
 // byte-serial version capped each port at 0.8 Gbit/s, below the wire rate): the
@@ -10,7 +10,7 @@
 // side pops two words per 32-bit beat (a lone or final word makes a partial
 // beat), presenting the beat from an output register while the next one is
 // assembled. Sustained throughput: one word per cycle on the fabric side
-// (1.6 Gbit/s at 100MHz) and on the MAC side (2.3 Gbit/s at 142.86MHz).
+// (2.0 Gbit/s at 125MHz) and on the MAC side (2.3 Gbit/s at 142.86MHz).
 //
 // s_axis_txc (the separate "TX control" stream this MAC's AXI4-Stream
 // contract requires): this core doesn't actually consume s_axis_txc_
@@ -26,7 +26,7 @@
 module switch_egress_to_mac_txd #(
   parameter int FIFO_DEPTH = 256   // 16-bit words
 ) (
-  input  logic clk,      // fabric clock (100 MHz)
+  input  logic clk,      // fabric clock (125 MHz)
   input  logic rst_n,
   input  logic axis_clk, // MAC's AXI4-Stream clock (its own required rate)
   input  logic axis_rst_n,
