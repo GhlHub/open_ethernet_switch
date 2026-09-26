@@ -2,6 +2,7 @@
 """Audit packaged source contents, interface widths, and clock associations."""
 import argparse
 import hashlib
+import json
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -105,6 +106,8 @@ if __name__ == '__main__':
     if args.bd:
         bd = args.bd.resolve()
         files = [staged[Path(p).name] for p in sources()]
+        support = {p for core in CORES for p in json.loads((ROOT / 'ip_repo' / core / 'tests.json').read_text()).get('simulation_support', [])}
+        files += [str(ROOT / p) for p in sorted(support)]
         files += [str(p) for p in bd.glob('ip/*/sim/*.sv')]
         files += [str(bd / 'sim/partition_validation.v'), str(bd / 'hdl/partition_validation_wrapper.v')]
         subprocess.run(['iverilog', '-g2012', '-s', 'partition_validation_wrapper', '-tnull', *files], check=True)

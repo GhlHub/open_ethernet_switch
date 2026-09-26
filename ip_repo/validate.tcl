@@ -8,7 +8,7 @@ set_property ip_repo_paths [list $catalog] [current_project]
 update_ip_catalog
 file delete -force $root/build/ip_refactor/partition_validation
 create_bd_design partition_validation -dir $root/build/ip_refactor
-foreach {cell type} {fabric switch_fabric gem0 gem_port gem1 gem_port pl0 pl_port pl1 pl_port sfp sfp_port management management} {
+foreach {cell type} {fabric switch_fabric gem0 gem_port gem1 gem_port pl0 pl_port pl1 pl_port sfp sfp_port management management mdio0 pl_phy_mdio mdio1 pl_phy_mdio} {
     set version [exec python3 -c {import json,sys; print(json.load(open(sys.argv[1]))["version"])} $root/ip_repo/$type/manifest.json]
     create_bd_cell -type ip -vlnv ghlhub.org:ethernet:$type:$version $cell
 }
@@ -41,7 +41,7 @@ foreach cell [get_bd_cells] {
             if {[get_property TYPE $pin] eq "clk"} {
                 # Reference-design frequencies, not restrictions on the IP.
                 set hz 125000000
-                if {[string match *axis_clk $pin] || [string match /management/clk $pin]} {set hz 142857143}
+                if {[string match *axis_clk $pin] || [string match /management/clk $pin] || [string match /mdio*/clk $pin]} {set hz 142857143}
                 if {[string match *gth_clk $pin]} {set hz 62500000}
                 set_property CONFIG.FREQ_HZ $hz $ports
             }
@@ -64,7 +64,7 @@ validate_bd_design
 save_bd_design
 generate_target all [get_files partition_validation.bd]
 make_wrapper -files [get_files partition_validation.bd] -top
-puts "PASS: all five IP types validate and generate in IP Integrator"
+puts "PASS: all six IP types validate and generate in IP Integrator"
 } message options]} {
     puts stderr [dict get $options -errorinfo]
     exit 1

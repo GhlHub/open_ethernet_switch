@@ -1,0 +1,17 @@
+{
+  "name": "pl_phy_mdio",
+  "version": "1.0",
+  "description": "PL PHY MDIO management, initialization, link polling and reset-release CDC",
+  "top": "switch_pl_phy_mdio",
+  "sources": [
+    "rtl/mdio/open_eth_mdio_master.sv",
+    "rtl/mdio/phy_init_seq.sv",
+    "rtl/mdio/mdio_controller.sv",
+    "rtl/mdio/switch_pl_phy_mdio.sv"
+  ],
+  "clocks": {
+    "clk": [
+      "s_axi"
+    ]
+  }
+}

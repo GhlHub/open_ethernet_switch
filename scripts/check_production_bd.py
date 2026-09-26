@@ -19,6 +19,7 @@ def check(path, compare_physical=False):
 
     kinds = dict(zip(CELLS, ['switch_fabric', 'gem_port', 'gem_port', 'pl_port', 'pl_port', 'sfp_port']))
     kinds['management'] = 'management'
+    kinds.update(mdio0='pl_phy_mdio', mdio1='pl_phy_mdio')
     assert 'stats_router' not in design['components'], 'statistics router must be inside management'
     for cell, kind in kinds.items():
         assert design['components'][cell]['vlnv'] == f'ghlhub.org:ethernet:{kind}:{manifest(kind)["version"]}'
@@ -49,11 +50,31 @@ def check(path, compare_physical=False):
                  ('dma/M_AXI_SG', 'sc_dma/S00_AXI'), ('dma/M_AXI_MM2S', 'sc_dma/S01_AXI'),
                  ('dma/M_AXI_S2MM', 'sc_dma/S02_AXI'), ('sc_dma/M00_AXI', 'ps/S_AXI_HP1_FPD')]:
         connected(a, b, bus=True)
-    for i, bus in enumerate(['pl0/s_axi', 'pl1/s_axi', 'sfp/s_axi', 'mdio0_s_axi', 'mdio1_s_axi',
+    for i, bus in enumerate(['pl0/s_axi', 'pl1/s_axi', 'sfp/s_axi', 'mdio0/s_axi', 'mdio1/s_axi',
                              'dma/S_AXI_LITE', 'sfp_iic/S_AXI', 'management/s_axi', 'fabric/s_axi_dump']):
         connected(f'sc_ctl/M{i:02}_AXI', bus, bus=True)
     connected('ps/pl_clk0', 'management/clk', 'fabric/axis_clk', 'pl0/axis_clk', 'pl1/axis_clk', 'sfp/axis_clk')
     connected('rst150/peripheral_aresetn', 'management/rst_n', 'fabric/axis_rst_n', 'pl0/axis_rst_n', 'pl1/axis_rst_n', 'sfp/axis_rst_n')
+    for i in [0, 1]:
+        cell = f'mdio{i}'
+        address = design['components'][cell]['parameters']['INIT_PHY_ADDR']['value']
+        assert int(address.strip('"'), 2 if address.startswith('"') else 10) == i + 2
+        connected('ps/pl_clk0', cell + '/clk')
+        connected('rst150/peripheral_aresetn', cell + '/rst_n')
+        connected(f'pl{i}_phy_ready', cell + '/phy_reset_released_i')
+        connected(f'pl{i}_mdio', cell + '/mdio_io')
+        connected(f'pl{i}_mdc', cell + '/mdc_o')
+        connected(f'phy_link/In{i}', cell + '/phy_link_o')
+        connected(f'phy_change/In{i}', cell + '/phy_link_change_o')
+    board = (ROOT / 'rtl/board/kr260_top.sv').read_text()
+    bd_pins, shell_pins = connections(board, 'u_bd'), connections(board, 'u_pl')
+    for i in [0, 1]:
+        for signal in ['mdio', 'mdc']:
+            assert bd_pins[f'pl{i}_{signal}'] == f'pl{i}_{signal}'
+        assert bd_pins[f'pl{i}_phy_ready'] == shell_pins[f'pl{i}_phy_reset_n']
+    assert bd_pins['phy_link_chg'] == shell_pins['phy_link_chg']
+    connected('phy_link/dout', 'management/phy_link_i')
+    connected('phy_change/dout', 'phy_link_chg')
     for cell in CELLS:
         connected('fabric_clk_o', cell + '/clk')
         connected('fabric_rst_n_o', cell + '/rst_n')
@@ -70,8 +91,8 @@ def check(path, compare_physical=False):
         connected(cell + '/mac_irq', f'irq/In{i*2+1}')
     connected('management/link_irq_o', 'irq1/In1')
     actual = {s['address_block']: (int(s['offset'], 16), s['range']) for s in design['addressing']['/ps']['address_spaces']['Data']['segments'].values()}
-    expected = {'/dma/S_AXI_LITE/Reg': (0x80000000, '64K'), '/mdio0_s_axi/Reg': (0x80010000, '64K'),
-                '/mdio1_s_axi/Reg': (0x80020000, '64K'), '/sfp_iic/S_AXI/Reg': (0x80030000, '64K'),
+    expected = {'/dma/S_AXI_LITE/Reg': (0x80000000, '64K'), '/mdio0/s_axi/reg0': (0x80010000, '64K'),
+                '/mdio1/s_axi/reg0': (0x80020000, '64K'), '/sfp_iic/S_AXI/Reg': (0x80030000, '64K'),
                 '/pl0/s_axi/reg0': (0x80040000, '256K'), '/pl1/s_axi/reg0': (0x80080000, '256K'),
                 '/sfp/s_axi/reg0': (0x800C0000, '256K'), '/management/s_axi/reg0': (0x80100000, '64K'), '/fabric/s_axi_dump/reg0': (0x80110000, '64K')}
     assert actual == expected, actual
@@ -83,7 +104,7 @@ def check(path, compare_physical=False):
         # Physical shell instances must retain their original pin connections.
         previous = subprocess.check_output(['git', 'show', f'{NATIVE}:rtl/board/kr260_pl_top.sv'], cwd=ROOT, text=True)
         current = (ROOT / 'rtl/board/kr260_pl_top.sv').read_text()
-        physical = ['u_clkgen0', 'u_clkgen1', 'u_rgmii0', 'u_rgmii1', 'u_mdio0', 'u_mdio1', 'u_gth',
+        physical = ['u_clkgen0', 'u_clkgen1', 'u_rgmii0', 'u_rgmii1', 'u_gth',
                     'u_sfp_clkgen', 'u_sfp_sideband', 'u_gem0_rx_rst', 'u_gem0_tx_rst', 'u_gem1_rx_rst', 'u_gem1_tx_rst']
         for instance in physical:
             assert connections(previous, instance) == connections(current, instance), instance

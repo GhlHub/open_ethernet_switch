@@ -20,7 +20,7 @@ see [deployment results](verification.md#2026-09-26-mac-table-dma-and-manual-web
 ## System view
 
 The board assembly and generated block design now connect the port hardware,
-switch, and PS memory interfaces. The seven digital catalog cells are inside
+switch, and PS memory interfaces. The nine catalog cells are inside
 `system.bd`; physical shells remain outside. A connection means wiring exists,
 not that every operating condition has been verified on hardware. Remaining
 packaging and verification work is listed in [partitioning](ip-partitioning.md).
@@ -30,7 +30,6 @@ flowchart TB
     subgraph board[kr260_top — board assembly]
         subgraph shell[kr260_pl_top — physical shell]
             RGMII[Two RGMII adapters and elastic buffers]
-            MDIO[Two MDIO controllers and PHY initialization]
             GT[GTH, SFP sideband and status]
             CLOCK[PL and SFP clocks, GEM reset synchronizers]
         end
@@ -38,6 +37,7 @@ flowchart TB
             PS[Zynq PS: GEM0, GEM1, R5 and DDR]
             GEM[gem_port ×2]
             PL[pl_port ×2]
+            MDIO[pl_phy_mdio ×2: MDIO, PHY initialization and polling]
             SFP[sfp_port: 1000BASE-X MAC and PCS]
             FAB[switch_fabric: forwarding, buffer manager,<br/>ingress/egress DMA, CPU virtual port and MAC dump]
             MGMT[management 1.2: registers, snapshot mailbox and bank decoder]

@@ -1,0 +1,29 @@
+{
+  "simulation_support": [
+    "tb/models/iobuf.sv"
+  ],
+  "tests": [
+    {
+      "top": "tb_mdio_controller",
+      "defines": [
+        "TEST_PL_PHY_MDIO"
+      ]
+    },
+    {
+      "top": "tb_phy_init_seq",
+      "defines": [
+        "TEST_PL_PHY_MDIO"
+      ]
+    },
+    {
+      "top": "tb_phy_init_seq",
+      "name": "phy_address_3",
+      "defines": [
+        "TEST_PL_PHY_MDIO"
+      ],
+      "parameters": {
+        "TEST_PHY_ADDR": 3
+      }
+    }
+  ]
+}

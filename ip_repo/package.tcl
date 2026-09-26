@@ -4,7 +4,7 @@ if {[catch {
 set root [file dirname [file dirname [file normalize [info script]]]]
 set out [file normalize [expr {[llength $argv] ? [lindex $argv 0] : "$root/build/ip_catalog"}]]
 file mkdir $out
-foreach name {gem_port pl_port sfp_port switch_fabric management} {
+foreach name {gem_port pl_port sfp_port switch_fabric management pl_phy_mdio} {
     set dest $out/$name
     if {[file exists $dest/component.xml]} {error "Catalog already exists: $dest; use a fresh output directory"}
     create_project -force package_$name $out/.projects/$name -part xck26-sfvc784-2LV-c

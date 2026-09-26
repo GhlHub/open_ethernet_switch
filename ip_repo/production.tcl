@@ -1,6 +1,6 @@
 # Production digital IP assembly. Connections preserve the native switch ABI.
 # Sourced after PS, DMA and board-facing ports exist, before address assignment.
-foreach {cell type} {fabric switch_fabric gem0 gem_port gem1 gem_port pl0 pl_port pl1 pl_port sfp sfp_port management management} {
+foreach {cell type} {fabric switch_fabric gem0 gem_port gem1 gem_port pl0 pl_port pl1 pl_port sfp sfp_port management management mdio0 pl_phy_mdio mdio1 pl_phy_mdio} {
     set version [exec python3 -c {import json,sys; print(json.load(open(sys.argv[1]))["version"])} $root/ip_repo/$type/manifest.json]
     create_bd_cell -type ip -vlnv ghlhub.org:ethernet:$type:$version $cell
 }
@@ -26,6 +26,10 @@ replace_external_interface pl0_s_axi pl0/s_axi
 replace_external_interface pl1_s_axi pl1/s_axi
 replace_external_interface sfp_s_axi sfp/s_axi
 replace_external_interface diag_s_axi management/s_axi
+replace_external_interface mdio0_s_axi mdio0/s_axi
+replace_external_interface mdio1_s_axi mdio1/s_axi
+set_property CONFIG.INIT_PHY_ADDR 2 [get_bd_cells mdio0]
+set_property CONFIG.INIT_PHY_ADDR 3 [get_bd_cells mdio1]
 connect_bd_intf_net [get_bd_intf_pins gem0/m_axis] [get_bd_intf_pins fabric/s00_axis]
 connect_bd_intf_net [get_bd_intf_pins gem0/s_axis] [get_bd_intf_pins fabric/m00_axis]
 connect_bd_intf_net [get_bd_intf_pins gem1/m_axis] [get_bd_intf_pins fabric/s01_axis]
@@ -68,8 +72,8 @@ proc digital_net {name retain pins} {
 
 digital_net fabric_clk_o 1 {fabric/clk gem0/clk gem1/clk pl0/clk pl1/clk sfp/clk}
 digital_net fabric_rst_n_o 1 {fabric/rst_n gem0/rst_n gem1/rst_n pl0/rst_n pl1/rst_n sfp/rst_n}
-digital_net axis_clk 1 {fabric/axis_clk pl0/axis_clk pl1/axis_clk sfp/axis_clk management/clk}
-digital_net axis_rst_n 1 {fabric/axis_rst_n pl0/axis_rst_n pl1/axis_rst_n sfp/axis_rst_n management/rst_n}
+digital_net axis_clk 1 {fabric/axis_clk pl0/axis_clk pl1/axis_clk sfp/axis_clk management/clk mdio0/clk mdio1/clk}
+digital_net axis_rst_n 1 {fabric/axis_rst_n pl0/axis_rst_n pl1/axis_rst_n sfp/axis_rst_n management/rst_n mdio0/rst_n mdio1/rst_n}
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant default_age
 set_property -dict {CONFIG.CONST_WIDTH 9 CONFIG.CONST_VAL 300} [get_bd_cells default_age]
 connect_bd_net [get_bd_pins {default_age/dout fabric/default_age_i}]
@@ -193,7 +197,21 @@ digital_net sfp_mac_irq 0 {sfp/mac_irq}
 digital_net diag_flags 1 {management/flags_i}
 digital_net idelay_rdy_axi 1 {management/idelay_rdy_i}
 digital_net diag_clr 1 {management/clear_o}
-digital_net phy_link 1 {management/phy_link_i}
+# MDIO link status stays inside the BD; change pulses join SFP events in the shell.
+foreach kind {link change} {
+    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat phy_${kind}
+    set_property CONFIG.NUM_PORTS 2 [get_bd_cells phy_${kind}]
+}
+foreach i {0 1} {
+    digital_net pl${i}_mdio 1 [list mdio${i}/mdio_io]
+    digital_net pl${i}_mdc 1 [list mdio${i}/mdc_o]
+    digital_net pl${i}_phy_ready 1 [list mdio${i}/phy_reset_released_i]
+    connect_bd_net [get_bd_pins mdio${i}/phy_link_o] [get_bd_pins phy_link/In${i}]
+    connect_bd_net [get_bd_pins mdio${i}/phy_link_change_o] [get_bd_pins phy_change/In${i}]
+}
+delete_bd_objs [get_bd_ports phy_link]
+connect_bd_net [get_bd_pins phy_link/dout] [get_bd_pins management/phy_link_i]
+digital_net phy_link_chg 1 {phy_change/dout}
 digital_net link_event_set 1 {management/link_event_set_i}
 digital_net link_irq 0 {management/link_irq_o}
 digital_net sfp_sb_status 1 {management/sfp_status_i}
@@ -202,7 +220,7 @@ digital_net sfp_sb_force 1 {management/sfp_force_disable_o}
 digital_net sfp_sb_clr_fault 1 {management/sfp_clr_fault_seen_o}
 digital_net sfp_sb_clr_removed 1 {management/sfp_clr_removed_seen_o}
 digital_net sfp_sb_clr_lockout 1 {management/sfp_clr_lockout_o}
-set_property CONFIG.ASSOCIATED_BUSIF {mdio0_s_axi:mdio1_s_axi} [get_bd_ports axis_clk]
+set_property CONFIG.ASSOCIATED_BUSIF {} [get_bd_ports axis_clk]
 set_property CONFIG.ASSOCIATED_BUSIF {} [get_bd_ports fabric_clk_o]
 # These resets are synchronized in the retained board shell, each to the
 # corresponding PS FIFO clock. Describe that relationship across the BD boundary.

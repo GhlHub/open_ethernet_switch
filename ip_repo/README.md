@@ -1,7 +1,7 @@
 # Open Ethernet Switch IP repository
 
-The five `manifest.json` files are the source of truth for the reusable
-digital blocks. `board.json` lists the KR260 physical shell, vendor IP and
+The six `manifest.json` files are the source of truth for the reusable
+digital blocks and PHY management. `board.json` lists the KR260 physical shell, vendor IP and
 constraints. Paths are relative to the repository root. Existing leaf RTL
 stays in `rtl/`; each dependency has one editable source copy.
 
@@ -16,11 +16,12 @@ and the [future 128-bit SFP interface](../docs/inventory.md#125-mhz-fabric-and-t
 | `gem_port` | `switch_gem_port` | One PS external-FIFO bridge, RX/TX CDC and local packet counters |
 | `pl_port` | `pl_gmii_mac_top` | One GMII MAC, packet-stream adapters, local counters and AXI-Lite registers |
 | `sfp_port` | `sfp_port_top` | One 1000BASE-X MAC/PCS, negotiation, packet adapters and counters |
+| `pl_phy_mdio` (1.0) | `switch_pl_phy_mdio` | One PL PHY: AXI-Lite MDIO, DP83867 initialization, link polling and reset-release CDC |
 | `management` (1.2) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
 
-The first partition retains RGMII I/O/MDIO, GTH/clock generation and SFP
+The current partition retains RGMII I/O, GTH/clock generation and SFP
 sideband handling in the board layer. These physical shells are **not yet
-inside the port IPs**. The production `system.bd` instantiates all seven digital catalog cells
+inside the port IPs**. The production `system.bd` instantiates nine catalog cells
 through `production.tcl`. `rtl/switch_top.sv` remains the native simulation
 assembly. Management 1.1 owns the existing 13-bank mailbox router internally.
 Fabric 1.1 uses the mandatory CPU TX metadata header; management 1.2 reports
@@ -44,8 +45,8 @@ under `build/ip_catalog/`. Add that generated directory to Vivado's
 refuses to overwrite an existing catalog; supply a fresh output directory
 with `-tclargs build/ip_refactor/catalog_name` when rebuilding it.
 
-`validate.tcl` creates a separate `partition_validation.bd` with seven
-instances (fabric, two GEM, two PL MAC, SFP and management). All ten
+`validate.tcl` creates a separate `partition_validation.bd` with nine
+instances (fabric, two GEM, two PL MAC, SFP, management and two PHY MDIO). All ten
 physical packet-stream connections are present. The remaining interfaces
 are exposed as external test boundaries. Its fabric uses both optional
 counter groups and a short aging divider for the simulation fixture.
@@ -78,12 +79,14 @@ and register ABI. No firmware changes are required by this partition.
 
 Each package owns a `tests.json` list, run by `scripts/check_ip_tests.py`.
 The runner compiles only that IP's manifest dependencies plus explicitly
-listed test-boundary support. It independently elaborates the public top,
+listed test-boundary support. Suite-level `simulation_support` supplies only
+external primitives (currently IOBUF) for public-top elaboration and tests;
+these models are never packaged as synthesis RTL. It independently elaborates the public top,
 then runs the behavioral cases. `--catalog` uses the staged RTL of that
 specific package after auditing its metadata and source hashes.
 
 ```sh
-# All five IPs, from editable sources:
+# All six IPs, from editable sources:
 make -C sim sim-ip-tests
 # One IP while developing it:
 python3 scripts/check_ip_tests.py --core gem_port
@@ -100,8 +103,9 @@ make -C sim sim-ip-regression
 | SFP | Public MAC/PCS loopback; negotiation, clock correction, TX alignment, RX preamble |
 | Fabric | DMA burst pipeline/backpressure/reset; buffer ownership; forwarding/learning/control traffic; CPU DDR transfers; AXI counters |
 | Management | AXI-Lite controls/diagnostics; mailbox CDC, clear races, saturation, response backpressure and stopped-clock retry; public wrapper bank routing across all 256 indices |
+| PL PHY MDIO | Actual IOBUF-backed controller; read/write/status; DP83867 setup, polling and recovery at PHY addresses 2 and 3 |
 
-The 20 cases reuse the established self-checking benches. The GEM bench can
+The 26 cases reuse the established self-checking benches. The GEM bench can
 select the public `switch_gem_port` wrapper instead of its bridge leaf.
 Fabric cases exercise constituent blocks; the retained whole-switch miter
 checks their assembly. They do not constitute a new randomized six-port

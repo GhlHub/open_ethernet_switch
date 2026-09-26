@@ -142,3 +142,26 @@ between entries. Reads form 16-entry chunks; DDR waiting never holds the RAM
 port. The 32 KiB destination belongs exclusively to DMA until completion,
 including after a software timeout. The scan is live, not atomic.
 See the [register, record and cache-ownership contract](../docs/mac-table-dump.md).
+
+## PL PHY management (`pl_phy_mdio` 1.0)
+
+One `switch_pl_phy_mdio` instance owns a separate MDIO bus, its IOBUF,
+Clause 22 engine, AXI-Lite registers and DP83867 startup/polling sequencer.
+`clk` and active-low `rst_n` use the 142.857 MHz control domain in the KR260.
+`s_axi` has 32-bit data and 8-bit register addresses; the board reserves
+64 KiB at `0x80010000` (PL0, PHY address 2) and `0x80020000` (PL1, address 3).
+The existing register layout and divider defaults are preserved.
+
+`phy_reset_released_i` samples the board's clock-lock/PS-reset request through
+two `ASYNC_REG` stages before starting initialization. It is a level, not a
+pulse. The physical U19 reset request remains owned by the board shell.
+`phy_link_o`, one-cycle `phy_link_change_o`, `init_done_o` and `init_fail_o`
+are synchronous to `clk`. Link bits feed management inside the BD; change
+pulses join SFP events in the board shell. `mdio_io` and `mdc_o` reach the
+board pins directly. Package-pin/electrical constraints remain in board XDC;
+this partition does not complete the outstanding external MDIO timing budget.
+
+`INIT_PHY_ADDR`, `INIT_WAIT_CYCLES` and `INIT_POLL_CYCLES` are configurable.
+Production retains the prior two-million-cycle startup wait and
+1,430,000-cycle polling interval. Simulation models only the external IOBUF
+primitive; the actual controller and sequencer come from the package.

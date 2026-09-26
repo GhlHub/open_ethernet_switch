@@ -9,7 +9,9 @@ reset sequence, register address, counter index or firmware ABI is changed.
 ```mermaid
 flowchart LR
     PS[PS GEM external FIFOs] <--> GEM[gem_port x2<br/>CDC and port counters]
-    RGMII[Board RGMII I/O<br/>elastic buffers and MDIO] <--> PL[pl_port x2<br/>GMII MAC and counters]
+    RGMII[Board RGMII I/O<br/>elastic buffers] <--> PL[pl_port x2<br/>GMII MAC and counters]
+    PHY[PL copper PHYs] <--> MDIO[pl_phy_mdio x2<br/>MDIO, initialization and polling]
+    MDIO -. link status .-> MGMT
     GT[Board GTH and clocks<br/>SFP sideband] <--> SFP[sfp_port<br/>1000BASE-X MAC and PCS]
     GEM <-->|16-bit AXI-S| FAB
     PL <-->|16-bit AXI-S| FAB
@@ -26,7 +28,7 @@ flowchart LR
         FWD -. destination masks .-> IN
         FWD -. destination masks .-> CPU
     end
-    FAB <-->|Three AXI masters| DDR[Board interconnect and PS DDR]
+    FAB <-->|Four AXI masters| DDR[Board interconnect and PS DDR]
     CPU <-->|16-bit AXI-S| DMA[AMD AXI DMA and R5]
     MGMT[management<br/>AXI-Lite configuration and snapshot mailbox] -. control and status .-> FAB
     GEM -. snapshots .-> MGMT
@@ -46,7 +48,9 @@ assembly of the fabric and five endpoints, plus the unchanged statistics
 bank decoder. It preserves the existing testbench port list. The production board now
 uses `ip_repo/production.tcl` to instantiate the catalog cells directly
 in `system.bd`; `kr260_pl_top` contains only the physical shells, clocks,
-reset synchronizers, MDIO and physical status/event logic.
+reset synchronizers and physical status/event logic. The two `pl_phy_mdio`
+catalog instances now own MDIO, initialization, polling and PHY reset-release
+synchronization.
 
 The other three IP manifests package the existing PL MAC, SFP MAC/PCS and
 management modules. `scripts/ip_sources.py` deduplicates shared leaf RTL
@@ -170,13 +174,33 @@ are independently elaborated; GEM/PL/SFP and management have direct boundary
 benches, while fabric behavior is checked through its constituent suites
 and assembly miter. See [suite coverage and commands](../ip_repo/README.md#independent-ip-regression-suites).
 
+## PL PHY-management extraction
+
+`pl_phy_mdio` 1.0 moves both MDIO controllers and their two-stage PHY-reset
+release synchronizers into the catalog. The production instances are `mdio0`
+and `mdio1`; each owns initialization, polling and its bidirectional IOBUF.
+The former 34 AXI-Lite signals between `system.bd` and `kr260_pl_top` are now
+internal BD interfaces. The board retains PHY reset requests, RGMII I/O and
+clock generation. PHY link status connects directly to management; change
+pulses join existing SFP events in the physical shell.
+
+No firmware registers, PHY addresses, polling intervals or startup delays
+change. This split makes PHY management independently reusable before the
+more constraint-sensitive RGMII migration. Its focused tests use actual
+packaged RTL with a simulation-only IOBUF primitive. They cover Clause 22
+read/write framing, status clear, startup at both board PHY addresses,
+strap/ID failure, link polling, disconnect/reconnect, PHY reset and deferred
+CPU requests during polling. Existing MDIO arbitration/AXI race investigations
+remain listed in the inventory; packaging does not resolve those issues.
+
 ## Remaining migration and acceptance work
 
 The reusable **digital** IP boundaries are implemented. The complete
 physical-port/block-design migration proposed for the final architecture
 is not complete:
 
-1. Move each RGMII I/O/elastic-buffer/MDIO shell inside its copper-port IP,
+1. Move each RGMII I/O/elastic-buffer shell inside its copper-port IP,
+   composing it with the now-packaged `pl_phy_mdio` management block,
    with scoped constraints and explicit per-instance IDELAY groups. The
    current board constraints name `u_pl/u_rgmii0` and `u_pl/u_rgmii1`, so
    this requires a separate physical timing check.

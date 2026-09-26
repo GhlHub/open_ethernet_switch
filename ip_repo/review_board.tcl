@@ -30,6 +30,15 @@ set fabric_clock [get_clocks clk_out3_pl_eth_clk_gen_ip]
 if {abs([get_property PERIOD $fabric_clock] - 8.0) > 0.001} {
     error "Fabric clock must be 125 MHz (8 ns)"
 }
+# The PHY-management extraction must retain one physical IOBUF and both
+# marked reset-release synchronizer stages per MDIO catalog instance.
+foreach i {0 1} {
+    set pads [get_cells -hier -filter "REF_NAME == IOBUF && NAME =~ *mdio${i}*/inst/u_controller/u_iobuf_mdio"]
+    if {[llength $pads] != 1} {error "Missing packaged MDIO${i} IOBUF"}
+    set stages [get_cells -hier -filter "NAME =~ *mdio${i}*/inst/init_go_sync_reg* && ASYNC_REG == TRUE"]
+    if {[llength $stages] != 2} {error "Missing packaged MDIO${i} reset-release synchronizer stages"}
+}
+puts "PASS: packaged MDIO IOBUFs and reset-release synchronizers"
 puts "PASS: 125 MHz fabric clock"
 puts "PASS: retained RGMII clock/instance constraints resolve"
 } message options]} {

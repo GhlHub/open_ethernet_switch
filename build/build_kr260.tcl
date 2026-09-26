@@ -250,8 +250,8 @@ source $root/ip_repo/production.tcl
 foreach {seg off rng} {
   dma/S_AXI_LITE/Reg   0x80000000 64K
   sfp_iic/S_AXI/Reg    0x80030000 64K
-  mdio0_s_axi/Reg      0x80010000 64K
-  mdio1_s_axi/Reg      0x80020000 64K
+  mdio0/s_axi/reg0      0x80010000 64K
+  mdio1/s_axi/reg0      0x80020000 64K
   pl0/s_axi/reg0        0x80040000 256K
   pl1/s_axi/reg0        0x80080000 256K
   sfp/s_axi/reg0        0x800C0000 256K

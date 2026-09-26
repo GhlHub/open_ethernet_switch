@@ -4,9 +4,11 @@ A work-in-progress FPGA Ethernet switch for the AMD Kria KR260, with an initial 
 FreeRTOS control plane. The current RTL joins port adapters, MAC
 learning/lookup/aging, and a shared DDR packet-buffer architecture under
 the reusable blocks described in [`ip_repo`](ip_repo/README.md), with
-`rtl/switch_top.sv` retaining the board-facing wiring interface.
+`rtl/switch_top.sv` retaining the native simulation assembly.
 
 The current 2026-09-26 lab build uses fabric 1.2 / management 1.2 at 125 MHz.
+Two `pl_phy_mdio` 1.0 instances now own PL PHY initialization, MDIO and link
+polling inside `system.bd`: nine catalog instances from six reusable IP kinds.
 It includes [CPU TX frame metadata](docs/cpu-tx-metadata.md), pipelined CPU DDR
 writes and a [low-priority MAC-table dump master](docs/mac-table-dump.md).
 The public `/mac-table` web page displays MAC addresses, ports and ages; its
@@ -14,11 +16,11 @@ The public `/mac-table` web page displays MAC addresses, ports and ages; its
 cached data; no automatic scans are scheduled.
 
 The matching FPGA and R5 firmware are deployed over JTAG at DHCP address
-`10.0.1.104`. Routed timing passes (fabric +1.665 ns setup; overall +0.018 ns
+`10.0.1.104`. Routed timing passes (fabric +1.297 ns setup; overall +0.019 ns
 setup / +0.010 ns hold). Simultaneous CPU and forwarded miner tests each passed
 1,000 full-size pings during HTTP/manual-refresh traffic, and HTTP concurrency
-passed all 120 requests. See [deployment evidence](docs/verification.md#2026-09-26-mac-table-dma-and-manual-web-view-deployed)
-and the [current backlog](docs/inventory.md#current-remaining-work-after-mac-table-deployment).
+passed all 120 requests. See [deployment evidence](docs/verification.md#2026-09-26-pl-phy-management-ip-partition-deployed)
+and the [current backlog](docs/inventory.md#current-remaining-work).
 
 The intended port map is two PS GEM ports, two PL Ethernet ports, one SFP port,
 and one virtual CPU port. **The current SFP design is 1G 1000BASE-X, not 10GbE.**
@@ -83,24 +85,14 @@ host stack. Missing cards or records select defaults; saves require a card.
 See [configuration](docs/configuration.md) for the stored settings and
 supported port capabilities.
 
-The first digital IP partition is deployed with all counter groups enabled.
-It passed the simulation comparisons, routed with WNS +0.018 ns and hold
-slack +0.011 ns, and passed settled CPU/endpoint connectivity checks over
-GEM1 and PL0. Initial DHCP and endpoint packet losses recovered but remain
-unexplained. The production block design now instantiates the digital catalog IPs and
-has passed JTAG deployment and settled connectivity checks.
-Physical-port packaging, complete CDC review and broader traffic
-qualification remain pending.
-The latest source additionally moves the statistics decoder into management
-1.1 and passes fresh catalog/BD and simulation acceptance; that update has
-now passed synthesis, PNR and bitstream generation (WNS +0.018 ns, hold
-+0.010 ns) and is deployed at `10.0.1.104`. Sustained CPU/endpoint pings
-and SNMP passed. DHCP now waits for one second of admitted-link readiness
-and permits retransmissions, eliminating the minute-long initial delay in
-the measured boot. HTTP concurrency is now handled by four workers and passed
-parallel-client/browser checks. Intermittent ping loss remains a separate open
-investigation; see [findings](docs/startup-and-http-investigation.md) and
-[current verification](docs/verification.md).
+The digital and PL PHY-management partitions are deployed with all counter
+groups enabled. Both PL PHY controllers report successful initialization and
+valid polling; live packet tests cover the connected GEM1 uplink and PL0 miner.
+RGMII and SFP physical-shell packaging, complete CDC review and broader traffic
+qualification remain pending. DHCP waits one second after admitted-link
+readiness before its first attempt. Four HTTP workers handle concurrent clients.
+See [startup and HTTP findings](docs/startup-and-http-investigation.md) and
+[current verification](docs/verification.md) for historical issues and test limits.
 See [interface contracts](ip_repo/INTERFACES.md),
 [partitioning](docs/ip-partitioning.md) and
 [verification](docs/verification.md) for scope and evidence.
@@ -109,7 +101,7 @@ See [interface contracts](ip_repo/INTERFACES.md),
 
 | Directory | Contents |
 | --- | --- |
-| `ip_repo/` | Five digital IP manifests, extracted fabric/GEM wrappers, packaging and validation scripts; generated catalog lives in `build/ip_catalog/` |
+| `ip_repo/` | Six IP manifests including PL PHY management, extracted fabric/GEM wrappers, packaging and validation scripts; generated catalog lives in `build/ip_catalog/` |
 | `rtl/board/` | Static KR260 board top and PL assembly joining the generated PS block design |
 | `rtl/switch_top.sv` | Compatibility wiring assembly around the fabric and physical endpoints |
 | `rtl/ps_eth/` | PS GEM external-FIFO to/from AXI-Stream adapters |

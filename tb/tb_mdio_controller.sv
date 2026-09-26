@@ -1,3 +1,16 @@
+`ifdef TEST_PL_PHY_MDIO
+`define MDIO_DUT switch_pl_phy_mdio
+`define MDIO_CLK clk
+`define MDIO_RESET rst_n
+`define MDIO_GO phy_reset_released_i
+`define MDIO_INTERNAL u_controller.
+`else
+`define MDIO_DUT mdio_controller_sim_model
+`define MDIO_CLK s_axi_lite_clk
+`define MDIO_RESET s_axi_lite_resetn
+`define MDIO_GO init_go_i
+`define MDIO_INTERNAL
+`endif
 // tb_mdio_controller.sv
 //
 // Digital loopback test of mdio_controller_sim_model.sv, driven entirely
@@ -39,9 +52,9 @@ module tb_mdio_controller;
   wire  mdio_io;
   logic mdc;
 
-  mdio_controller_sim_model dut (
-    .s_axi_lite_clk    (clk),
-    .s_axi_lite_resetn (rst_n),
+  `MDIO_DUT dut (
+    .`MDIO_CLK    (clk),
+    .`MDIO_RESET (rst_n),
     .s_axi_awaddr      (awaddr),
     .s_axi_awvalid     (awvalid),
     .s_axi_awready     (awready),
@@ -59,7 +72,7 @@ module tb_mdio_controller;
     .s_axi_rresp       (rresp),
     .s_axi_rvalid      (rvalid),
     .s_axi_rready      (rready),
-    .init_go_i         (1'b0),
+    .`MDIO_GO         (1'b0),
     .init_done_o       (),
     .init_fail_o       (),
     .phy_link_o        (),
@@ -117,7 +130,7 @@ module tb_mdio_controller;
   logic       phy_drive_en;
   logic       phy_response_active;
   localparam logic [15:0] PHY_READ_DATA = 16'ha5c3;
-  always @(negedge mdc) if (dut.busy) edge_count <= edge_count + 1'b1;
+  always @(negedge mdc) if (dut.`MDIO_INTERNAL busy) edge_count <= edge_count + 1'b1;
   assign phy_drive_en = phy_response_active
     && ((edge_count == 47) || (edge_count >= 48 && edge_count <= 63));
   assign mdio_io = phy_drive_en
@@ -253,3 +266,9 @@ module tb_mdio_controller;
   end
 
 endmodule
+
+`undef MDIO_DUT
+`undef MDIO_CLK
+`undef MDIO_RESET
+`undef MDIO_GO
+`undef MDIO_INTERNAL

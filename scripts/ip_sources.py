@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CORES = ('gem_port', 'pl_port', 'sfp_port', 'switch_fabric', 'management')
+CORES = ('gem_port', 'pl_port', 'sfp_port', 'switch_fabric', 'management', 'pl_phy_mdio')
 
 
 def manifest(name):

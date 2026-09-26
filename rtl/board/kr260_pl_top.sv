@@ -12,8 +12,6 @@ module kr260_pl_top (
   input wire [3:0] pl0_rgmii_rxd,
   input wire  pl0_rgmii_rx_ctl,
   input wire  pl0_rgmii_rxc,
-  inout wire  pl0_mdio,
-  output wire  pl0_mdc,
   output wire  pl0_phy_reset_n,
   input wire  pl1_ref_clk_25m,
   output wire [3:0] pl1_rgmii_txd,
@@ -22,8 +20,6 @@ module kr260_pl_top (
   input wire [3:0] pl1_rgmii_rxd,
   input wire  pl1_rgmii_rx_ctl,
   input wire  pl1_rgmii_rxc,
-  inout wire  pl1_mdio,
-  output wire  pl1_mdc,
   output wire  pl1_phy_reset_n,
   input wire  sfp_refclk_p,
   input wire  sfp_refclk_n,
@@ -36,40 +32,6 @@ module kr260_pl_top (
   input wire  sfp_tx_fault,
   output wire  sfp_tx_disable,
   output wire [1:0] sfp_led,
-  input wire [7:0] mdio0_s_axi_awaddr,
-  input wire  mdio0_s_axi_awvalid,
-  output wire  mdio0_s_axi_awready,
-  input wire [31:0] mdio0_s_axi_wdata,
-  input wire [3:0] mdio0_s_axi_wstrb,
-  input wire  mdio0_s_axi_wvalid,
-  output wire  mdio0_s_axi_wready,
-  output wire [1:0] mdio0_s_axi_bresp,
-  output wire  mdio0_s_axi_bvalid,
-  input wire  mdio0_s_axi_bready,
-  input wire [7:0] mdio0_s_axi_araddr,
-  input wire  mdio0_s_axi_arvalid,
-  output wire  mdio0_s_axi_arready,
-  output wire [31:0] mdio0_s_axi_rdata,
-  output wire [1:0] mdio0_s_axi_rresp,
-  output wire  mdio0_s_axi_rvalid,
-  input wire  mdio0_s_axi_rready,
-  input wire [7:0] mdio1_s_axi_awaddr,
-  input wire  mdio1_s_axi_awvalid,
-  output wire  mdio1_s_axi_awready,
-  input wire [31:0] mdio1_s_axi_wdata,
-  input wire [3:0] mdio1_s_axi_wstrb,
-  input wire  mdio1_s_axi_wvalid,
-  output wire  mdio1_s_axi_wready,
-  output wire [1:0] mdio1_s_axi_bresp,
-  output wire  mdio1_s_axi_bvalid,
-  input wire  mdio1_s_axi_bready,
-  input wire [7:0] mdio1_s_axi_araddr,
-  input wire  mdio1_s_axi_arvalid,
-  output wire  mdio1_s_axi_arready,
-  output wire [31:0] mdio1_s_axi_rdata,
-  output wire [1:0] mdio1_s_axi_rresp,
-  output wire  mdio1_s_axi_rvalid,
-  input wire  mdio1_s_axi_rready,
   input wire  axis_clk,
   input wire  axis_rst_n,
   input wire  gem0_rx_clk,
@@ -111,7 +73,7 @@ module kr260_pl_top (
   output wire [3:0] diag_flags,
   (* ASYNC_REG = "TRUE" *) output logic [1:0] idelay_rdy_axi,
   input wire [3:0] diag_clr,
-  output wire [1:0] phy_link,
+  input wire [1:0] phy_link_chg,
   output wire [5:0] link_event_set,
   output wire [15:0] sfp_sb_status,
   (* ASYNC_REG = "TRUE" *) output logic [3:0] sfp_pcs_s2,
@@ -154,8 +116,6 @@ module kr260_pl_top (
   // PL0 / PL1 RGMII <-> GMII
   // ---------------------------------------------------------------------
 
-  logic [1:0] phy_link_chg;
-
   logic [1:0] idelay_rdy_raw;
   (* ASYNC_REG = "TRUE" *) logic [1:0] idelay_rdy_s1;
   always_ff @(posedge axis_clk) begin
@@ -188,41 +148,6 @@ module kr260_pl_top (
     .diag_clk_i (axis_clk), .diag_rst_n_i (axis_rst_n),
     .diag_clr_overflow_i (diag_clr[2]), .diag_clr_underrun_i (diag_clr[3]),
     .idelay_rdy_o (idelay_rdy_raw[1]), .rx_elastic_overflow_o (diag_flags[2]), .rx_elastic_underrun_o (diag_flags[3])
-  );
-
-  // ---------------------------------------------------------------------
-  // MDIO controllers (one per independent PL PHY bus), axis_clk domain
-  // ---------------------------------------------------------------------
-  // PHY start-up runs when the PHY reset request is released; the request
-  // comes from the PL clock-generator lock, so bring it into axis_clk.
-  (* ASYNC_REG = "TRUE" *) logic [1:0] init_go0_sync, init_go1_sync;
-  always_ff @(posedge axis_clk) begin
-    init_go0_sync <= {init_go0_sync[0], pl0_phy_reset_n};
-    init_go1_sync <= {init_go1_sync[0], pl1_phy_reset_n};
-  end
-
-  mdio_controller #(.INIT_PHY_ADDR(5'd2)) u_mdio0 (
-    .s_axi_lite_clk (axis_clk), .s_axi_lite_resetn (axis_rst_n),
-    .s_axi_awaddr (mdio0_s_axi_awaddr), .s_axi_awvalid (mdio0_s_axi_awvalid), .s_axi_awready (mdio0_s_axi_awready),
-    .s_axi_wdata (mdio0_s_axi_wdata), .s_axi_wstrb (mdio0_s_axi_wstrb), .s_axi_wvalid (mdio0_s_axi_wvalid), .s_axi_wready (mdio0_s_axi_wready),
-    .s_axi_bresp (mdio0_s_axi_bresp), .s_axi_bvalid (mdio0_s_axi_bvalid), .s_axi_bready (mdio0_s_axi_bready),
-    .s_axi_araddr (mdio0_s_axi_araddr), .s_axi_arvalid (mdio0_s_axi_arvalid), .s_axi_arready (mdio0_s_axi_arready),
-    .s_axi_rdata (mdio0_s_axi_rdata), .s_axi_rresp (mdio0_s_axi_rresp), .s_axi_rvalid (mdio0_s_axi_rvalid), .s_axi_rready (mdio0_s_axi_rready),
-    .init_go_i (init_go0_sync[1]), .init_done_o (), .init_fail_o (),
-    .phy_link_o (phy_link[0]), .phy_link_change_o (phy_link_chg[0]),
-    .mdio_io (pl0_mdio), .mdc_o (pl0_mdc)
-  );
-
-  mdio_controller #(.INIT_PHY_ADDR(5'd3)) u_mdio1 (
-    .s_axi_lite_clk (axis_clk), .s_axi_lite_resetn (axis_rst_n),
-    .s_axi_awaddr (mdio1_s_axi_awaddr), .s_axi_awvalid (mdio1_s_axi_awvalid), .s_axi_awready (mdio1_s_axi_awready),
-    .s_axi_wdata (mdio1_s_axi_wdata), .s_axi_wstrb (mdio1_s_axi_wstrb), .s_axi_wvalid (mdio1_s_axi_wvalid), .s_axi_wready (mdio1_s_axi_wready),
-    .s_axi_bresp (mdio1_s_axi_bresp), .s_axi_bvalid (mdio1_s_axi_bvalid), .s_axi_bready (mdio1_s_axi_bready),
-    .s_axi_araddr (mdio1_s_axi_araddr), .s_axi_arvalid (mdio1_s_axi_arvalid), .s_axi_arready (mdio1_s_axi_arready),
-    .s_axi_rdata (mdio1_s_axi_rdata), .s_axi_rresp (mdio1_s_axi_rresp), .s_axi_rvalid (mdio1_s_axi_rvalid), .s_axi_rready (mdio1_s_axi_rready),
-    .init_go_i (init_go1_sync[1]), .init_done_o (), .init_fail_o (),
-    .phy_link_o (phy_link[1]), .phy_link_change_o (phy_link_chg[1]),
-    .mdio_io (pl1_mdio), .mdc_o (pl1_mdc)
   );
 
   // ---------------------------------------------------------------------

@@ -39,17 +39,20 @@ def main():
         config = manifest(core)
         rtl = [str((catalog / core if catalog else ROOT) / p)
                for p in sources([core])]
+        suite = json.loads((ROOT / 'ip_repo' / core / 'tests.json').read_text())
+        simulation_support = suite.get('simulation_support', [])
+        assert not set(simulation_support) & set(config['sources'])
         # Independently elaborate the actual public IP top, not just leaf DUTs.
-        run(['iverilog', '-g2012', '-s', config['top'], '-tnull', *rtl],
+        run(['iverilog', '-g2012', '-s', config['top'], '-tnull', *rtl, *[str(ROOT / p) for p in simulation_support]],
             output / f'{core}_elaborate.log', args.timeout)
-        tests = json.loads((ROOT / 'ip_repo' / core / 'tests.json').read_text())['tests']
+        tests = suite['tests']
         for test in tests:
             name = core + '_' + test.get('name', test['top'])
             binary = output / f'{name}.vvp'
             log = output / f'{name}.log'
             # Support sources model external boundaries; dependencies inside
             # this IP must always come from its manifest/catalog snapshot.
-            support = test.get('support', [])
+            support = simulation_support + test.get('support', [])
             assert not set(support) & set(config['sources']), name + ': duplicate support RTL'
             command = ['iverilog', '-g2012', '-s', test['top'], '-o', str(binary)]
             command += ['-D' + d for d in test.get('defines', [])]

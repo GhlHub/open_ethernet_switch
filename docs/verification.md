@@ -1,5 +1,65 @@
 # Design inventory verification
 
+## 2026-09-26 PL PHY-management IP partition deployed
+
+The new `pl_phy_mdio` 1.0 catalog IP owns the real MDIO controller, IOBUF,
+DP83867 initialization/polling and PHY reset-release synchronizer. Production
+now instantiates two copies with PHY addresses 2/3. CPU register windows and
+firmware behavior remain unchanged. Artifacts are under
+`build/ip_refactor/phy_mdio_final/`.
+
+Validation completed:
+
+- Fresh catalog packaging and source-hash/interface metadata audit.
+- Production BD validation and explicit control/address/clock/reset/PHY-pin
+  mapping audit; retained RGMII/GTH instance connections match the baseline.
+- Separate nine-instance catalog validation BD generated and elaborated using
+  packaged RTL plus a simulation-only IOBUF model.
+- 26 native and 26 packaged IP tests, including actual-controller MDIO
+  framing/status and initialization/polling/recovery at PHY addresses 2 and 3.
+- Whole-switch comparisons pass for all four counter configurations; the
+  generated production wiring also passes the 133-output comparison.
+- Legacy `make -C sim sim-mdio` passes with its original portable model.
+
+Synthesis, place-and-route and bitstream generation completed. Routed setup
+WNS is **+0.019 ns**, hold WHS **+0.010 ns**, and the 125 MHz fabric setup
+WNS is **+1.297 ns**. All 31 reported bus-skew checks pass (minimum
++5.735 ns). Utilization is 30,407 LUTs, 38,799 registers and 51.5 BRAM
+tiles. The routed structural audit confirms both packaged IOBUFs and both
+two-stage `ASYNC_REG` synchronizers; RGMII clock/instance constraints resolve.
+The 13-step acceptance report is complete. Existing critical CDC totals are
+unchanged: 2,632 CDC-1, 13 CDC-10, two CDC-11 and eight CDC-12 findings.
+These results are not complete CDC sign-off.
+
+Bitstream SHA-256:
+`269d2be4ab3d6f340ef4d046709ecc6dbdff704c149643a452140db7bc470f89`.
+
+Deployed over JTAG through `10.0.1.107:3121` with the unchanged R5 ELF
+(SHA-256 `167b626a6e123bc5126d915e1620e0a37907c3708ab38496f45bb1f4dfcb3d86`).
+UART confirms SD settings loaded, D-cache enabled and DHCP `10.0.1.104`.
+GEM1 uplink and PL0 miner links are 1 Gb/s. Deployment remains volatile.
+
+Live verification passed:
+
+- Simultaneous 1,000 full-size pings each to the R5 (`10.0.1.104`) and the
+  forwarded miner (`10.0.1.140`), bound to workstation Ethernet: zero loss.
+- 120 HTTP requests with six concurrent clients, idle-client recovery and
+  public statistics during rejected authentication; settings unchanged.
+- Manual MAC-table refresh: generation 1, 32,768 bytes, 38 entries, no error.
+- SNMP reports zero bad packets, AXI error responses, statistics/mailbox
+  timeouts, saturated reads and sensor errors after the tests.
+- Direct read-only JTAG status confirms both packaged controllers initialized
+  successfully and polling valid PHY status: PL0 `0x000003a8` (link up),
+  PL1 `0x00000208` (link down). PL1 packet traffic was not tested because its
+  cable is absent.
+
+Evidence is retained alongside the build: `deploy.log`, `deployment_uart.log`,
+`cpu_ping.log`, `miner_ping.log`, `http_concurrency.log`, `mac_refresh.json`,
+`deploy_snmp_{initial,final}.json` and `mdio_status.log`.
+
+This extraction does not close the existing external MDIO timing budget or
+MDIO polling-versus-CPU arbitration review. No R5 changes are required.
+
 ## 2026-09-26 MAC-table DMA and manual web view deployed
 
 Synthesis, place-and-route and bitstream generation completed successfully for

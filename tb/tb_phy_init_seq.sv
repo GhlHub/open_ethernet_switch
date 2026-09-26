@@ -1,3 +1,16 @@
+`ifdef TEST_PL_PHY_MDIO
+`define MDIO_DUT switch_pl_phy_mdio
+`define MDIO_CLK clk
+`define MDIO_RESET rst_n
+`define MDIO_GO phy_reset_released_i
+`define MDIO_INTERNAL u_controller.
+`else
+`define MDIO_DUT mdio_controller_sim_model
+`define MDIO_CLK s_axi_lite_clk
+`define MDIO_RESET s_axi_lite_resetn
+`define MDIO_GO init_go_i
+`define MDIO_INTERNAL
+`endif
 // tb_phy_init_seq.sv
 //
 // Checks the DP83867 start-up sequence (phy_init_seq.sv, run through
@@ -93,7 +106,7 @@ module mdio_phy_model #(
                                && frame[4:0] != 5'h1F) bad_writes++;
 endmodule
 
-module tb_phy_init_seq;
+module tb_phy_init_seq #(parameter logic [4:0] TEST_PHY_ADDR = 5'd2);
   logic clk = 0;
   always #4 clk = ~clk;
   logic rst_n = 0;
@@ -116,46 +129,46 @@ module tb_phy_init_seq;
   always @(posedge clk) if (chg0) chg_count++;
   logic [31:0] st;
 
-  mdio_controller_sim_model #(.INIT_PHY_ADDR(5'd2), .INIT_WAIT_CYCLES(20), .INIT_POLL_CYCLES(3000)) dut (
-    .s_axi_lite_clk (clk), .s_axi_lite_resetn (rst_n),
+  `MDIO_DUT #(.INIT_PHY_ADDR(TEST_PHY_ADDR), .INIT_WAIT_CYCLES(20), .INIT_POLL_CYCLES(3000)) dut (
+    .`MDIO_CLK (clk), .`MDIO_RESET (rst_n),
     .s_axi_awaddr (awaddr), .s_axi_awvalid (awvalid), .s_axi_awready (awready),
     .s_axi_wdata (wdata), .s_axi_wstrb (wstrb), .s_axi_wvalid (wvalid), .s_axi_wready (wready),
     .s_axi_bresp (bresp), .s_axi_bvalid (bvalid), .s_axi_bready (bready),
     .s_axi_araddr (araddr), .s_axi_arvalid (arvalid), .s_axi_arready (arready),
     .s_axi_rdata (rdata), .s_axi_rresp (rresp), .s_axi_rvalid (rvalid), .s_axi_rready (rready),
-    .init_go_i (go0), .init_done_o (done0), .init_fail_o (fail0),
+    .`MDIO_GO (go0), .init_done_o (done0), .init_fail_o (fail0),
     .phy_link_o (link0), .phy_link_change_o (chg0),
     .mdio_io (mdio0), .mdc_o (mdc0));
 
-  mdio_phy_model #(.ADDR(5'd2)) phy0 (.busy_i (dut.busy), .mdc (mdc0), .mdio (mdio0),
+  mdio_phy_model #(.ADDR(TEST_PHY_ADDR)) phy0 (.busy_i (dut.`MDIO_INTERNAL busy), .mdc (mdc0), .mdio (mdio0),
                                       .strap11 (strap), .disconnected (disconnected), .id2 (16'hA231));
 
   // second instance: id mismatch; AXI unused
-  mdio_controller_sim_model #(.INIT_PHY_ADDR(5'd3), .INIT_WAIT_CYCLES(20)) dut1 (
-    .s_axi_lite_clk (clk), .s_axi_lite_resetn (rst_n),
+  `MDIO_DUT #(.INIT_PHY_ADDR(5'd3), .INIT_WAIT_CYCLES(20)) dut1 (
+    .`MDIO_CLK (clk), .`MDIO_RESET (rst_n),
     .s_axi_awaddr ('0), .s_axi_awvalid (1'b0), .s_axi_awready (),
     .s_axi_wdata ('0), .s_axi_wstrb ('0), .s_axi_wvalid (1'b0), .s_axi_wready (),
     .s_axi_bresp (), .s_axi_bvalid (), .s_axi_bready (1'b0),
     .s_axi_araddr ('0), .s_axi_arvalid (1'b0), .s_axi_arready (),
     .s_axi_rdata (), .s_axi_rresp (), .s_axi_rvalid (), .s_axi_rready (1'b0),
-    .init_go_i (go1), .init_done_o (done1), .init_fail_o (fail1),
+    .`MDIO_GO (go1), .init_done_o (done1), .init_fail_o (fail1),
     .phy_link_o (), .phy_link_change_o (),
     .mdio_io (mdio1), .mdc_o (mdc1));
 
-  mdio_phy_model #(.ADDR(5'd3)) phy1 (.busy_i (dut1.busy), .mdc (mdc1), .mdio (mdio1),
+  mdio_phy_model #(.ADDR(5'd3)) phy1 (.busy_i (dut1.`MDIO_INTERNAL busy), .mdc (mdc1), .mdio (mdio1),
                                       .strap11 (1'b0), .disconnected (1'b0), .id2 (16'h1234));
 
   wire mdio2, mdc2, done2, fail2;
   pullup (mdio2);
   logic go2 = 0;
-  mdio_controller_sim_model #(.INIT_PHY_ADDR(5'd5), .INIT_WAIT_CYCLES(20)) dut2 (
-    .s_axi_lite_clk (clk), .s_axi_lite_resetn (rst_n),
+  `MDIO_DUT #(.INIT_PHY_ADDR(5'd5), .INIT_WAIT_CYCLES(20)) dut2 (
+    .`MDIO_CLK (clk), .`MDIO_RESET (rst_n),
     .s_axi_awaddr ('0), .s_axi_awvalid (1'b0), .s_axi_awready (),
     .s_axi_wdata ('0), .s_axi_wstrb ('0), .s_axi_wvalid (1'b0), .s_axi_wready (),
     .s_axi_bresp (), .s_axi_bvalid (), .s_axi_bready (1'b0),
     .s_axi_araddr ('0), .s_axi_arvalid (1'b0), .s_axi_arready (),
     .s_axi_rdata (), .s_axi_rresp (), .s_axi_rvalid (), .s_axi_rready (1'b0),
-    .init_go_i (go2), .init_done_o (done2), .init_fail_o (fail2),
+    .`MDIO_GO (go2), .init_done_o (done2), .init_fail_o (fail2),
     .phy_link_o (), .phy_link_change_o (),
     .mdio_io (mdio2), .mdc_o (mdc2));
 
@@ -236,11 +249,11 @@ module tb_phy_init_seq;
       for (int k = 0; k < 12; k++) begin
         int t;
         logic [31:0] rd;
-        axi_write(8'h00, 32'h0000_0302, 4'b0111);   // PHY 2, reg 3, read
+        axi_write(8'h00, (32'h0000_0300 | {27'b0, TEST_PHY_ADDR}), 4'b0111); // reg 3, read
         axi_write(8'h10, 32'h0000_0006, 4'b0001);   // clear DONE/ERROR
-        wait (dut.init_active === 1'b1);            // land the START inside a running poll
+        wait (dut.`MDIO_INTERNAL init_active === 1'b1);            // land the START inside a running poll
         axi_write(8'h0C, 32'h0000_0001, 4'b0001);   // START
-        check(dut.start_pending_q === 1'b1 || dut.init_active === 1'b0, "START during a poll is remembered");
+        check(dut.`MDIO_INTERNAL start_pending_q === 1'b1 || dut.`MDIO_INTERNAL init_active === 1'b0, "START during a poll is remembered");
         t = 0;
         st = 0;
         while (!st[1] && t < 4000) begin axi_read(8'h10, st); t++; end
@@ -295,3 +308,9 @@ module tb_phy_init_seq;
     $finish;
   end
 endmodule
+
+`undef MDIO_DUT
+`undef MDIO_CLK
+`undef MDIO_RESET
+`undef MDIO_GO
+`undef MDIO_INTERNAL
