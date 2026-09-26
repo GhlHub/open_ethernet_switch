@@ -15,7 +15,7 @@
 #define LEARN_SET 0x40
 #define LEARN_CLR 0x44
 #define PORT_CTRL_STATUS 0x48
-#define CPU_TX_OVERRIDE 0x4c
+#define CPU_TX_ABI 0x54
 #define CPU_RX_TAG 0x50
 #define CPU_PORT_MASK 0x20u
 #define PHYSICAL_PORT_MASK 0x1fu
@@ -34,6 +34,7 @@ void network_start(void);
 void network_link_changed(bool up);
 bool fabric_dma_init(void);
 bool fabric_dma_send(const uint8_t *p, size_t n);
+bool fabric_dma_send_directed(const uint8_t *p, size_t n, uint8_t mask);
 size_t fabric_dma_receive(uint8_t *p, size_t capacity);
 bool fabric_dma_healthy(void);
 void fabric_dma_last_rx_tag(bool *valid, uint8_t *ingress_port);

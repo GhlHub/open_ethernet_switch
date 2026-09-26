@@ -1,5 +1,103 @@
 # Design inventory verification
 
+## 2026-09-26 CPU TX metadata and DMA pipeline board deployment
+
+Built a fresh catalog and production design with fabric 1.1, management 1.2
+and both optional counter groups enabled. All acceptance gates passed:
+22 native and 22 packaged IP cases, four counter configurations, production
+assembly comparison, synthesis, route, bitstream and routed reports.
+Setup WNS is +0.018 ns; hold WHS is +0.010 ns with no failing endpoints.
+All 26 bus-skew checks pass (minimum slack +6.144 ns). The retired CPU override
+CDC-5 crossing is absent. Existing statistics-mailbox findings remain:
+2,632 CDC-1, 13 CDC-10 and 8 CDC-12; this is not complete CDC/interface sign-off.
+
+Deployed the bitstream and matching R5 ELF through JTAG at `10.0.1.107:3121`.
+This was a volatile download, not a flash update. UART confirms SD settings
+loaded, STP disabled and DHCP acquired `10.0.1.104`. JTAG readback confirms
+`CPU_TX_ABI = 0x43545801`. GEM1 uplink and PL0 miner links are both 1 Gb/s;
+physical and forwarding masks are `0x06`.
+
+Live validation over workstation `eth1`:
+
+- Concurrent full-size pings: CPU `10.0.1.104` 1,000/1,000 and miner
+  `10.0.1.140` 1,000/1,000, at 20 requests/s each, with zero loss.
+- HTTP: 120 mixed requests with six clients passed (maximum 0.124 s), along
+  with idle-client, authentication-isolation and overload-recovery checks.
+- SNMP: no bad packet, DDR error, late poll, saturation or mailbox/snapshot
+  timeout observed. CPU write transferred 2,323,667 bytes in 2,444 bursts
+  during the sampled test interval. Its data-stall count increased by 4,888
+  (two cycles per burst), matching physical ingress's observed ratio. This
+  counter measures WVALID with WREADY low; pipelining does not eliminate
+  downstream AXI backpressure.
+
+Artifacts: `build/ip_refactor/cpu_tx_pipeline_impl/` contains `results.json`,
+`reports/`, `cdc_review/`, `deploy.log`, `uart.log`, ping/HTTP/SNMP logs and
+`deployed_artifacts.sha256`. Bitstream is under
+`project/kr260_switch.runs/impl_1/kr260_top.bit`; the exact firmware is copied
+as `kr260_r5.elf`. Unconnected ports and live directed/STP transmission were
+not exercised by this deployment test.
+
+## 2026-09-26 CPU ingress DDR write pipeline
+
+`cpu_dma_wr.sv` now uses the physical ingress engine's two-word queue with
+one reserved slot for each synchronous RAM read in flight. It sustains one
+128-bit beat per clock after fill while WREADY is high, replacing the old
+three-cycle read/wait/write cadence. AW and BRESP sequencing, one outstanding
+burst and completion after the response remain unchanged. Existing BRESP
+error-recovery limitations remain unchanged.
+
+`make -C sim sim-cpu-pipeline sim-cpu-pipeline-verilator` passed 2,372 cases
+in each simulator: every length 1–2,048 bytes, exact data/strobes/last/read
+addresses, random WREADY, initial/final-beat stalls, delayed AW/B and reset
+during AW, buffered data and response wait. With no backpressure, a 1,500-byte
+frame (94 beats) takes 96 clocks from AW acceptance to the final W handshake;
+the data phase occupies 94 consecutive clocks. Running the same bench against
+the previous RTL fails the throughput assertion with a three-cycle beat gap.
+The new bench is registered in the switch-fabric IP test manifest.
+`make -C sim sim-cpu-port sim-switch-top` also passed, including byte-exact
+DDR storage, CPU RX and directed-then-ordinary CPU TX forwarding. Its log is
+`build/ip_refactor/cpu_dma_pipeline_integration.log`.
+
+Logs: `build/ip_refactor/cpu_dma_pipeline_iverilog.log`,
+`cpu_dma_pipeline_verilator.log`, and `cpu_dma_before.log` in the same directory.
+This initial simulation step did not download hardware; the subsequent
+combined rebuild and board deployment are recorded above.
+
+## 2026-09-26 CPU TX metadata redesign
+
+Implemented the mandatory in-band CPU TX header described in
+[CPU TX metadata](cpu-tx-metadata.md), removing the separate arm register and
+metadata CDC. Validation passed:
+
+- Focused framer tests: byte/keep/last preservation, ordinary/directed routing,
+  backpressure, delayed enqueue, malformed headers and reset.
+- Whole-switch directed-then-ordinary forwarding and diagnostic register tests.
+- R5 host suite, including concurrent ordinary/directed sends, padding,
+  descriptor ownership, ABI mismatch and timeout/error handling.
+- R5 build with both optional counter groups enabled, including ELF/DMA audits.
+- Fresh IP packaging/catalog and production block-design audits; all 21 IP
+  cases passed against both native and packaged sources.
+- Native functional regressions for all four counter configurations; production
+  assembly miter against current native RTL passed with 29,921 clock samples,
+  114 outputs and 1,326 statistics snapshots.
+
+Acceptance report: `build/ip_refactor/cpu_tx_metadata_acceptance/results.json`.
+The assembly miter shares leaf implementations; focused scoreboards provide
+functional checks. It does not claim equivalence to the retired raw-frame ABI.
+At this initial source-validation stage, hardware rebuild and deployment were
+pending. The subsequent combined deployment is recorded above.
+
+## 2026-09-26 routed timing and CDC audit
+
+Regenerated timing, CDC, exceptions, bus-skew and per-port I/O reports from the
+management 1.1 routed checkpoint. Timing passes (+0.018 ns setup, +0.010 ns
+hold); all 26 XPM bus-skew checks pass. The CPU TX override protocol, MDIO
+external timing and physical RGMII timing budget remain open. Statistics
+selector/request/acknowledgment findings are classified against their mailbox
+protocol; no CDC waivers were added. See the [full review](timing-cdc-review-20260926.md)
+for counts, per-port margins, assumptions, remaining checks and reproduction.
+No RTL/firmware changes or board download were performed.
+
 ## 2026-09-25 return to PL0: loss no longer reproduced
 
 The user returned the same miner cable to left-upper PL0, leaving GEM1 as

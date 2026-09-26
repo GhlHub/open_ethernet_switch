@@ -5,7 +5,7 @@ with an extracted `switch_fabric`, local GEM counters and reproducible
 Vivado packaging. The diagram below shows the board-level packet flow;
 `switch_top` is the compatibility wiring assembly around these blocks.
 
-Production assembly updated: 2026-09-25. The design is a store-and-forward switch
+Production assembly updated: 2026-09-26. The design is a store-and-forward switch
 using a shared PS DDR packet pool. PS GEM traffic enters PL through the GEM
 external FIFO interface, bypassing the GEM's built-in DMA. The switch's own
 PL DMA engines then store packets in DDR.
@@ -254,25 +254,21 @@ fabric clock domain through a plain double-flop synchronizer (level
 signals, not pulsed), matching this design's existing CDC conventions —
 see [cdc-review](cdc-review.md).
 
-**CPU TX destination override (`switch_top`).** Previously CPU-originated
-frames could only be resolved by the same automatic per-port
-`mac_addr_resolver` (PORT_ID=5) every physical port uses — learned-unicast
-or flood, with no way to target one specific egress port. A control
-protocol needs exactly that (send a BPDU/LACPDU out one port only).
-`CPU_TX_OVERRIDE` (`0x4C`, bit31=go, bits5:0=destination port mask)
-crosses into the fabric clock domain through the new generic
-`ctrl_value_xdomain` module (a one-shot value+toggle crossing, documented
-in the module itself) and arms a one-shot latch inside `switch_top` that
-substitutes the software-chosen mask for `cpu_port_top`'s normal
-`dest_mask_i`/`dest_mask_valid_i` on exactly the next frame the CPU
-enqueues, then disarms automatically. An un-overridden CPU frame resolves
-normally, so this has no effect on ordinary CPU traffic (management, DHCP,
-ARP, etc.).
+**CPU TX destination metadata (`switch_fabric` 1.1).** Every CPU MM2S
+frame now carries a private two-byte header identifying ordinary forwarding
+or a software-selected physical destination mask. `cpu_tx_framer` strips the
+header before Ethernet parsing, statistics and DDR storage, and holds its mask
+until enqueue completes. The next header is backpressured until then. This
+replaces the separate CSR arm and metadata CDC; no legacy transmit mode is
+supported. Management 1.2 exposes the ABI identifier checked by firmware.
+See [CPU TX metadata](cpu-tx-metadata.md) for the format and reset contract.
+This revision was rebuilt and deployed with matching firmware on 2026-09-26;
+see [board verification](verification.md#2026-09-26-cpu-tx-metadata-and-dma-pipeline-board-deployment).
 
 **Firmware plumbing (`software/r5/src/pstate.c`, `pstate.h`).** Thin
 register-access wrappers only — `pstate_fwd_set/clear`,
-`pstate_learn_set/clear`, `pstate_get`, and `pstate_cpu_tx_raw` (arms the
-override, then calls the existing `fabric_dma_send`). `network.c`'s RX
+`pstate_learn_set/clear`, `pstate_get`, and `pstate_cpu_tx_raw` (calls
+`fabric_dma_send_directed`, with header and payload under one TX mutex). `network.c`'s RX
 loop pre-filters frames addressed to the reserved block before they reach
 `eConsiderFrameForProcessing` (which would otherwise silently discard
 them, since they don't match the board's own MAC or IP/ARP EtherTypes) and
@@ -343,13 +339,13 @@ a second CPU-TX caller (BPDU transmission) existed alongside the IP
 stack's own output path — see [verification](verification.md)'s
 "real bug: CPU TX race" entry.
 
-Remaining TX-override serialization, shared STP task-state, CDC and CPU RX
-tag risks are recorded in [verification](verification.md#2026-09-23-check-in-review-remaining-stp-limitations).
+The separate TX-override serialization/CDC path is removed by the new stream
+ABI. Shared STP task-state and CPU RX tag risks remain recorded in [verification](verification.md#2026-09-23-check-in-review-remaining-stp-limitations).
 
 ## Switch-fabric bandwidth limitations and areas to investigate
 
-Status: updated 2026-09-22 for the pipelined physical ingress write engine
-(one beat per cycle after fill). Fabric clock is 100 MHz, and per-port stream
+Status: updated 2026-09-26 for the pipelined physical and CPU ingress write
+engines (one beat per cycle after fill). Fabric clock is 100 MHz, and per-port stream
 stages transfer one word per cycle. **The DDR throughput estimates below are analytical, not measured system
 performance.** A single-port MAC loopback bench measures frame integrity and
 GMII gaps; no bench exercises sustained traffic on several ports through a
@@ -368,7 +364,7 @@ and DDR, plus about 6 cycles of state overhead per frame.
 | Per-port egress stream out of `egress_port_rd` | 1.6 Gbit/s | One word per cycle; the next 128-bit beat is prefetched while the current one drains (it was 8 words per 10 cycles) |
 | PL/SFP port adapters, each direction | 1.6 Gbit/s | Word-wide FIFOs (`switch_egress_to_mac_txd.sv`, `mac_rxd_to_switch_ingress.sv`): one 16-bit word per fabric cycle on the fabric side and per MAC-clock cycle on the MAC side (2.3 Gbit/s). This replaced a byte-serial version that limited each port to 0.8 Gbit/s (0.5 Gbit/s at 62.5 MHz). |
 | CPU-port AXI DMA (32-bit) | 3.2 Gbit/s | Separate HP1 path |
-| `cpu_dma_wr.sv` | 4.27 Gbit/s | Still 3 cycles per beat |
+| `cpu_dma_wr.sv` | 12.8 Gbit/s | Two-word read pipeline; 1 cycle per 16-byte beat after fill, with AXI ready; one burst outstanding. Simulation verified and board deployed 2026-09-26 |
 | Aggregate offered load | 5 Gbit/s | 5 physical ports at 1 Gbit/s; flooded frames multiply the egress side |
 
 ### Ingress limitations

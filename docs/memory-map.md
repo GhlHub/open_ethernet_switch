@@ -152,8 +152,10 @@ These ownership transitions are distinct from the R5 DMA ring lifecycle.
 
 ### R5 transmit
 
-1. R5 copies a cacheable network packet into an available TX bounce buffer
-   and pads short frames.
+1. R5 places the private two-byte CPU TX metadata header and Ethernet frame
+   in an available TX bounce buffer, padding the Ethernet portion to 60 bytes.
+   DMA length includes the header; fabric DDR storage excludes it. See
+   [CPU transmit ABI](cpu-tx-metadata.md).
 2. It initializes the TX descriptor, executes the ownership barrier and
    writes AXI DMA's tail descriptor register.
 3. DMA owns the submitted descriptor/buffer until completion. R5 polls

@@ -23,7 +23,7 @@
 ../rtl/stats/stats_axi.sv
 ../rtl/common/rr_arbiter.sv
 ../rtl/common/port_link_ctrl.sv
-../rtl/common/ctrl_value_xdomain.sv
+../rtl/cpu_port/cpu_tx_framer.sv
 ../rtl/common/sync_fifo.sv
 ../rtl/buf_mgr/free_list_mgr.sv
 ../rtl/buf_mgr/queue_mgr.sv

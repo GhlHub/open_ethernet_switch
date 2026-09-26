@@ -635,7 +635,7 @@ xsim-mdio:
 	  xsim tb_sim -runall
 
 clean:
-	rm -f tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_autoneg_1000base_x.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp tb_rgmii_gmii_sim_model.vvp tb_pl_eth_clk_gen_sim_model.vvp tb_mdio_controller.vvp tb_phy_init_seq.vvp tb_mac_reset_reclock.vvp
+	rm -f tb_cpu_dma_pipeline.vvp tb_mac_addr_table.vvp tb_buf_mgr_core.vvp tb_ingress_top.vvp tb_ps_gem_axis_bridge.vvp tb_egress_top.vvp tb_egress_gem_tx_integration.vvp tb_sfp_1000base_x_pcs.vvp tb_autoneg_1000base_x.vvp tb_async_fifo.vvp tb_pl_gmii_adapters.vvp tb_sfp_port_top.vvp tb_cpu_port_top.vvp tb_mac_forwarding_top.vvp tb_switch_top.vvp tb_gth_sfp_sim_model.vvp tb_rgmii_gmii_sim_model.vvp tb_pl_eth_clk_gen_sim_model.vvp tb_mdio_controller.vvp tb_phy_init_seq.vvp tb_mac_reset_reclock.vvp
 	rm -rf xsim_run_idelay_gate xsim_run_rx_elastic tb_rgmii_rx_elastic.vvp xsim_run xsim_run_mac xsim_run_bufmgr xsim_run_ingress xsim_run_ps_eth xsim_run_egress xsim_run_integ xsim_run_sfp_pcs xsim_run_autoneg xsim_run_async_fifo xsim_run_async_fifo_xpm xsim_run_ps_eth_xpm xsim_run_integ_xpm xsim_run_pl_gmii_xpm xsim_run_pl_gmii xsim_run_sfp_port xsim_run_cpu_port xsim_run_mac_fwd xsim_run_switch_top xsim_run_gth_sim xsim_run_rgmii_sim xsim_run_pl_clkgen_sim xsim_run_mdio
 
 # Check real wrapper wiring against the GTH decoded RX control-port contract.
@@ -695,3 +695,15 @@ sim-ps-eth-multirate:
 	  cat ps_multirate_$$half.log; \
 	  ! grep -Eq 'FAIL|FATAL|ERROR' ps_multirate_$$half.log; \
 	done
+
+.PHONY: sim-cpu-pipeline sim-cpu-pipeline-verilator
+sim-cpu-pipeline: tb_cpu_dma_pipeline.vvp
+	vvp $<
+
+tb_cpu_dma_pipeline.vvp: $(BUFMGR_DIR)/buf_mgr_pkg.sv $(DMA_DIR)/axi_dma_pkg.sv $(CPU_PORT_DIR)/cpu_dma_wr.sv $(TB_DIR)/tb_cpu_dma_pipeline.sv
+	iverilog -g2012 -s tb_cpu_dma_pipeline -o $@ $^
+
+sim-cpu-pipeline-verilator: $(BUFMGR_DIR)/buf_mgr_pkg.sv $(DMA_DIR)/axi_dma_pkg.sv $(CPU_PORT_DIR)/cpu_dma_wr.sv $(TB_DIR)/tb_cpu_dma_pipeline.sv
+	mkdir -p obj_dir/cpu_pipeline
+	verilator --binary --timing -Wno-TIMESCALEMOD --top-module tb_cpu_dma_pipeline --Mdir obj_dir/cpu_pipeline -j 4 $^
+	./obj_dir/cpu_pipeline/Vtb_cpu_dma_pipeline

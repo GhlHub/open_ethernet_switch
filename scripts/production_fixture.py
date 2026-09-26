@@ -2,7 +2,8 @@
 
 Keep actual generated instance connections and stream nets; substitute the
 PS/interconnect, physical pins and CSR controls with the existing testbench.
-The immutable prior native assembly supplies the expected boundary mapping.
+The current native assembly supplies the expected datapath boundary mapping.
+Historical board wiring checks the unchanged management controls.
 """
 import re
 import subprocess
@@ -21,7 +22,7 @@ def connections(text, instance):
 
 
 def fixture(bd, out):
-    native = subprocess.check_output(['git', 'show', f'{NATIVE}:rtl/switch_top.sv'], cwd=ROOT, text=True)
+    native = (ROOT / 'rtl/switch_top.sv').read_text()
     board = subprocess.check_output(['git', 'show', f'{NATIVE}:rtl/board/kr260_pl_top.sv'], cwd=ROOT, text=True)
     generated = (bd / 'sim/system.v').read_text()
     actual = {cell: connections(generated, cell) for cell in [*CELLS, 'management']}

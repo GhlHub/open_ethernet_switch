@@ -31,8 +31,7 @@ module tb_rx_diag;
   logic [1:0] phy_link = 2'b00;
   logic [5:0] evt_set = '0;
   wire irq;
-  wire [5:0] fwd_en, learn_en, cpu_ovr_mask;
-  wire       cpu_ovr_go;
+  wire [5:0] fwd_en, learn_en;
   logic [2:0] rx_tag = 3'd0;
   logic       rx_tag_valid = 1'b0;
   wire        rx_tag_pop;
@@ -50,7 +49,6 @@ module tb_rx_diag;
     .link_up_o (link_up), .link_flush_tog_o (link_tog), .link_flush_busy_i (flush_busy),
     .phy_link_i (phy_link), .link_event_set_i (evt_set), .link_irq_o (irq),
     .fwd_en_o (fwd_en), .learn_en_o (learn_en),
-    .cpu_tx_ovr_mask_o (cpu_ovr_mask), .cpu_tx_ovr_go_o (cpu_ovr_go),
     .cpu_rx_tag_i (rx_tag), .cpu_rx_tag_valid_i (rx_tag_valid), .cpu_rx_tag_pop_o (rx_tag_pop));
 
 
@@ -166,32 +164,10 @@ module tb_rx_diag;
 
     axi_read(8'h48, r); check(r === 32'h0000_0FFF, "PORT_CTRL_STATUS back to all-enabled");
 
-    // ---- CPU TX destination override ----
-    check(cpu_ovr_go === 1'b0, "no override armed yet");
-    begin
-      bit saw_go;
-      saw_go = 1'b0;
-      fork
-        axi_write(8'h4C, 32'h0000_0000, 4'hF);        // bit31=0: must not arm
-        begin
-          repeat (10) begin @(posedge clk); if (cpu_ovr_go) saw_go = 1'b1; end
-        end
-      join
-      check(!saw_go, "a write with bit31=0 never pulses cpu_tx_ovr_go_o");
-    end
-    begin
-      bit saw_go;
-      saw_go = 1'b0;
-      fork
-        axi_write(8'h4C, 32'h8000_0004, 4'hF);        // bit31=1, mask=port 2
-        begin
-          repeat (10) begin @(posedge clk); if (cpu_ovr_go) saw_go = 1'b1; end
-        end
-      join
-      check(saw_go, "CPU_TX_OVERRIDE with bit31=1 pulses cpu_tx_ovr_go_o");
-    end
-    check(cpu_ovr_mask === 6'b000100, "cpu_tx_ovr_mask_o holds the armed mask");
-    axi_read(8'h4C, r); check(r === 32'h0000_0004, $sformatf("CPU_TX_OVERRIDE readback = %h, expected 4 (bit31 always 0)", r));
+    // The retired arm register cannot affect framed CPU traffic.
+    axi_write(8'h4C,32'h80000004,4'hF);
+    axi_read(8'h4C,r); check(r === 0,"retired CPU override reads zero");
+    axi_read(8'h54,r); check(r === 32'h43545801,"CPU framed TX ABI 1");
 
     // ---- CPU RX ingress-port tag ----
     axi_read(8'h50, r); check(r === 32'h0000_0000, "CPU_RX_TAG reads invalid (bit31=0) with nothing pending");

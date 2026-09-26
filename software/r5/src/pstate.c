@@ -11,8 +11,7 @@ void pstate_get(uint8_t *fwd, uint8_t *learn)
 }
 bool pstate_cpu_tx_raw(uint8_t dest_mask, const uint8_t *frame, size_t len)
 {
-    mmio_write(DIAG_BASE+CPU_TX_OVERRIDE, 0x80000000u|(dest_mask&0x3fu));
-    return fabric_dma_send(frame, len);
+    return fabric_dma_send_directed(frame, len, dest_mask);
 }
 void __attribute__((weak)) fabric_ctrl_frame_rx(const uint8_t *frame, size_t len)
 { (void)frame; (void)len; }

@@ -44,11 +44,9 @@ module switch_management #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
 
   // per-port control state (see header); axis domain, consumed asynchronously
   // by switch_top's own synchronizers (plain levels for FWD_EN/LEARN_EN, a
-  // ctrl_value_xdomain crossing for CPU_TX_OVERRIDE)
+  // independent per-port control levels)
   output logic [5:0]  fwd_en_o,
   output logic [5:0]  learn_en_o,
-  output logic [5:0]  cpu_tx_ovr_mask_o,
-  output logic        cpu_tx_ovr_go_o,       // one-cycle pulse
 
   // CPU RX ingress-port tag FIFO (see header, 0x50): axis domain, same clock
   // as this module -- a plain same-clock pop, not a CDC crossing here (the
@@ -122,8 +120,6 @@ module switch_management #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
     .link_irq_o(link_irq_o),
     .fwd_en_o(fwd_en_o),
     .learn_en_o(learn_en_o),
-    .cpu_tx_ovr_mask_o(cpu_tx_ovr_mask_o),
-    .cpu_tx_ovr_go_o(cpu_tx_ovr_go_o),
     .cpu_rx_tag_i(cpu_rx_tag_i),
     .cpu_rx_tag_valid_i(cpu_rx_tag_valid_i),
     .cpu_rx_tag_pop_o(cpu_rx_tag_pop_o)

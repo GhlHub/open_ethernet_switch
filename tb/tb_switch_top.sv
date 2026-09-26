@@ -49,8 +49,6 @@ module tb_switch_top;
   logic [5:0] learn_en_tb  = 6'b111111;
   logic [5:0] fwd_en_tb    = 6'b111111;
   wire  [5:0] ctrl_frame_tb;
-  logic [5:0] cpu_ovr_mask_tb = '0;
-  logic       cpu_ovr_go_tb   = 1'b0;
   wire  [2:0] cpu_rx_tag;
   wire        cpu_rx_tag_valid;
   logic       cpu_rx_tag_pop = 1'b0;
@@ -355,8 +353,6 @@ module tb_switch_top;
     .learn_en_i (learn_en_tb),
     .fwd_en_i (fwd_en_tb),
     .ctrl_frame_o (ctrl_frame_tb),
-    .cpu_tx_ovr_mask_i (cpu_ovr_mask_tb),
-    .cpu_tx_ovr_go_i (cpu_ovr_go_tb),
     .cpu_rx_ingress_port_o (cpu_rx_tag),
     .cpu_rx_ingress_valid_o (cpu_rx_tag_valid),
     .cpu_rx_ingress_pop_i (cpu_rx_tag_pop)
@@ -472,7 +468,7 @@ module tb_switch_top;
   // words packed 2 bytes/word (tkeep=2'b01 on a trailing odd byte), honoring
   // tready (this port, unlike GEM0's raw push interface, genuinely
   // backpressures store-and-forward)
-  task automatic cpu_send_frame(input byte data[]);
+  task automatic cpu_send_frame(input byte data[], input bit directed = 0, input logic [4:0] mask = 0);
     int n, i;
     logic [15:0] word;
     logic [1:0]  keep;
@@ -481,6 +477,10 @@ module tb_switch_top;
     n = data.size();
     i = 0;
     @(posedge clk);
+    cpu_tx_tdata <= {8'hA5,1'b0,directed,1'b0,mask};
+    cpu_tx_tkeep <= 2'b11; cpu_tx_tlast <= 0; cpu_tx_tvalid <= 1;
+    @(posedge clk); acc = cpu_tx_tready;
+    while (!acc) begin @(posedge clk); acc = cpu_tx_tready; end
     while (i < n) begin
       if (i + 1 < n) begin
         word = {data[i+1], data[i]}; keep = 2'b11; is_last = (i + 2 >= n);
@@ -701,19 +701,17 @@ module tb_switch_top;
       d6[11] = 8'h01;
       for (int i = 0; i < 16; i++) d6[12+i] = byte'(8'hF0 + i);
 
-      cpu_ovr_mask_tb = 6'b000100; // port 2 (PL0) only
-      @(posedge axis_clk); cpu_ovr_go_tb = 1'b1; @(posedge axis_clk); cpu_ovr_go_tb = 1'b0;
-      repeat (5) @(posedge clk); // let the CDC crossing land before the frame does
+      // Metadata now accompanies the frame; no AXI-Lite arm or CDC delay.
 
       seen_mask = '0; got_grant = 1'b0; seen_armed_before = 1'b0;
       fork
-        cpu_send_frame(d6);
+        cpu_send_frame(d6, 1, 5'b00100);
         begin
           int t; t = 0;
           while (!got_grant && t < 20000) begin
             @(posedge clk);
             if (dut.u_fabric.cpu_enqueue_req && dut.u_fabric.cpu_enqueue_gnt) begin
-              seen_armed_before = dut.u_fabric.cpu_tx_ovr_armed_q;
+              seen_armed_before = dut.u_fabric.cpu_directed;
               seen_mask         = dut.u_fabric.cpu_enqueue_destmask;
               got_grant         = 1'b1;
             end
@@ -729,7 +727,7 @@ module tb_switch_top;
       end else if (seen_mask !== 6'b000100) begin
         $display("FAIL: CPU TX override: enqueue destmask=%b, expected port 2 only (000100)", seen_mask);
         errors++;
-      end else if (dut.u_fabric.cpu_tx_ovr_armed_q !== 1'b0) begin
+      end else if (dut.u_fabric.cpu_directed !== 1'b0) begin
         $display("FAIL: CPU TX override: still armed after the frame it was meant for was consumed"); errors++;
       end else $display("PASS: CPU TX override sends a frame to exactly the software-chosen port, then disarms");
 

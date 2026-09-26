@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
-"""Compare every switch output against the pre-partition RTL on every clock edge.
+"""Run current native switch regression or compare packaged wiring to native.
 
-The immutable Git baseline avoids maintaining a second editable implementation.
-Uses the existing forwarding/link/STP regression stimulus and shared DDR responses.
-This is a simulation miter, not a formal proof.
+CPU TX ABI 1 intentionally changes the old raw stream contract. Historical
+pre-partition equivalence is not claimed. Leaf behavior is checked by focused
+scoreboards; the generated/native miter checks assembly wiring and timing.
 """
 import argparse
 import re
 import subprocess
 from pathlib import Path
 from ip_sources import ROOT, sources
-
-BASELINE = '6b180e0138d5592cfb80078a9a2517d63013927b'
-
-
-def original(path):
-    return subprocess.check_output(['git', 'show', f'{BASELINE}:{path}'], cwd=ROOT, text=True)
-
 
 def run(command, log):
     with log.open('w') as out:
@@ -39,20 +32,13 @@ def main():
         parser.error('--production-bd requires --catalog, both counter groups, and no --packaged-bd')
     out = (args.output.resolve() if args.output else ROOT / 'build/ip_refactor') / f'equivalence_{args.stats_ddr}{args.stats_debug}{suffix}'
     out.mkdir(parents=True, exist_ok=True)
-    # This fixture proves a structural partition, not arbitrary leaf-RTL
-    # edits. Sharing a modified leaf with the golden assembly would conceal
-    # its behavior change, so reject that case instead of reporting a pass.
-    for path in sources():
-        if path.startswith('rtl/') and (ROOT / path).read_text() != original(path):
-            raise SystemExit(f'Baseline leaf RTL changed: {path}; update the reference before claiming equivalence')
-    golden = original('rtl/switch_top.sv')
+    native_only = not (args.packaged_bd or args.production_bd)
+    golden = (ROOT / 'rtl/switch_top.sv').read_text()
     header = re.sub(r'//[^\n]*', '', golden[:golden.index('\n);')])
     outputs = re.findall(r'\boutput\s+(?:wire|logic)\s*(?:\[[^\]]+\]\s*)*(\w+)', header)
     clocks = re.findall(r'\binput\s+logic\s+(\w*clk\w*)\s*[,\n]', header)
     golden = re.sub(r'\bmodule switch_top\b', 'module golden_switch_top', golden)
-    golden = golden.replace('ingress_top u_ingress_top', 'golden_ingress_top u_ingress_top')
     (out / 'golden_switch_top.sv').write_text(golden)
-    (out / 'golden_ingress_top.sv').write_text(original('rtl/dma/ingress_top.sv').replace('module ingress_top', 'module golden_ingress_top'))
     tb = (ROOT / 'tb/tb_switch_top.sv').read_text()
     tb = tb.replace('#(.AGE_TICK_DIVIDE_COUNT(100))',
                     f'#(.STATS_DDR({args.stats_ddr}), .STATS_DEBUG({args.stats_debug}), .AGE_TICK_DIVIDE_COUNT(100))')
@@ -66,6 +52,10 @@ def main():
     for name in outputs:
         reference = re.sub(r'\.' + name + r'\s*\([^)]*\)', '.' + name + '()', reference)
     checks = '\n'.join(f'      if (dut.{name} !== reference.{name}) $fatal(1, "equivalence mismatch: {name} actual=%h expected=%h", dut.{name}, reference.{name});' for name in outputs)
+    if native_only:
+        reference = ''
+        checks = ''
+
     # Connect inputs through the DUT's ports so tied/shared clocks are checked
     # exactly as the original assembly sees them.
     edges = ' or '.join('posedge dut.' + name for name in clocks)
@@ -95,14 +85,14 @@ def main():
     end
   end
   final begin
-    $display("Miter: %0d clock samples, {len(outputs)} outputs, %0d snapshots", comparisons, snapshots);
+    $display("{'Regression' if native_only else 'Miter'}: %0d clock samples, {len(outputs)} outputs, %0d snapshots", comparisons, snapshots);
   end
 '''
     tb = tb.replace('endmodule', extra + '\nendmodule')
     (out / 'tb_miter.sv').write_text(tb)
     files = [str(ROOT / p) for p in sources()]
     files += [str(ROOT / 'rtl/switch_top.sv'), str(out / 'golden_switch_top.sv'),
-              str(out / 'golden_ingress_top.sv'), str(ROOT / 'tb/axi_mem_bfm.sv'), str(out / 'tb_miter.sv')]
+              str(ROOT / 'tb/axi_mem_bfm.sv'), str(out / 'tb_miter.sv')]
     if args.packaged_bd:
         from check_ip_catalog import check, NS
         from ip_sources import CORES
@@ -157,8 +147,8 @@ def main():
     result = (out / 'run.log').read_text()
     print(result, end='')
     if 'FAIL' in result or 'ALL TESTS PASSED' not in result:
-        raise SystemExit('Baseline functional regression failed; see ' + str(out / 'run.log'))
-    counts = re.search(r'Miter: (\d+) clock samples, \d+ outputs, (\d+) snapshots', result)
+        raise SystemExit('Current functional regression failed; see ' + str(out / 'run.log'))
+    counts = re.search(r'(?:Miter|Regression): (\d+) clock samples, \d+ outputs, (\d+) snapshots', result)
     if not counts or int(counts[1]) == 0 or int(counts[2]) < 256:
         raise SystemExit('Insufficient miter/mailbox coverage')
 

@@ -16,8 +16,6 @@ module switch_fabric
   input wire [NUM_PORTS-1:0]  learn_en_i,
   input wire [NUM_PORTS-1:0]  fwd_en_i,
   output wire [NUM_PORTS-1:0]  ctrl_frame_o,
-  input wire [NUM_PORTS-1:0]  cpu_tx_ovr_mask_i,
-  input wire  cpu_tx_ovr_go_i,
   output wire [PORT_ID_W-1:0]  cpu_rx_ingress_port_o,
   output wire  cpu_rx_ingress_valid_o,
   input wire  cpu_rx_ingress_pop_i,
@@ -299,17 +297,32 @@ module switch_fabric
   logic [NUM_PORTS-1:0]       fwd_s_axis_tlast;
   logic [NUM_PORTS-1:0]       fwd_s_axis_tready;
 
+  // The private CPU header and frame share the same DMA stream and clock.
+  wire [15:0] cpu_frame_data;
+  wire [1:0] cpu_frame_keep;
+  wire cpu_frame_valid, cpu_frame_last, cpu_frame_ready, cpu_directed;
+  wire [NUM_PORTS-1:0] cpu_frame_dest;
+  cpu_tx_framer u_cpu_tx_framer (
+    .clk(clk), .rst_n(rst_n),
+    .s_data(cpu_s_axis_tdata), .s_keep(cpu_s_axis_tkeep),
+    .s_valid(cpu_s_axis_tvalid), .s_last(cpu_s_axis_tlast), .s_ready(cpu_s_axis_tready),
+    .m_data(cpu_frame_data), .m_keep(cpu_frame_keep),
+    .m_valid(cpu_frame_valid), .m_last(cpu_frame_last), .m_ready(cpu_frame_ready),
+    .frame_done(cpu_enqueue_req && cpu_enqueue_gnt),
+    .directed(cpu_directed), .dest_mask(cpu_frame_dest)
+  );
+
   assign fwd_s_axis_tdata[NUM_PHYS_PORTS-1:0]  = phy_s_axis_tdata;
   assign fwd_s_axis_tkeep[NUM_PHYS_PORTS-1:0]  = phy_s_axis_tkeep;
   assign fwd_s_axis_tvalid[NUM_PHYS_PORTS-1:0] = phy_s_axis_tvalid;
   assign fwd_s_axis_tlast[NUM_PHYS_PORTS-1:0]  = phy_s_axis_tlast;
   assign fwd_s_axis_tready[NUM_PHYS_PORTS-1:0] = phy_s_axis_tready;
 
-  assign fwd_s_axis_tdata[5]  = cpu_s_axis_tdata;
-  assign fwd_s_axis_tkeep[5]  = cpu_s_axis_tkeep;
-  assign fwd_s_axis_tvalid[5] = cpu_s_axis_tvalid;
-  assign fwd_s_axis_tlast[5]  = cpu_s_axis_tlast;
-  assign fwd_s_axis_tready[5] = cpu_s_axis_tready;
+  assign fwd_s_axis_tdata[5]  = cpu_frame_data;
+  assign fwd_s_axis_tkeep[5]  = cpu_frame_keep;
+  assign fwd_s_axis_tvalid[5] = cpu_frame_valid;
+  assign fwd_s_axis_tlast[5]  = cpu_frame_last;
+  assign fwd_s_axis_tready[5] = cpu_frame_ready;
 
   // =========================================================================
   // link state: synchronize into this clock domain, generate flush pulses
@@ -343,38 +356,6 @@ module switch_fabric
     end else begin
       learn_en_s1 <= learn_en_i; learn_en_s2 <= learn_en_s1;
       fwd_en_s1   <= fwd_en_i;   fwd_en_s2   <= fwd_en_s1;
-    end
-  end
-
-  // ---- CPU TX destination override: one-shot value crossing (see
-  // rtl/common/ctrl_value_xdomain.sv), then an "armed" latch that captures
-  // the override for exactly the one CPU-egress frame it precedes and
-  // disarms itself the moment that frame's enqueue is granted (the same
-  // cpu_enqueue_req/cpu_enqueue_gnt event mac_addr_resolver's own header
-  // already documents as the natural per-frame boundary on this
-  // interface -- nothing can queue a second CPU frame before this one is
-  // consumed, this port is single-frame-in-flight by construction) ----
-  logic [NUM_PORTS-1:0] cpu_tx_ovr_mask_sync;
-  logic                 cpu_tx_ovr_pulse;
-  ctrl_value_xdomain #(.WIDTH(NUM_PORTS)) u_cpu_tx_ovr_sync (
-    .src_clk (axis_clk), .src_rst_n (axis_rst_n),
-    .value_i (cpu_tx_ovr_mask_i), .go_i (cpu_tx_ovr_go_i),
-    .dst_clk (clk), .dst_rst_n (rst_n),
-    .value_o (cpu_tx_ovr_mask_sync), .valid_o (cpu_tx_ovr_pulse)
-  );
-  logic                 cpu_tx_ovr_armed_q;
-  logic [NUM_PORTS-1:0] cpu_tx_ovr_mask_q;
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      cpu_tx_ovr_armed_q <= 1'b0;
-      cpu_tx_ovr_mask_q  <= '0;
-    end else begin
-      if (cpu_tx_ovr_pulse) begin
-        cpu_tx_ovr_armed_q <= 1'b1;
-        cpu_tx_ovr_mask_q  <= cpu_tx_ovr_mask_sync;
-      end else if (cpu_enqueue_req && cpu_enqueue_gnt) begin
-        cpu_tx_ovr_armed_q <= 1'b0;
-      end
     end
   end
 
@@ -549,21 +530,19 @@ module switch_fabric
   cpu_port_top u_cpu_port_top (
     .clk                    (clk),
     .rst_n                  (rst_n),
-    .s_axis_tdata           (cpu_s_axis_tdata),
-    .s_axis_tkeep           (cpu_s_axis_tkeep),
-    .s_axis_tvalid          (cpu_s_axis_tvalid),
-    .s_axis_tlast           (cpu_s_axis_tlast),
-    .s_axis_tready          (cpu_s_axis_tready),
+    .s_axis_tdata           (cpu_frame_data),
+    .s_axis_tkeep           (cpu_frame_keep),
+    .s_axis_tvalid          (cpu_frame_valid),
+    .s_axis_tlast           (cpu_frame_last),
+    .s_axis_tready          (cpu_frame_ready),
     .m_axis_tdata           (cpu_m_axis_tdata),
     .m_axis_tkeep           (cpu_m_axis_tkeep),
     .m_axis_tvalid          (cpu_m_axis_tvalid),
     .m_axis_tlast           (cpu_m_axis_tlast),
     .m_axis_tready          (cpu_m_axis_tready),
-    // CPU TX destination override (see above): while armed, replace the
-    // automatic lookup result with the software-chosen mask for exactly
-    // this one frame.
-    .dest_mask_i            (cpu_tx_ovr_armed_q ? cpu_tx_ovr_mask_q : dest_mask[5]),
-    .dest_mask_valid_i      (cpu_tx_ovr_armed_q ? 1'b1 : dest_mask_valid[5]),
+    // Directed metadata belongs to this frame and stays stable through enqueue.
+    .dest_mask_i            (cpu_directed ? cpu_frame_dest : dest_mask[5]),
+    .dest_mask_valid_i      (cpu_directed ? 1'b1 : dest_mask_valid[5]),
     .cpu_alloc_req_o        (cpu_alloc_req),
     .cpu_alloc_gnt_i        (cpu_alloc_gnt),
     .cpu_alloc_bufid_i      (cpu_alloc_bufid),
@@ -643,8 +622,8 @@ module switch_fabric
   // =========================================================================
 
   wire [7:0][31:0] stats_cpu_inc;
-  stats_axis stats_cpu_s (.clk(clk),.rst_n(rst_n),.valid(cpu_s_axis_tvalid),.ready(cpu_s_axis_tready),
-    .last(cpu_s_axis_tlast),.bad(1'b0),.keep(cpu_s_axis_tkeep),.increment(stats_cpu_inc[0 +: 4]));
+  stats_axis stats_cpu_s (.clk(clk),.rst_n(rst_n),.valid(cpu_frame_valid),.ready(cpu_frame_ready),
+    .last(cpu_frame_last),.bad(1'b0),.keep(cpu_frame_keep),.increment(stats_cpu_inc[0 +: 4]));
   stats_axis stats_cpu_m (.clk(clk),.rst_n(rst_n),.valid(cpu_m_axis_tvalid),.ready(cpu_m_axis_tready),
     .last(cpu_m_axis_tlast),.bad(1'b0),.keep(cpu_m_axis_tkeep),.increment(stats_cpu_inc[4 +: 4]));
   stats_bank stats_cpu_bank (.clk(clk),.rst_n(rst_n),.increment(stats_cpu_inc),

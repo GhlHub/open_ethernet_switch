@@ -1,11 +1,17 @@
 # Clock-domain-crossing review
 
+**Current routed evidence:** [2026-09-26 rebuild/deployment](verification.md#2026-09-26-cpu-tx-metadata-and-dma-pipeline-board-deployment).
+The [preceding timing/CDC review](timing-cdc-review-20260926.md) records the
+mailbox and external-interface analysis.
+The historical counts below are superseded. The current image meets its timing
+constraints but still has CDC and external-interface sign-off items.
+
 Development review recorded 2026-09-19 from an earlier post-route `report_cdc -details` of the KR260
 board build (every severity, 890 rows), by tracing each crossing to its RTL and
 reading the protocol. Vivado cannot prove a crossing correct; this records what
 each one is, why it is (or was not) safe, and what evidence exists.
 
-The latest inspected report (2026-09-20 04:18) has zero critical and 13 warning
+The report inspected at that time (2026-09-20 04:18) has zero critical and 13 warning
 clock-pair groups. It supersedes earlier summary counts, but does not make the
 review below a complete sign-off of new circuitry. RGMII now uses FIFO36E2,
 not the earlier generic FIFO. Vendor recognition and simulation are evidence,
@@ -121,7 +127,16 @@ negotiation link passes through a two-flop synchronizer before event detection.
 The new clock plan and constraints require review of all physical skew/reset
 assumptions; fixed-ratio simulation does not prove metastability safety.
 
-## STP/control-protocol hardware hooks (2026-09-23)
+## CPU TX metadata update (2026-09-26 deployed)
+
+The CPU override crossing described below is removed from the new fabric 1.1
+source. Metadata now shares the CPU frame stream; see [the contract](cpu-tx-metadata.md).
+Fresh routed reports confirm the old CDC-5 crossing is absent, setup/hold
+timing passes and all 26 bus-skew checks pass. The matching FPGA and firmware
+are deployed. Statistics CDC findings and external-interface qualification
+items remain open; see the current routed evidence above.
+
+## STP/control-protocol hardware hooks (2026-09-23, historical)
 
 Two new crossings support the port-state and CPU-TX-override hooks
 described in [architecture](architecture.md#control-protocol-hooks-stplacplldp-no-protocol-logic):

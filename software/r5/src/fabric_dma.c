@@ -41,7 +41,10 @@ bool fabric_dma_healthy(void)
 bool fabric_dma_init(void)
 {
     if (ready || failed) return fabric_dma_healthy();
+    /* Refuse raw-frame hardware before touching DMA ownership. */
+    if (mmio_read(DIAG_BASE+CPU_TX_ABI)!=0x43545801u) { failed=true; return false; }
     if (!tx_lock) tx_lock = xSemaphoreCreateMutex();
+    if (!tx_lock) { failed=true; return false; }
     mmio_write(DMA_BASE, 4); /* reset both channels */
     uint64_t start=board_timestamp();
     while (mmio_read(DMA_BASE)&4) {
@@ -66,16 +69,21 @@ bool fabric_dma_init(void)
     ready=true;
     return fabric_dma_healthy();
 }
-bool fabric_dma_send(const uint8_t *p, size_t n)
+static bool send_frame(const uint8_t *p, size_t n, bool directed, uint8_t mask)
 {
-    if (!fabric_dma_healthy() || n<14 || n>1514) return false;
+    if (!p || n<14 || n>1514 || !fabric_dma_healthy()) return false;
     xSemaphoreTake(tx_lock, portMAX_DELAY);
+    /* A preceding sender may have failed while this task waited. */
+    if (!fabric_dma_healthy()) { xSemaphoreGive(tx_lock); return false; }
     struct bd *d=&tx[tx_index];
-    memcpy(tx_data[tx_index],p,n);
+    /* Little-endian 16-bit AXIS header: flags/mask byte, then magic. */
+    tx_data[tx_index][0]=directed ? (uint8_t)(0x40u|(mask&0x1fu)) : 0;
+    tx_data[tx_index][1]=0xa5;
+    memcpy(tx_data[tx_index]+2,p,n);
     /* Physical MACs pad, but padding here also keeps all virtual-port frames uniform. */
     size_t bytes=n<60?60:n;
-    if (bytes>n) memset(tx_data[tx_index]+n,0,bytes-n);
-    d->status=0; d->control=SOF_EOF|(uint32_t)bytes;
+    if (bytes>n) memset(tx_data[tx_index]+2+n,0,bytes-n);
+    d->status=0; d->control=SOF_EOF|(uint32_t)(bytes+2);
     barrier(); mmio_write(DMA_BASE+0x10,address(d));
     TickType_t start=xTaskGetTickCount();
     bool ok=true;
@@ -93,6 +101,10 @@ bool fabric_dma_send(const uint8_t *p, size_t n)
     xSemaphoreGive(tx_lock);
     return ok;
 }
+bool fabric_dma_send(const uint8_t *p, size_t n)
+{ return send_frame(p,n,false,0); }
+bool fabric_dma_send_directed(const uint8_t *p, size_t n, uint8_t mask)
+{ return send_frame(p,n,true,mask); }
 size_t fabric_dma_receive(uint8_t *p, size_t capacity)
 {
     if (!fabric_dma_healthy()) return 0;

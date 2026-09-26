@@ -1,6 +1,9 @@
 {
   "tests": [
     {
+      "top": "tb_cpu_dma_pipeline"
+    },
+    {
       "top": "tb_ingress_dma_pipeline"
     },
     {
@@ -17,6 +20,9 @@
     },
     {
       "top": "tb_statistics_axi"
+    },
+    {
+      "top": "tb_cpu_tx_framer"
     }
   ]
 }

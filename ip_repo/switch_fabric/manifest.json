@@ -1,6 +1,6 @@
 {
   "name": "switch_fabric",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Shared DDR packet switch with five physical streams and CPU virtual port",
   "top": "switch_fabric",
   "sources": [
@@ -12,7 +12,7 @@
     "rtl/stats/stats_axi.sv",
     "rtl/common/rr_arbiter.sv",
     "rtl/common/port_link_ctrl.sv",
-    "rtl/common/ctrl_value_xdomain.sv",
+    "rtl/cpu_port/cpu_tx_framer.sv",
     "rtl/common/sync_fifo.sv",
     "rtl/common/async_fifo.sv",
     "rtl/buf_mgr/free_list_mgr.sv",

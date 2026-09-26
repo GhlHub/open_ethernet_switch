@@ -62,7 +62,7 @@ def main():
                           '--output', str(output / 'tests')])
     for ddr in ('0', '1'):
         for debug in ('0', '1'):
-            run(f'equivalence_{ddr}{debug}', [python, 'scripts/check_ip_equivalence.py',
+            run(f'native_regression_{ddr}{debug}', [python, 'scripts/check_ip_equivalence.py',
                 '--stats-ddr', ddr, '--stats-debug', debug, '--output', str(output / 'miters')])
     run('production_equivalence', [python, 'scripts/check_ip_equivalence.py',
         '--production-bd', str(bd), '--catalog', str(catalog), '--output', str(output / 'miters')])

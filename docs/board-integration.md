@@ -349,6 +349,8 @@ The diagnostics slave at `0x80100000` now exposes calibration and link control:
 | `0x18` | LINK_EVENT | Sticky W1C: bits 0/1 PL0/PL1 link change, bit 2 SFP negotiation-link change, bit 3 module presence change, bit 4 LOS change, bit 5 TX_FAULT rising |
 | `0x1C` | LINK_EVENT_EN | Enables event bits to assert the level interrupt on PS IRQ1 bit 1; reset zero |
 | `0x20` | PCS_STATUS | Read-only synchronized SFP state: bit 0 sync, bit 1 negotiation link, bit 2 full duplex, bit 3 remote fault |
+| `0x4C` | Retired CPU TX override | Reads zero; writes ignored in management 1.2 |
+| `0x54` | CPU_TX_ABI | Read-only `0x43545801`; firmware requires this identifier for the two-byte CPU TX header |
 
 LINK_SET/CLR/STATUS use port order GEM0, GEM1, PL0, PL1, SFP, CPU. The reset
 mask is **0x20 (CPU only)**. PHY link and SFP events are informational until

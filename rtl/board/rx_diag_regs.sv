@@ -83,23 +83,9 @@
 //                every CPU-delivered frame, not only trapped control-block
 //                ones (software already re-checks the destination MAC
 //                itself if it only cares about those -- see network.c).
-//   0x4C CPU_TX_OVERRIDE  write: bits5:0 = destination port mask for the
-//                SINGLE NEXT frame the CPU port transmits (bypassing the
-//                normal MAC-table lookup that CPU-originated traffic
-//                otherwise goes through -- the CPU cannot otherwise target
-//                one specific egress port; see switch_top.sv's header),
-//                bit31 must be written 1 to arm it (a write with bit31=0 is
-//                ignored). The queued DMA transfer for that one frame must
-//                not be started before this write's response is seen (this
-//                register's crossing into the fabric domain takes a few
-//                fabric clocks, comfortably faster than queuing a DMA
-//                descriptor). Read: bits5:0 = the last-written mask; bit31
-//                always reads 0 (this register does not report live
-//                armed/consumed status -- there is no return path from the
-//                fabric domain telling this block when a frame has
-//                consumed the override, only a one-way arm).
-// DATA timeout returns ffffffff without canceling the outstanding request.
-// Retry the SAME index; late snapshots are retained, never silently discarded.
+//   0x4C retired: reads zero; writes ignored.
+//   0x54 CPU_TX_ABI read-only: 0x43545801 = mandatory in-band TX header ABI 1.
+
 module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
                       parameter integer STATS_TIMEOUT=4095) (
   output logic stats_request,
@@ -149,11 +135,9 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
 
   // per-port control state (see header); axis domain, consumed asynchronously
   // by switch_top's own synchronizers (plain levels for FWD_EN/LEARN_EN, a
-  // ctrl_value_xdomain crossing for CPU_TX_OVERRIDE)
+  // independent per-port control levels)
   output logic [5:0]  fwd_en_o,
   output logic [5:0]  learn_en_o,
-  output logic [5:0]  cpu_tx_ovr_mask_o,
-  output logic        cpu_tx_ovr_go_o,       // one-cycle pulse
 
   // CPU RX ingress-port tag FIFO (see header, 0x50): axis domain, same clock
   // as this module -- a plain same-clock pop, not a CDC crossing here (the
@@ -192,7 +176,6 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
   wire fwd_clr_wr   = write_fire && aw_hold == 8'h3C && wstrb_hold[0];
   wire learn_set_wr = write_fire && aw_hold == 8'h40 && wstrb_hold[0];
   wire learn_clr_wr = write_fire && aw_hold == 8'h44 && wstrb_hold[0];
-  wire cpu_ovr_wr   = write_fire && aw_hold == 8'h4C && wstrb_hold[3]; // bit31 (arm) lives in byte 3
   // any of the three CLR operations purges stale forwarding state -- the
   // same "flush on the way into a non-forwarding/non-learning state" this
   // design already does for LINK_CLR; at most one of these is true on any
@@ -224,15 +207,6 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
   end
   assign link_irq_o = |(event_q & event_en_q);
 
-  // last-written mask, for readback only -- see header: this register does
-  // not track whether the fabric domain has consumed it yet
-  logic [5:0] cpu_ovr_mask_q;
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) cpu_ovr_mask_q <= '0;
-    else if (cpu_ovr_wr && w_hold[31]) cpu_ovr_mask_q <= w_hold[5:0];
-  end
-  assign cpu_tx_ovr_mask_o = w_hold[5:0];
-  assign cpu_tx_ovr_go_o   = cpu_ovr_wr && w_hold[31];
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) force_q <= 1'b0;
     else if (sfp_ctl_wr) force_q <= w_hold[0];
@@ -307,7 +281,8 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
           8'h34:   s_axi_rdata <= 100000000;
           8'h20:   s_axi_rdata <= {28'd0, sfp_pcs_status_i};
           8'h48:   s_axi_rdata <= {18'd0, learn_en_o, fwd_en_o};
-          8'h4C:   s_axi_rdata <= {26'd0, cpu_ovr_mask_q}; // bit31 always 0 (see header)
+          8'h4C:   s_axi_rdata <= 0; // retired override register; writes ignored
+          8'h54:   s_axi_rdata <= 32'h43545801; // CPU TX framed-stream ABI 1
           8'h50:   s_axi_rdata <= {cpu_rx_tag_valid_i, 28'd0, cpu_rx_tag_i};
           default: s_axi_rdata <= 32'd0;
         endcase

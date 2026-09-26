@@ -1,5 +1,25 @@
 # Design inventory and pending development
 
+## CPU TX metadata and pipelined CPU DDR writes (2026-09-26 deployed)
+
+Fabric 1.1 / management 1.2 replace the CPU override CDC/register with a
+mandatory per-frame DMA header. Firmware uses one atomic header/payload send
+path and rejects mismatched hardware. See [contract and validation](cpu-tx-metadata.md).
+The matching FPGA/firmware, including the two-word CPU write pipeline, are
+now deployed over JTAG. Fresh route passes +0.018 ns setup / +0.010 ns hold;
+CPU and forwarded miner tests each passed 1,000 full-size pings with no loss.
+See [deployment evidence](verification.md#2026-09-26-cpu-tx-metadata-and-dma-pipeline-board-deployment).
+The previous routed review below remains historical evidence.
+
+## Routed timing and CDC review (2026-09-26)
+
+Fresh reports confirm setup WNS +0.018 ns and hold WHS +0.010 ns. All 2,632
+CDC-1 rows trace to statistics selector logic and require the documented
+mailbox protocol, rather than blanket waivers. CPU TX override transfer, MDIO
+timing, RGMII board/PHY margins and reset recovery remain sign-off items.
+See [review and closure order](timing-cdc-review-20260926.md). RTL, constraints
+and the running board image were not changed by this review.
+
 ## Management 1.1 and interface contracts (2026-09-25)
 
 Current source packages the statistics decoder inside management, with a

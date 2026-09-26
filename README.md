@@ -6,6 +6,12 @@ learning/lookup/aging, and a shared DDR packet-buffer architecture under
 the reusable blocks described in [`ip_repo`](ip_repo/README.md), with
 `rtl/switch_top.sv` retaining the board-facing wiring interface.
 
+The 2026-09-26 lab build uses fabric 1.1 / management 1.2 with mandatory
+[CPU TX frame metadata](docs/cpu-tx-metadata.md) and a pipelined CPU DDR write
+engine. Matching FPGA and R5 firmware were deployed over JTAG; DHCP acquired
+`10.0.1.104`. CPU and forwarded miner tests each passed 1,000 full-size pings,
+and HTTP concurrency passed. See [deployment and timing results](docs/verification.md#2026-09-26-cpu-tx-metadata-and-dma-pipeline-board-deployment).
+
 The intended port map is two PS GEM ports, two PL Ethernet ports, one SFP port,
 and one virtual CPU port. **The current SFP design is 1G 1000BASE-X, not 10GbE.**
 

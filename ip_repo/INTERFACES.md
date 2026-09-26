@@ -34,8 +34,8 @@ contracts are not physical CDC sign-off.
 | `gem_port` | 1.0 / `switch_gem_port` | `clk/rst_n`; `gem_rx_clk/gem_rx_rst_n`; `gem_tx_clk/gem_tx_rst_n` | 16-bit packet streams, PS GEM external RX-write/TX-read FIFO signals, two local counter banks |
 | `pl_port` | 1.0 / `pl_gmii_mac_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk`, `clk_en` | Packet streams; 32-bit AXI-Lite MAC registers; 8-bit GMII; local counter bank |
 | `sfp_port` | 1.0 / `sfp_port_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk/gtx_rst_n`; `gth_clk/gth_rst_n` | Packet streams; 32-bit AXI-Lite MAC registers; decoded 16-bit GTH data/control; PCS status; local counter bank |
-| `switch_fabric` | 1.0 / `switch_fabric` | `clk/rst_n`; `axis_clk/axis_rst_n` | Five physical packet-stream pairs, CPU stream pair, three DDR AXI masters, shared packet buffers/queues, forwarding table, six counter banks |
-| `management` | 1.1 / `switch_management` | `clk/rst_n` (production control clock) | 32-bit AXI-Lite controls, link/forward/learn masks, CPU override and RX tag, statistics mailbox and 13-bank decoder |
+| `switch_fabric` | 1.1 / `switch_fabric` | `clk/rst_n`; `axis_clk/axis_rst_n` | Five physical packet-stream pairs, CPU stream pair, three DDR AXI masters, shared packet buffers/queues, forwarding table, six counter banks |
+| `management` | 1.2 / `switch_management` | `clk/rst_n` (production control clock) | 32-bit AXI-Lite controls, link/forward/learn masks, CPU TX ABI identifier and RX tag, statistics mailbox and 13-bank decoder |
 
 In production, the fabric runs at 100 MHz, control at approximately
 142.857 MHz, PL GMII at 125 MHz, and SFP PCS/GTH at 125/62.5 MHz. Packet
@@ -66,12 +66,12 @@ ties omitted cache attributes to zero explicitly. CPU AXI DMA descriptors
 are owned by the R5/PS DMA path, not these fabric masters. See
 [the memory map](../docs/memory-map.md) for allocation and ownership.
 
-`link_up_i`, `link_flush_tog_i`, `fwd_en_i`, `learn_en_i` and the CPU override
-are provided in the control domain; the fabric owns their crossings. A
-link/forward/learn disable triggers the existing drain/invalidation behavior.
-The override mask applies to the next CPU frame after its arm pulse. The
-CPU RX tag is consumed in the control domain once per retired RX descriptor.
-See `rx_diag_regs.sv` for precise register semantics and ordering requirements.
+`link_up_i`, `link_flush_tog_i`, `fwd_en_i` and `learn_en_i` are provided
+in the control domain; the fabric owns their crossings. Link/forward/learn
+disable triggers the existing drain/invalidation behavior. CPU TX carries
+[per-frame metadata](../docs/cpu-tx-metadata.md) in a mandatory two-byte stream
+header; it has no separate override CDC. CPU RX tags are consumed in the
+control domain once per retired RX descriptor.
 
 Parameters `STATS_DDR` and `STATS_DEBUG` each accept 0 or 1 and must match
 management and firmware. `AGE_TICK_DIVIDE_COUNT` controls the fabric aging
@@ -116,8 +116,8 @@ before selecting another index. See [statistics](../docs/statistics.md).
 | `0x800C0000` / 256 KiB | SFP MAC |
 | `0x80100000` / 64 KiB | Management, including indirect statistics |
 
-Management 1.1 changes the catalog boundary only: all register offsets,
-capability bits, bank numbers and interrupt routing retain their prior ABI.
+Management 1.2 retires the CPU override at 0x4C and adds CPU_TX_ABI at 0x54.
+Statistics capability bits, bank numbers and interrupt routing are unchanged.
 `check_production_bd.py` checks these production addresses and connections.
 Do not infer the deployed address map from the separate validation BD's
 automatic address assignment.

@@ -99,7 +99,7 @@ start a volatile JTAG session from the repository root:
 
 ```sh
 /tools/Xilinx/2026.1/Vitis/bin/xsdb software/r5/boot_jtag.tcl tcp:10.0.1.107:3121 \
-  build/r5/ingress_pipeline_validation/kr260_ingress_pipeline.bit
+  build/ip_refactor/cpu_tx_pipeline_impl/project/kr260_switch.runs/impl_1/kr260_top.bit
 /tools/Xilinx/2026.1/Vitis/bin/xsdb software/r5/status_jtag.tcl
 ```
 
@@ -254,3 +254,14 @@ physical speed via HTTP and SNMP. See [PS speeds](../../docs/ps-ethernet-speeds.
 
 Startup timing and the confirmed HTTP connection-capacity limitation are
 documented in [the investigation](../../docs/startup-and-http-investigation.md).
+
+## CPU TX stream ABI
+
+This firmware requires fabric 1.1 / management 1.2. Every CPU DMA transfer
+includes a private two-byte header, constructed atomically with the frame.
+Directed sends use `fabric_dma_send_directed()` rather than arming a register.
+See [metadata contract and matching-image requirement](../../docs/cpu-tx-metadata.md).
+
+The 2026-09-26 deployment uses `STATS_DDR=1 STATS_DEBUG=1`, includes the
+pipelined CPU DDR writer, and passed DHCP, CPU/forwarded ping and HTTP tests.
+See [deployment evidence](../../docs/verification.md#2026-09-26-cpu-tx-metadata-and-dma-pipeline-board-deployment).

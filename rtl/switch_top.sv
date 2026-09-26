@@ -92,27 +92,7 @@ module switch_top
   // it.
   output logic [NUM_PORTS-1:0] ctrl_frame_o,
 
-  // CPU-originated raw frame injection: firmware arms an explicit,
-  // software-chosen destination port mask for the SINGLE NEXT frame the CPU
-  // port transmits, bypassing the automatic MAC-table lookup that ordinary
-  // CPU traffic goes through (mac_addr_resolver's own instance for the CPU
-  // port, PORT_ID=NUM_PORTS-1 -- see its header: the CPU cannot otherwise
-  // target one specific egress port, only a learned unicast destination or
-  // a flood). This is the hook a future STP/LACP/LLDP task uses to transmit
-  // its own per-port frames (a distinct BPDU per port, a distinct LACPDU per
-  // aggregation-candidate port, etc.) -- also bypasses fwd_en_i, so a
-  // blocked STP port can still carry the CPU's own BPDUs out to its
-  // neighbor even while ordinary forwarding through it is disabled.
-  // axis_clk domain (this module already takes axis_clk as a port for the 3
-  // MAC instances, so the crossing into `clk` happens entirely inside this
-  // module, on real clocks -- no extra external synchronizer needed).
-  // cpu_tx_ovr_go_i must be exactly one axis_clk cycle per armed frame (see
-  // rtl/common/ctrl_value_xdomain.sv's header for the one-shot-mailbox
-  // contract this relies on), and the corresponding frame must not be
-  // queued into the CPU DMA before the register write that arms it is known
-  // to have taken effect.
-  input  logic [NUM_PORTS-1:0] cpu_tx_ovr_mask_i,
-  input  logic                 cpu_tx_ovr_go_i,
+  // CPU TX uses per-frame metadata in its DMA stream; see cpu_tx_framer.sv.
 
   // Ingress-port tag for CPU-delivered frames: the CPU's inbound stream is a
   // single shared queue fed by all 5 physical ports (plus, in principle, the
@@ -383,8 +363,6 @@ module switch_top
     .learn_en_i(learn_en_i),
     .fwd_en_i(fwd_en_i),
     .ctrl_frame_o(ctrl_frame_o),
-    .cpu_tx_ovr_mask_i(cpu_tx_ovr_mask_i),
-    .cpu_tx_ovr_go_i(cpu_tx_ovr_go_i),
     .cpu_rx_ingress_port_o(cpu_rx_ingress_port_o),
     .cpu_rx_ingress_valid_o(cpu_rx_ingress_valid_o),
     .cpu_rx_ingress_pop_i(cpu_rx_ingress_pop_i),

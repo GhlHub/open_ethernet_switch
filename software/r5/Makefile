@@ -50,10 +50,11 @@ out/kr260_r5.elf: $(OBJECTS) linker.ld verify_elf.py $(BSP)/lib/libxil.a $(BSP)/
 test: test-snmp test-web test-links test-pstate test-stp | out
 	cc -std=c11 -Wall -Wextra -Werror -Iinclude src/policy.c tests/test_policy.c -o out/test_policy
 	./out/test_policy
-	cc -std=c11 -Wall -Wextra -Werror -fno-pie -no-pie -Itests/fakes src/fabric_dma.c tests/test_dma.c -o out/test_dma
+	cc -std=c11 -Wall -Wextra -Werror -pthread -fno-pie -no-pie -Itests/fakes src/fabric_dma.c tests/test_dma.c -o out/test_dma
 	./out/test_dma
 	./out/test_dma 1
 	./out/test_dma 2
+	./out/test_dma 3
 	cc -std=c11 -Wall -Wextra -Werror -DSTATS_DDR=1 -DSTATS_DEBUG=1 -Itests/stats_fakes -Iinclude src/statistics.c tests/test_statistics.c -o out/test_statistics
 	./out/test_statistics
 	./out/test_statistics 1

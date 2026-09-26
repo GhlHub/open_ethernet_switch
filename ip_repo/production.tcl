@@ -76,8 +76,6 @@ digital_net link_tog_axi 0 {fabric/link_flush_tog_i management/link_flush_tog_o}
 digital_net link_flush_busy 0 {fabric/link_flush_busy_o management/link_flush_busy_i}
 digital_net learn_en_axi 0 {fabric/learn_en_i management/learn_en_o}
 digital_net fwd_en_axi 0 {fabric/fwd_en_i management/fwd_en_o}
-digital_net cpu_ovr_mask_axi 0 {fabric/cpu_tx_ovr_mask_i management/cpu_tx_ovr_mask_o}
-digital_net cpu_ovr_go_axi 0 {fabric/cpu_tx_ovr_go_i management/cpu_tx_ovr_go_o}
 digital_net cpu_rx_tag 0 {fabric/cpu_rx_ingress_port_o management/cpu_rx_tag_i}
 digital_net cpu_rx_tag_valid 0 {fabric/cpu_rx_ingress_valid_o management/cpu_rx_tag_valid_i}
 digital_net cpu_rx_tag_pop 0 {fabric/cpu_rx_ingress_pop_i management/cpu_rx_tag_pop_o}

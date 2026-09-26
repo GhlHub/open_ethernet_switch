@@ -11,14 +11,15 @@ stays in `rtl/`; each dependency has one editable source copy.
 | `gem_port` | `switch_gem_port` | One PS external-FIFO bridge, RX/TX CDC and local packet counters |
 | `pl_port` | `pl_gmii_mac_top` | One GMII MAC, packet-stream adapters, local counters and AXI-Lite registers |
 | `sfp_port` | `sfp_port_top` | One 1000BASE-X MAC/PCS, negotiation, packet adapters and counters |
-| `management` (1.1) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
+| `management` (1.2) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
 
 The first partition retains RGMII I/O/MDIO, GTH/clock generation and SFP
 sideband handling in the board layer. These physical shells are **not yet
 inside the port IPs**. The production `system.bd` instantiates all seven digital catalog cells
 through `production.tcl`. `rtl/switch_top.sv` remains the native simulation
 assembly. Management 1.1 owns the existing 13-bank mailbox router internally.
-The other four packages remain at version 1.0. See [migration and verification](../docs/ip-partitioning.md).
+Fabric 1.1 uses the mandatory CPU TX metadata header; management 1.2 reports
+that ABI. GEM/PL/SFP packages remain at 1.0. See [migration and verification](../docs/ip-partitioning.md).
 
 ## Generate and validate a catalog
 
@@ -123,7 +124,7 @@ Management 1.1 replaces the old external raw mailbox with per-bank request,
 acknowledgment and value pins; firmware addresses and bank numbers are unchanged.
 Existing generated catalogs must be regenerated after this change.
 
-From a checkout with the historical Git objects used by the equivalence miter,
+From a checkout (the production fixture also reads historical board wiring),
 Vivado 2026.1, Python 3 and Icarus Verilog available:
 
 ```sh
@@ -143,3 +144,10 @@ record in `results.json`; `complete` becomes true only after all stages pass.
 Default execution stops before synthesis. The optional routed report stage
 collects timing/CDC findings; report generation alone is not timing sign-off.
 Board programming and traffic checks remain separate hardware acceptance.
+
+## CPU TX ABI change (2026-09-26)
+
+See [CPU transmit metadata](../docs/cpu-tx-metadata.md). Native counter-option
+runs now exercise the current functional regression; generated/native assembly
+miters compare the current contract. They do not claim raw-stream historical
+equivalence across this intentional ABI change.

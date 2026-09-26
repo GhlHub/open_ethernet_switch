@@ -1,6 +1,6 @@
 /* Plumbing-only test: each pstate.c call writes/reads the register offset
  * board.h defines for it, packed the way rx_diag_regs.sv expects, and
- * cpu_tx_raw arms the override before handing the frame to fabric_dma_send.
+ * cpu_tx_raw passes per-frame metadata to the serialized DMA sender.
  * Not a protocol test -- there is no protocol here to test. */
 #include <assert.h>
 #include <stdio.h>
@@ -18,8 +18,9 @@ void mmio_write(uintptr_t a,uint32_t v)
     for (unsigned i=0;i<nregs;i++) if (regs[i].addr==a) {regs[i].value=v;return;}
     assert(nregs<16); regs[nregs].addr=a; regs[nregs++].value=v;
 }
+static uint8_t sent_mask;
 static const uint8_t *sent_frame; static size_t sent_len; static bool sent_ok=true;
-bool fabric_dma_send(const uint8_t *p,size_t n){sent_frame=p;sent_len=n;return sent_ok;}
+bool fabric_dma_send_directed(const uint8_t *p,size_t n,uint8_t mask){sent_mask=mask;sent_frame=p;sent_len=n;return sent_ok;}
 int main(void)
 {
     pstate_fwd_set(0x15);   assert(mmio_read(DIAG_BASE+FWD_SET)==0x15);
@@ -36,7 +37,7 @@ int main(void)
 
     uint8_t frame[]={1,2,3,4,5};
     assert(pstate_cpu_tx_raw(0x04,frame,sizeof frame));
-    assert(mmio_read(DIAG_BASE+CPU_TX_OVERRIDE)==(0x80000000u|0x04u));
+    assert(sent_mask==4);
     assert(sent_frame==frame && sent_len==sizeof frame);
 
     sent_ok=false;
