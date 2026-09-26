@@ -11,13 +11,25 @@ const fs=require('fs'),path=require('path');
   fixture.sensors.valid_mask=7;fixture.sensors.temperature_mc=[30000,31550];
   fixture.sensors.voltage_uv=[1800000,850000,1800500,720000,1800000,850000];
   fixture.sensors.som_voltage_uv=5000000;
-  let refreshes=0,posts=0;
+  let refreshes=0,posts=0,macPosts=0,macGets=0,macPolls=0;
+  let mac={busy:false,ready:false,generation:0,age_ms:100,count:1,error:0,pages:16,entries:[]};
   let settings={saved:false,writable:true,admin:31,advertise:[4,7,7,7],sfp:0,dhcp:true,
     ip:'0.0.0.0',netmask:'0.0.0.0',gateway:'0.0.0.0',username:'admin',
     macs:[45,46,47,48,49].map(n=>'00:0a:35:0f:37:'+n)};
   let ports={admin:31,physical:17,forwarding:17,advertise:[4,7],applied:[4,7],speed_mbps:[10,0,0,0,1000,0]};
   await page.route('http://kr260.test/**',async route=>{
    const req=route.request(),url=new URL(req.url());
+   if(url.pathname.startsWith('/api/mac-table')){
+    macGets++;
+    if(req.method()==='POST'){
+     if(req.headers()['x-kr260-request']!=='1'||req.postData()!=='refresh=1')throw Error('Invalid manual refresh request');
+     macPosts++;mac.busy=true;macPolls=0;
+     return route.fulfill({status:202,json:mac});
+    }
+    if(mac.busy && ++macPolls>=2){mac.busy=false;mac.ready=true;mac.generation++;}
+    const entries=url.pathname==='/api/mac-table/0'?[[17,'00:0a:35:0f:37:45',6,299]]:[];
+    return route.fulfill({json:{...mac,entries}});
+   }
    if(url.pathname==='/api/statistics'){refreshes++;return route.fulfill({json:fixture});}
    if(url.pathname==='/api/ports')return route.fulfill({json:ports});
    if(url.pathname==='/api/config'){
@@ -67,7 +79,18 @@ const fs=require('fs'),path=require('path');
   await page.waitForTimeout(250);
   if(!await page.getByRole('button',{name:'Save settings'}).isDisabled())throw Error('Unavailable storage permits save');
   await page.setViewportSize({width:390,height:844});
+  await page.getByRole('link',{name:'MAC table',exact:true}).click();
+  await page.waitForTimeout(1600);
+  if(macPosts!==0 || macGets!==1)throw Error('Opening MAC page triggered scan or polling');
+  await page.getByRole('button',{name:'Refresh MAC table',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('#mac-refresh').disabled && document.querySelector('#status').textContent.startsWith('MAC snapshot loaded.'));
+  if(macPosts!==1 || !await page.getByRole('cell',{name:'00:0a:35:0f:37:45',exact:true}).count())throw Error('Manual snapshot not displayed');
+  if(!await page.getByRole('cell',{name:'299',exact:true}).count())throw Error('MAC age missing');
+  const gets=macGets;await page.waitForTimeout(1600);
+  if(macPosts!==1 || macGets!==gets)throw Error('MAC page automatically refreshes');
+  await page.reload();await page.waitForTimeout(1000);
+  if(macPosts!==1 || !await page.getByRole('cell',{name:'00:0a:35:0f:37:45',exact:true}).count())throw Error('Cached snapshot not restored');
   if(errors.length)throw Error(errors.join('\n'));
-  console.log('PASS: browser navigation, polling, 64-bit values, fixed sensor precision, speeds, persistent port/IP settings, MAC allocation and storage availability');
+  console.log('PASS: browser navigation, polling, 64-bit values, fixed sensor precision, speeds, persistent port/IP settings, MAC allocation, storage availability and manual-only MAC table refresh');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

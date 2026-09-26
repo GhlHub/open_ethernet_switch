@@ -10,6 +10,9 @@ int main(void)
     for (size_t n=0;n<strlen(post);n++) assert(web_parse(post,n,&r)==0);
     assert(web_parse(post,strlen(post),&r)==1 && r.mask==30);
     check("GET /api/statistics HTTP/1.1\r\nHost: board\r\n\r\n",1);
+    check("POST /api/mac-table HTTP/1.1\r\nContent-Length: 9\r\nX-KR260-Request: 1\r\n\r\nrefresh=1",1);
+    check("POST /api/mac-table HTTP/1.1\r\nContent-Length: 9\r\n\r\nrefresh=1",-1);
+    check("POST /api/mac-table HTTP/1.1\r\nContent-Length: 9\r\nX-KR260-Request: 1\r\n\r\nrefresh=0",-1);
     check("GET / HTTP/1.0\r\n\r\n",1);
     check("POST /api/ports HTTP/1.1\r\nContent-Length: 7\r\n\r\nmask=30",-1);
     check("POST /api/ports HTTP/1.1\r\nContent-Length: 7\r\nX-KR260-Request: 1\r\n\r\nmask=32",-1);

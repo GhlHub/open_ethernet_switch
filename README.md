@@ -6,16 +6,19 @@ learning/lookup/aging, and a shared DDR packet-buffer architecture under
 the reusable blocks described in [`ip_repo`](ip_repo/README.md), with
 `rtl/switch_top.sv` retaining the board-facing wiring interface.
 
-The 2026-09-26 lab build uses fabric 1.1 / management 1.2 with mandatory
-[CPU TX frame metadata](docs/cpu-tx-metadata.md) and a pipelined CPU DDR write
-engine. Matching FPGA and R5 firmware were deployed over JTAG; DHCP acquired
-`10.0.1.104`. CPU and forwarded miner tests each passed 1,000 full-size pings,
-and HTTP concurrency passed. See [deployment and timing results](docs/verification.md#2026-09-26-cpu-tx-metadata-and-dma-pipeline-board-deployment).
+The current 2026-09-26 lab build uses fabric 1.2 / management 1.2 at 125 MHz.
+It includes [CPU TX frame metadata](docs/cpu-tx-metadata.md), pipelined CPU DDR
+writes and a [low-priority MAC-table dump master](docs/mac-table-dump.md).
+The public `/mac-table` web page displays MAC addresses, ports and ages; its
+**Refresh MAC table** button requests a scan. Opening/reloading the page uses
+cached data; no automatic scans are scheduled.
 
-The subsequent 125 MHz fabric build is now deployed and passes routed timing
-(fabric WNS +1.655 ns), DHCP, HTTP/SNMP and 1,000 full-size pings each to the CPU
-and miner. A 128-bit SFP packet interface is recorded as future work for the
-high-speed trunk. See [125 MHz board validation](docs/verification.md#2026-09-26-125-mhz-fabric-board-deployment).
+The matching FPGA and R5 firmware are deployed over JTAG at DHCP address
+`10.0.1.104`. Routed timing passes (fabric +1.665 ns setup; overall +0.018 ns
+setup / +0.010 ns hold). Simultaneous CPU and forwarded miner tests each passed
+1,000 full-size pings during HTTP/manual-refresh traffic, and HTTP concurrency
+passed all 120 requests. See [deployment evidence](docs/verification.md#2026-09-26-mac-table-dma-and-manual-web-view-deployed)
+and the [current backlog](docs/inventory.md#current-remaining-work-after-mac-table-deployment).
 
 The intended port map is two PS GEM ports, two PL Ethernet ports, one SFP port,
 and one virtual CPU port. **The current SFP design is 1G 1000BASE-X, not 10GbE.**
@@ -54,7 +57,8 @@ hardware validation remain pending.**
 - [Memory map, cache policy and ownership](docs/memory-map.md)
 - [Statistics and environmental monitoring](docs/statistics.md)
 - [SNMP counter and sensor access](docs/snmp.md)
-- [Web port configuration and live statistics](docs/web-interface.md)
+- [MAC-table dump registers, records and DMA ownership](docs/mac-table-dump.md)
+- [Web port configuration, statistics and manual MAC-table view](docs/web-interface.md)
 - [PS Ethernet speeds and full-duplex advertisement](docs/ps-ethernet-speeds.md)
 - [R5 FreeRTOS startup, timers and networking](software/r5/README.md)
 - [Persistent settings and administrator authentication](docs/configuration.md)

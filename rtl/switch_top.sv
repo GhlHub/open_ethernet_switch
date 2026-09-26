@@ -1,4 +1,4 @@
-// Compatibility assembly of the reusable IP blocks. Public board/simulation ABI unchanged.
+// Native assembly of reusable IP blocks, including the MAC dump control/DMA interfaces.
 module switch_top
   import buf_mgr_pkg::*;
   import axi_dma_pkg::*;
@@ -15,6 +15,21 @@ module switch_top
   parameter int SFP_AN_LINK_TIMER_CYCLES = 8,
   parameter int SFP_AN_IDLE_DETECT_CYCLES = 8
 ) (
+  input wire [7:0] s_axi_dump_awaddr,
+  input wire s_axi_dump_awvalid, output wire s_axi_dump_awready,
+  input wire [31:0] s_axi_dump_wdata, input wire [3:0] s_axi_dump_wstrb,
+  input wire s_axi_dump_wvalid, output wire s_axi_dump_wready,
+  output wire [1:0] s_axi_dump_bresp, output wire s_axi_dump_bvalid, input wire s_axi_dump_bready,
+  input wire [7:0] s_axi_dump_araddr, input wire s_axi_dump_arvalid, output wire s_axi_dump_arready,
+  output wire [31:0] s_axi_dump_rdata, output wire [1:0] s_axi_dump_rresp,
+  output wire s_axi_dump_rvalid, input wire s_axi_dump_rready,
+  output wire [0:0] m_axi_dump_awid, output wire [31:0] m_axi_dump_awaddr,
+  output wire [7:0] m_axi_dump_awlen, output wire [2:0] m_axi_dump_awsize,
+  output wire [1:0] m_axi_dump_awburst, output wire m_axi_dump_awvalid, input wire m_axi_dump_awready,
+  output wire [127:0] m_axi_dump_wdata, output wire [15:0] m_axi_dump_wstrb,
+  output wire m_axi_dump_wlast, output wire m_axi_dump_wvalid, input wire m_axi_dump_wready,
+  input wire [0:0] m_axi_dump_bid, input wire [1:0] m_axi_dump_bresp,
+  input wire m_axi_dump_bvalid, output wire m_axi_dump_bready,
   input wire stats_request,
   input wire [7:0] stats_index,
   output wire stats_ack,
@@ -352,6 +367,40 @@ module switch_top
   wire [12:0][31:0] stats_values;
   switch_fabric #(.STATS_DDR(STATS_DDR), .STATS_DEBUG(STATS_DEBUG),
     .AGE_TICK_DIVIDE_COUNT(AGE_TICK_DIVIDE_COUNT)) u_fabric (
+    .s_axi_dump_awaddr(s_axi_dump_awaddr),
+    .s_axi_dump_awvalid(s_axi_dump_awvalid),
+    .s_axi_dump_awready(s_axi_dump_awready),
+    .s_axi_dump_wdata(s_axi_dump_wdata),
+    .s_axi_dump_wstrb(s_axi_dump_wstrb),
+    .s_axi_dump_wvalid(s_axi_dump_wvalid),
+    .s_axi_dump_wready(s_axi_dump_wready),
+    .s_axi_dump_bresp(s_axi_dump_bresp),
+    .s_axi_dump_bvalid(s_axi_dump_bvalid),
+    .s_axi_dump_bready(s_axi_dump_bready),
+    .s_axi_dump_araddr(s_axi_dump_araddr),
+    .s_axi_dump_arvalid(s_axi_dump_arvalid),
+    .s_axi_dump_arready(s_axi_dump_arready),
+    .s_axi_dump_rdata(s_axi_dump_rdata),
+    .s_axi_dump_rresp(s_axi_dump_rresp),
+    .s_axi_dump_rvalid(s_axi_dump_rvalid),
+    .s_axi_dump_rready(s_axi_dump_rready),
+    .m_axi_dump_awid(m_axi_dump_awid),
+    .m_axi_dump_awaddr(m_axi_dump_awaddr),
+    .m_axi_dump_awlen(m_axi_dump_awlen),
+    .m_axi_dump_awsize(m_axi_dump_awsize),
+    .m_axi_dump_awburst(m_axi_dump_awburst),
+    .m_axi_dump_awvalid(m_axi_dump_awvalid),
+    .m_axi_dump_awready(m_axi_dump_awready),
+    .m_axi_dump_wdata(m_axi_dump_wdata),
+    .m_axi_dump_wstrb(m_axi_dump_wstrb),
+    .m_axi_dump_wlast(m_axi_dump_wlast),
+    .m_axi_dump_wvalid(m_axi_dump_wvalid),
+    .m_axi_dump_wready(m_axi_dump_wready),
+    .m_axi_dump_bid(m_axi_dump_bid),
+    .m_axi_dump_bresp(m_axi_dump_bresp),
+    .m_axi_dump_bvalid(m_axi_dump_bvalid),
+    .m_axi_dump_bready(m_axi_dump_bready),
+
     .clk(clk),
     .rst_n(rst_n),
     .axis_clk(axis_clk),

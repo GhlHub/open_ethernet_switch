@@ -10,6 +10,13 @@ using a shared PS DDR packet pool. PS GEM traffic enters PL through the GEM
 external FIFO interface, bypassing the GEM's built-in DMA. The switch's own
 PL DMA engines then store packets in DDR.
 
+The source now also includes a [low-priority MAC-table dump DMA](mac-table-dump.md)
+inside fabric 1.2. It reads table port A in 16-entry chunks and writes 256-byte
+bursts to host DDR through HP0. Its CPU control slave is at 0x80110000. This
+addition is deployed with the public manual-refresh web view. The current
+125 MHz image passes routed timing and connected GEM1/PL0 board validation;
+see [deployment results](verification.md#2026-09-26-mac-table-dma-and-manual-web-view-deployed).
+
 ## System view
 
 The board assembly and generated block design now connect the port hardware,
@@ -32,8 +39,8 @@ flowchart TB
             GEM[gem_port ×2]
             PL[pl_port ×2]
             SFP[sfp_port: 1000BASE-X MAC and PCS]
-            FAB[switch_fabric: forwarding, buffer manager,<br/>ingress/egress DMA and CPU virtual port]
-            MGMT[management 1.1: registers, snapshot mailbox and bank decoder]
+            FAB[switch_fabric: forwarding, buffer manager,<br/>ingress/egress DMA, CPU virtual port and MAC dump]
+            MGMT[management 1.2: registers, snapshot mailbox and bank decoder]
             CTL[Control SmartConnect]
             HP0[DDR SmartConnect → PS HP0]
             DMA[CPU AXI DMA]
@@ -43,12 +50,13 @@ flowchart TB
             GEM <-->|16-bit AXI-S| FAB
             PL <-->|16-bit AXI-S| FAB
             SFP <-->|16-bit AXI-S| FAB
-            FAB <-->|Three 128-bit AXI masters| HP0
+            FAB <-->|Four 128-bit AXI masters| HP0
             HP0 <--> PS
             FAB <-->|16-bit CPU streams| DMA
             DMA <--> HP1
             HP1 <--> PS
             PS --> CTL
+            CTL -->|MAC dump commands| FAB
             CTL --> MGMT
             CTL --> PL
             CTL --> SFP
@@ -91,14 +99,15 @@ all-port concurrent traffic qualification remain pending.
 | 4 | SFP 1G | Decoded 16-bit GTH interface; board wrapper joins the transceiver and a new 125/62.5 MHz PCS clock generator |
 | 5 | Virtual CPU | 16-bit AXI-S pair connected to vendor AXI DMA MM2S/S2MM |
 
-`switch_fabric` exposes three AXI masters: physical ingress writes,
-physical egress reads and the combined CPU pool write/read interface.
+`switch_fabric` exposes four AXI masters: physical ingress writes,
+physical egress reads, the combined CPU pool write/read interface, and the
+low-priority MAC-table dump writer.
 They connect directly to `sc_ddr` inside the block design.
 The separate CPU-facing AXI DMA has three memory masters through `sc_dma`.
 Both paths reach PS DDR, through HP0 and HP1 respectively.
 
-The control interconnect has eight targets: three MACs, two MDIO controllers,
-CPU DMA, SFP IIC and diagnostics. Eight MAC/DMA interrupts use PS IRQ0;
+The control interconnect has nine targets: three MACs, two MDIO controllers,
+CPU DMA, SFP IIC, diagnostics and MAC-table dump control. Eight MAC/DMA interrupts use PS IRQ0;
 IIC uses IRQ1 bit 0; link events use IRQ1 bit 1. `default_age_i` remains tied to its package default.
 SFP sync/negotiation status drives LEDs; sideband status and laser force-off/
 fault-lockout controls are CPU-accessible. See the [register map](board-integration.md).
@@ -451,7 +460,7 @@ must be remeasured at 125 MHz rather than presumed to shrink with the clock.
    transmit FIFO). Beat-boundary prefetch is already implemented.
 5. **Control plane**: pipeline `queue_mgr` and `free_list_mgr` or split enqueue and
    dequeue engines if the counters show them saturating; check flood cost.
-6. **Memory system**: consider a second HP port for egress (HP0 is shared by three
+6. **Memory system**: consider a second HP port for egress (HP0 is shared by four
    masters), larger bursts across frames, cache/DDR-controller QoS settings, and the
    pool location relative to other PS traffic.
 7. **Clock**: the source fabric target is now 125 MHz. Review per-domain timing and

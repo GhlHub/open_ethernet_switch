@@ -18,6 +18,8 @@ proc replace_external_interface {name pin} {
 replace_external_interface m_axi_ing fabric/m_axi_ing
 replace_external_interface m_axi_egr fabric/m_axi_egr
 replace_external_interface m_axi_cpu fabric/m_axi_cpu
+replace_external_interface m_axi_dump fabric/m_axi_dump
+replace_external_interface dump_s_axi fabric/s_axi_dump
 replace_external_interface cpu_s_axis fabric/cpu_s_axis
 replace_external_interface cpu_m_axis fabric/cpu_m_axis
 replace_external_interface pl0_s_axi pl0/s_axi

@@ -1,5 +1,101 @@
 # Design inventory verification
 
+## 2026-09-26 MAC-table DMA and manual web view deployed
+
+Synthesis, place-and-route and bitstream generation completed successfully for
+fabric 1.2 in `build/ip_refactor/mac_dump_final/`. Routed setup WNS is
+**+0.018 ns**, hold WHS **+0.010 ns**, and the 125 MHz fabric setup WNS is
+**+1.665 ns**. All 31 reported bus-skew checks pass (minimum +5.785 ns).
+Placed utilization is 30,406 LUTs (25.96%), 38,799 registers (16.56%) and
+51.5 block-RAM tiles (35.76%).
+
+The existing statistics CDC findings remain: 2,632 CDC-1, 13 CDC-10 and eight
+CDC-12 rows. There are also two CDC-11 rows from the common rst150 peripheral
+reset to vendor SmartConnect reset synchronizers for control M05 and the new
+M08. These are reset fan-out findings in generated IP, not new custom MAC-dump
+data crossings. Detailed reports are retained; this is not complete CDC or
+independent-reset sign-off.
+
+The matching all-counter R5 firmware builds and passes ELF region checks.
+The host suite, MAC snapshot/cache/pagination/error tests and mocked browser
+tests pass. HTTP configuration authentication remains required; MAC viewing
+and manual capture are public. The web consumer's staging buffer is 32 KiB at
+0x20041E00 in this ELF, separate from the published snapshot and HP1 DMA region.
+
+The SHA-256-verified bitstream and firmware were deployed over JTAG at
+10.0.1.107:3121. UART confirms SD settings loaded, D-cache enabled, DHCP
+10.0.1.104, and 1 Gb/s GEM1 uplink / PL0 miner links (physical/forwarding mask
+0x06). Deployment is volatile; flash was not updated.
+
+Deployed artifact SHA-256:
+- Bitstream: `e565e9a549e52c4f420e981c5c35ef7b4e27003060a5d7cc511ed9cdc170a391`.
+- R5 ELF: `167b626a6e123bc5126d915e1620e0a37907c3708ab38496f45bb1f4dfcb3d86`.
+
+
+Live checks passed:
+
+- Initial MAC API response had generation 0, ready=false and completed_bytes=0:
+  no boot or page-load scan.
+- Explicit capture completed 32,768 bytes with error=0. The first snapshot had
+  29 valid entries; later browser capture had 41, including CPU MAC
+  00:0a:35:0f:37:45 on mask 0x20 and miner 02:00:00:10:04:00 on mask 0x04.
+- Browser Refresh MAC table performs a scan; idle viewing and reload reuse
+  the published snapshot without another scan or periodic polling. Desktop
+  and mobile screenshots are retained. Paging checks cover all 2,048 slots.
+- Simultaneous 1,472-byte-payload pings at 20 requests/s passed 1,000/1,000
+  each to the CPU and forwarded miner, during HTTP and manual-refresh traffic.
+- HTTP concurrency passed 120 mixed requests with six clients (maximum
+  0.128 s), idle-client handling, authentication isolation and overload
+  recovery. Administrator settings were unchanged.
+- Post-test SNMP shows no bad packets/bytes, AXI response errors, late polls,
+  saturation or snapshot/release timeouts. Fabric frequency reports 125 MHz.
+
+Artifacts include `implementation.log`, `routed_review.log`, `reports/`,
+`r5_build.log`, `r5_tests.log`, `browser_tests.log`, `deploy.log`, `uart.log`,
+`artifacts.sha256`, `mac_initial.json`, `mac_first_refresh.json`,
+`mac_final_cached.json`, `live_browser.log`, `mac_table_desktop.png`,
+`mac_table_mobile.png`, both ping logs, `http_concurrency.log` and
+`posttest_snmp.json`. Verification covers the connected GEM1/PL0 paths;
+sustained line-rate traffic, unconnected ports and independent reset recovery
+remain outside this run.
+
+## 2026-09-26 MAC-table dump DMA source validation
+
+Fabric 1.2 adds the [MAC-table dump engine](mac-table-dump.md), fourth HP0
+master and control slave at 0x80110000. A fresh acceptance run completed all
+11 gates in `build/ip_refactor/mac_dump_final/results.json`:
+
+- Regenerated catalog with exact source/manifest/clock/interface checks.
+- Production BD validation and address, AXI, cache-attribute and clock audit.
+- 23 native and 23 packaged IP tests, including full 2,048-entry dumps,
+  preemption by learning and aging, concurrent lookup, AXI backpressure,
+  both AW/W arrival orders, invalid/busy commands, response/ID errors and restart.
+- Full-switch regression in all four STATS_DDR/STATS_DEBUG combinations with
+  concurrent dump and all four packet-DMA directions. Each passed 109,713
+  clock samples; existing forwarding/link/CPU tests remain passing.
+- Generated production-vs-native comparison: 133 outputs, including both new
+  dump interfaces; 109,716 clock samples and 5,390 statistics snapshots.
+
+The partial-error test fails the second DDR burst and confirms only 256 bytes
+are reported completed. Table arbitration tests explicitly observe learning
+and aging preemptions and an actual age decrement. The independent integration
+monitor tracks packet requests through B/RLAST response acceptance to check
+dump admission through gaps in AXI VALID activity.
+
+The existing MAC-table learn/lookup/aging/flush regression also passes
+(`build/ip_refactor/mac_dump/mac_table_regression.log`). The complete R5 host
+suite passes; the added cache/ownership test also passed after its final API
+update. The all-counter R5 application builds and passes ELF memory checks.
+Logs: `build/ip_refactor/mac_dump/r5_tests.log` and `r5_build.log`.
+At this source-validation checkpoint the API had no web consumer. The
+subsequent manual-refresh web integration and deployment are recorded above.
+There is no periodic runtime dump or SNMP table-walk consumer.
+
+At that source-validation checkpoint, no synthesis, PNR, new bitstream or
+board deployment had yet been performed. The deployment above supersedes
+that checkpoint and supplies timing and live evidence for the new master
+and enlarged SmartConnect.
+
 ## 2026-09-26 125 MHz fabric board deployment
 
 Deployed the SHA-256-verified 125 MHz bitstream and matching all-counter R5

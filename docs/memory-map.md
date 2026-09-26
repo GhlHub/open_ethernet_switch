@@ -193,6 +193,7 @@ inside an aperture are not allocatable memory.
 | `0x80080000–0x800BFFFF` | 256 KiB | PL1 MAC registers | Same as PL0 |
 | `0x800C0000–0x800FFFFF` | 256 KiB | SFP MAC registers | R5 initializes MAC; hardware updates counters/status |
 | `0x80100000–0x8010FFFF` | 64 KiB | Fabric diagnostics and link control | R5 link task controls port admission/flush; PL supplies status/events; also per-port forward/learn enable, a CPU TX destination override, and a CPU RX ingress-port tag for control-protocol hooks, owned by `software/r5/src/pstate.c`/`fabric_dma.c`; `stp_task.c` is the current consumer running real STP |
+| `0x80110000–0x8011FFFF` | 64 KiB | MAC-table dump control (fabric 1.2) | CPU supplies an exclusively owned 32 KiB aligned DDR destination; dump engine writes through HP0. See [DMA contract](mac-table-dump.md). |
 
 Statistics extend this aperture at offsets `0x24–0x34`; the R5 statistics
 task exclusively owns read/clear DATA. Accumulated totals and sensor snapshots
@@ -289,3 +290,21 @@ there is no configuration QSPI reservation. See [configuration](configuration.md
 and [USB storage](usb-storage.md). The USB allocation is linker-verified; board enumeration and configuration
 save/readback across reset passed with both DMA MPU overrides active on
 2026-09-24. Hotplug and physical power-cycle tests remain pending.
+
+## MAC-table dump destination
+
+The new fabric 1.2 dump engine does not reserve a fixed DDR region. Its caller
+allocates 32 KiB aligned to 256 bytes from CPU-owned DDR. Ownership transfers
+to HP0 DMA on start and back after DONE with BUSY clear, including error
+completion. A timeout does not return ownership. The R5 helper cleans before
+start and invalidates after completion; the existing HP1 non-cacheable 32 KiB
+region is not enlarged or reused. See [record layout and API](mac-table-dump.md).
+
+
+The web MAC-table consumer now allocates two cacheable BSS arrays: a 256-byte
+aligned 32 KiB staging array owned by DMA during a scan, and a separate 32 KiB
+published snapshot owned by the CPU. Only confirmed completion allows copying
+staging into the published array. HTTP workers serialize access under a
+dedicated mutex and release it before socket transmission. These allocations
+do not use the HP1 descriptor/bounce-buffer region. Their exact addresses are
+linker-dependent; the deployment ELF/map is authoritative.

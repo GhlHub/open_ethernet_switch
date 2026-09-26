@@ -23,6 +23,9 @@
     },
     {
       "top": "tb_cpu_tx_framer"
+    },
+    {
+      "top": "tb_mac_table_dump"
     }
   ]
 }

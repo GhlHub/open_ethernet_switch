@@ -20,7 +20,8 @@
 //     hash index, 4-way associative decision), so it only proceeds once
 //     every bank's arbiter has granted it -- learn_bus_gnt below is the
 //     AND of all NUM_BANKS per-bank grants. Aging is independent per bank
-//     and only needs its own bank's grant.
+//     and only needs its own bank's grant. The dump engine is a third,
+//     lowest-priority read-only client, preemptible between individual reads.
 //   - Port B is dedicated exclusively to the lookup engine: no arbitration
 //     at all, which is what lets lookup_engine_fsm be a free-running
 //     2-stage pipeline (issue address -> decide next cycle) instead of a
@@ -38,6 +39,12 @@
 module mac_addr_table_top
   import mac_table_pkg::*;
 (
+  input wire dump_req_i,
+  input wire [1:0] dump_bank_i,
+  input wire [8:0] dump_addr_i,
+  output wire dump_gnt_o,
+  output reg dump_valid_o,
+  output wire [64:0] dump_data_o,
   input  logic clk,
   input  logic rst_n,
 
@@ -68,6 +75,18 @@ module mac_addr_table_top
   output logic [NUM_LOOKUP_PORTS-1:0][PORTMASK_W-1:0] lookup_result_port_mask_o
 );
 
+  logic [ENTRY_W-1:0] bank_a_rdata [NUM_BANKS];
+  wire [NUM_BANKS-1:0] dump_grants;
+  reg [1:0] dump_bank_q;
+  assign dump_gnt_o=dump_grants[dump_bank_i];
+  assign dump_data_o=bank_a_rdata[dump_bank_q];
+  always @(posedge clk) begin
+    if (!rst_n) begin dump_valid_o<=0;dump_bank_q<=0;end
+    else begin
+      dump_valid_o<=dump_req_i && dump_gnt_o;
+      if (dump_req_i && dump_gnt_o) dump_bank_q<=dump_bank_i;
+    end
+  end
   genvar gi;
 
   // -----------------------------------------------------------------
@@ -259,7 +278,7 @@ module mac_addr_table_top
   logic [BANK_ADDR_W-1:0] lookup_b_addr;
 
   logic [ENTRY_W-1:0] bank_b_rdata [NUM_BANKS];
-  logic [ENTRY_W-1:0] bank_a_rdata [NUM_BANKS];
+
 
   learn_engine_fsm u_learn_engine (
     .clk            (clk),
@@ -311,9 +330,9 @@ module mac_addr_table_top
       logic [BANK_ADDR_W-1:0] asel_addr;
       logic [ENTRY_W-1:0]     asel_wdata;
 
-      assign asel_en    = learn_gnt ? learn_a_en[gi] : (aging_gnt ? aging_a_en : 1'b0);
+      assign asel_en    = learn_gnt ? learn_a_en[gi] : (aging_gnt ? aging_a_en : (dump_grants[gi] && dump_req_i));
       assign asel_we    = learn_gnt ? learn_a_we[gi] : (aging_gnt ? aging_a_we : 1'b0);
-      assign asel_addr  = learn_gnt ? learn_a_addr   : aging_a_addr;
+      assign asel_addr  = learn_gnt ? learn_a_addr : (aging_gnt ? aging_a_addr : dump_addr_i);
       assign asel_wdata = learn_gnt ? learn_a_wdata  : aging_a_wdata;
 
       assign learn_gnt_vec[gi] = learn_gnt;
@@ -335,6 +354,8 @@ module mac_addr_table_top
         .rst_n       (rst_n),
         .learn_req_i (learn_bus_req),
         .aging_req_i (aging_bus_req),
+        .dump_req_i (dump_req_i && dump_bank_i==2'(gi)),
+        .dump_gnt_o (dump_grants[gi]),
         .learn_gnt_o (learn_gnt),
         .aging_gnt_o (aging_gnt)
       );

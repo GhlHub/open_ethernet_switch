@@ -1,6 +1,6 @@
 {
   "name": "switch_fabric",
-  "version": "1.1",
+  "version": "1.2",
   "description": "Shared DDR packet switch with five physical streams and CPU virtual port",
   "top": "switch_fabric",
   "sources": [
@@ -36,6 +36,7 @@
     "rtl/mac_table/mac_addr_table_top.sv",
     "rtl/mac_table/mac_addr_resolver.sv",
     "rtl/mac_table/mac_forwarding_top.sv",
+    "rtl/mac_table/mac_table_dump.sv",
     "ip_repo/switch_fabric/hdl/ingress_datapath.sv",
     "ip_repo/switch_fabric/hdl/switch_fabric.sv"
   ],
@@ -55,7 +56,9 @@
       "m01_axis",
       "m02_axis",
       "m03_axis",
-      "m04_axis"
+      "m04_axis",
+      "m_axi_dump",
+      "s_axi_dump"
     ],
     "axis_clk": []
   }

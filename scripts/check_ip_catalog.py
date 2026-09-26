@@ -86,7 +86,9 @@ def check(catalog):
                           for p in tree.findall('s:model/s:modelParameters/s:modelParameter', NS)}
             assert parameters == {'STATS_DDR', 'STATS_DEBUG', 'AGE_TICK_DIVIDE_COUNT'}, f'{name}: invalid HDL parameters {parameters}'
             for port, bits in {'m_axi_ing_wdata': 128, 'm_axi_cpu_rdata': 128,
-                               'm_axi_ing_awaddr': 32, 'default_age_i': 9,
+                               'm_axi_ing_awaddr': 32, 'm_axi_dump_wdata': 128,
+                               'm_axi_dump_awaddr': 32, 's_axi_dump_awaddr': 8,
+                               'default_age_i': 9,
                                'link_up_i': 6, 'cpu_rx_ingress_port_o': 3,
                                'stats_req': 6, 'stats_values': 192}.items():
                 assert width(port) == bits, f'{name}/{port}: incorrect exported width'

@@ -1,7 +1,9 @@
 // bank_arbiter.sv
 //
-// Grants exclusive use of one bank's shared port A to either the learn
-// engine or that bank's own aging_sweep_fsm. One instance per bank (learn's
+// Grants exclusive use of one bank's shared port A to learning, that bank's
+// aging_sweep_fsm, or the lowest-priority dump reader. Dump reads yield
+// immediately to either existing client; their read-modify-write transactions
+// retain their grants until complete. One instance per bank (learn's
 // request is broadcast identically to all NUM_BANKS instances since learn
 // needs a synchronized view of the same row across all 4 banks; aging is
 // independent per bank so each instance sees only its own bank's aging
@@ -26,12 +28,14 @@ module bank_arbiter (
 
   input  logic learn_req_i,
   input  logic aging_req_i,
+  input logic dump_req_i,
+  output wire dump_gnt_o,
 
   output logic learn_gnt_o,
   output logic aging_gnt_o
 );
 
-  typedef enum logic [1:0] {S_IDLE, S_LEARN, S_AGING} state_t;
+  typedef enum logic [1:0] {S_IDLE, S_LEARN, S_AGING, S_DUMP} state_t;
   state_t state_q, state_d;
 
   always_comb begin
@@ -40,9 +44,15 @@ module bank_arbiter (
       S_IDLE: begin
         if (learn_req_i)      state_d = S_LEARN; // learn: fixed priority
         else if (aging_req_i) state_d = S_AGING;
+        else if (dump_req_i) state_d = S_DUMP;
       end
       S_LEARN: if (!learn_req_i) state_d = S_IDLE;
       S_AGING: if (!aging_req_i) state_d = S_IDLE;
+      S_DUMP: begin
+        if (learn_req_i) state_d=S_LEARN;
+        else if (aging_req_i) state_d=S_AGING;
+        else if (!dump_req_i) state_d=S_IDLE;
+      end
       default: state_d = S_IDLE;
     endcase
   end
@@ -52,6 +62,7 @@ module bank_arbiter (
     else        state_q <= state_d;
   end
 
+  assign dump_gnt_o = (state_q==S_DUMP) && !learn_req_i && !aging_req_i;
   assign learn_gnt_o = (state_q == S_LEARN);
   assign aging_gnt_o = (state_q == S_AGING);
 

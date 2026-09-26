@@ -6,6 +6,10 @@ Configuration changes require administrator credentials (factory `admin` / `admi
 The current lab address after the permanent-MAC change is `http://10.0.1.104/`
 (2026-09-24 DHCP lease).
 
+- `/mac-table`: view the last completed MAC-table snapshot. **Refresh MAC
+  table** is the only action that requests a hardware scan. There is no scan on
+  page load and no periodic refresh. Columns show bank/row, MAC address,
+  learned ports and remaining age at capture; age does not count down locally.
 - `/configuration`: enable/disable GEM0 (right upper), GEM1 (right lower),
   PL0 (left upper), PL1 (left lower), and SFP. Physical link and effective
   forwarding state are displayed separately. Save writes port/IP preferences to microSD;
@@ -119,3 +123,33 @@ host tests use address/undefined-behavior sanitizers. Browser checks cover
 navigation, one-second refresh cadence, exact 64-bit totals, port form posting,
 and desktop/mobile rendering. Generated validation artifacts are under
 `build/r5/web_validation/`.
+
+
+## Manual MAC-table snapshots
+
+The public page and refresh operation require no login; they do not change
+configuration. `POST /api/mac-table`, with `X-KR260-Request: 1` and body
+`refresh=1`, explicitly starts one dump and returns 202 while pending. An
+already pending dump is reused. `GET /api/mac-table` returns status/count/
+generation/age; `GET /api/mac-table/0` through `/15` returns valid records from
+128-slot pages. GET requests never start DMA.
+
+Rows are `[index, "mac", port_mask, age_seconds]`. The browser checks that all
+pages share the same generation, preventing mixed snapshots if another user
+refreshes. It polls only a manually requested operation, for up to ten seconds,
+then stops and permits another manual check. A pending transfer retains DMA
+ownership even if the browser leaves or times out.
+
+A dedicated HTTP mutex serializes the dump API across workers. A 32 KiB aligned
+DMA staging buffer and a separate 32 KiB published snapshot prevent readers from
+accessing memory hardware owns. Completion invalidates the staging cache before
+publishing. Errors retain the last complete snapshot. The normal 24 KiB HTTP
+response buffers suffice even when all 2,048 MAC slots are occupied, because
+each JSON response contains at most 128 records.
+
+For an explicit command-line refresh/inspection:
+```sh
+python3 scripts/check_mac_table.py 10.0.1.104 --source 10.0.1.24 --refresh
+```
+Omit `--refresh` to read only the cached snapshot.
+See [hardware burst and ownership details](mac-table-dump.md).

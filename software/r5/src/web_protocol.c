@@ -41,6 +41,10 @@ int web_parse(const char *data,size_t length,struct web_request *out)
     if (length!=header+body) return -1;
     if (!strcmp(r.method,"POST")) {
         if (!marker || !seen || !body) return -1;
+        if (!strcmp(r.path,"/api/mac-table")) {
+            if(strcmp(buf+header,"refresh=1"))return -1;
+            *out=r;return 1;
+        }
         if (!strcmp(r.path,"/api/config")) {
             if (!config_form(buf+header,&r.settings,&r.credentials)) return -1;
             *out=r;return 1;

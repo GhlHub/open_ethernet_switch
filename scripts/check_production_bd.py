@@ -31,7 +31,7 @@ def check(path, compare_physical=False):
     for option in ['STATS_DDR', 'STATS_DEBUG']:
         values = [design['components'][c].get('parameters', {}).get(option, {}).get('value', '0') for c in ['fabric', 'management']]
         assert values[0] == values[1] and values[0] in ['0', '1'], (option, values)
-    for pin in ['S00_AXI_awcache', 'S01_AXI_arcache', 'S02_AXI_awcache', 'S02_AXI_arcache']:
+    for pin in ['S00_AXI_awcache', 'S01_AXI_arcache', 'S02_AXI_awcache', 'S02_AXI_arcache', 'S03_AXI_awcache']:
         connected('ddr_cache_zero/dout', 'sc_ddr/' + pin)
     params = design['components']['ddr_cache_zero']['parameters']
     assert params['CONST_WIDTH']['value'] == '4' and params['CONST_VAL']['value'] == '0'
@@ -45,12 +45,12 @@ def check(path, compare_physical=False):
             connected(f'management/{cell}_{pin}', f'{cell}/{suffix}')
     for a, b in [('fabric/cpu_s_axis', 'dma/M_AXIS_MM2S'), ('fabric/cpu_m_axis', 'dma/S_AXIS_S2MM'),
                  ('fabric/m_axi_ing', 'sc_ddr/S00_AXI'), ('fabric/m_axi_egr', 'sc_ddr/S01_AXI'),
-                 ('fabric/m_axi_cpu', 'sc_ddr/S02_AXI'), ('sc_ddr/M00_AXI', 'ps/S_AXI_HP0_FPD'),
+                 ('fabric/m_axi_cpu', 'sc_ddr/S02_AXI'), ('fabric/m_axi_dump', 'sc_ddr/S03_AXI'), ('sc_ddr/M00_AXI', 'ps/S_AXI_HP0_FPD'),
                  ('dma/M_AXI_SG', 'sc_dma/S00_AXI'), ('dma/M_AXI_MM2S', 'sc_dma/S01_AXI'),
                  ('dma/M_AXI_S2MM', 'sc_dma/S02_AXI'), ('sc_dma/M00_AXI', 'ps/S_AXI_HP1_FPD')]:
         connected(a, b, bus=True)
     for i, bus in enumerate(['pl0/s_axi', 'pl1/s_axi', 'sfp/s_axi', 'mdio0_s_axi', 'mdio1_s_axi',
-                             'dma/S_AXI_LITE', 'sfp_iic/S_AXI', 'management/s_axi']):
+                             'dma/S_AXI_LITE', 'sfp_iic/S_AXI', 'management/s_axi', 'fabric/s_axi_dump']):
         connected(f'sc_ctl/M{i:02}_AXI', bus, bus=True)
     connected('ps/pl_clk0', 'management/clk', 'fabric/axis_clk', 'pl0/axis_clk', 'pl1/axis_clk', 'sfp/axis_clk')
     connected('rst150/peripheral_aresetn', 'management/rst_n', 'fabric/axis_rst_n', 'pl0/axis_rst_n', 'pl1/axis_rst_n', 'sfp/axis_rst_n')
@@ -73,9 +73,9 @@ def check(path, compare_physical=False):
     expected = {'/dma/S_AXI_LITE/Reg': (0x80000000, '64K'), '/mdio0_s_axi/Reg': (0x80010000, '64K'),
                 '/mdio1_s_axi/Reg': (0x80020000, '64K'), '/sfp_iic/S_AXI/Reg': (0x80030000, '64K'),
                 '/pl0/s_axi/reg0': (0x80040000, '256K'), '/pl1/s_axi/reg0': (0x80080000, '256K'),
-                '/sfp/s_axi/reg0': (0x800C0000, '256K'), '/management/s_axi/reg0': (0x80100000, '64K')}
+                '/sfp/s_axi/reg0': (0x800C0000, '256K'), '/management/s_axi/reg0': (0x80100000, '64K'), '/fabric/s_axi_dump/reg0': (0x80110000, '64K')}
     assert actual == expected, actual
-    for master in ['m_axi_ing', 'm_axi_egr', 'm_axi_cpu']:
+    for master in ['m_axi_ing', 'm_axi_egr', 'm_axi_cpu', 'm_axi_dump']:
         segments = design['addressing']['/fabric']['address_spaces'][master]['segments'].values()
         assert any(s['address_block'] == '/ps/SAXIGP2/HP0_DDR_LOW' and int(s['offset'], 16) == 0 and s['range'] == '2G' for s in segments), master
     print('PASS: production catalog cells, packet/DDR/control/GEM/IRQ wiring and register map')

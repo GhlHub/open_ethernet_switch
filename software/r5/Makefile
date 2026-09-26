@@ -67,7 +67,7 @@ test-snmp: | out
 	  python3 tests/test_snmp.py out/test_snmp_$$ddr$$debug.so $$((1 + 2*ddr + 4*debug)); \
 	done; done
 clean:
-	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_statistics out/test_snmp*.so out/test_web out/test_links out/test_pstate out/test_stp out/test_config out/test_settings out/test_web.json out/web_page.h
+	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_mac_dump out/test_mac_table_web out/test_statistics out/test_snmp*.so out/test_web out/test_links out/test_pstate out/test_stp out/test_config out/test_settings out/test_web.json out/web_page.h
 -include $(OBJECTS:.o=.d)
 
 .PHONY: test-web
@@ -139,3 +139,15 @@ test-sd: | out
 	./out/test_usb_memory
 	cc -std=c11 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -ffunction-sections -fdata-sections -Wl,--gc-sections -Iusb_port -I$(USB)/include tests/test_usb_msc.c -o out/test_usb_msc
 	./out/test_usb_msc
+
+.PHONY: test-mac-dump
+test: test-mac-dump
+test-mac-dump: | out
+	cc -std=c11 -Wall -Wextra -Werror -Itests/dump_fakes -Iinclude src/mac_dump.c tests/test_mac_dump.c -o out/test_mac_dump
+	./out/test_mac_dump
+
+.PHONY: test-mac-table-web
+test: test-mac-table-web
+test-mac-table-web: | out
+	cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/dump_fakes -Iinclude src/mac_table_web.c tests/test_mac_table_web.c -o out/test_mac_table_web
+	./out/test_mac_table_web

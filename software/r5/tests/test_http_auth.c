@@ -4,7 +4,9 @@
 #include <string.h>
 #include "../src/web_task.c"
 static struct switch_config current;
-static unsigned saves;
+static unsigned saves, mac_refreshes;
+int web_mac_table(char *out,size_t cap,const char *path,bool refresh,size_t *len)
+{ (void)path;assert(cap>16);if(refresh)mac_refreshes++;strcpy(out,"{}");*len=2;return refresh?202:200;}
 static bool save_fails, lock_held, lock_busy;
 static char incoming[2048],outgoing[65536];
 static size_t read_offset,written;
@@ -58,6 +60,12 @@ BaseType_t xSemaphoreGive(SemaphoreHandle_t m)
 int main(void)
 {
     config_defaults(&current);
+    query("GET","/mac-table","","",200);
+    query("GET","/api/mac-table","","",200);
+    query("GET","/api/mac-table/0","","",200);
+    assert(mac_refreshes==0);
+    query("POST","/api/mac-table","","refresh=1",202);
+    assert(mac_refreshes==1 && saves==0);
     query("GET","/statistics","","",200);query("GET","/configuration","","",200);
     query("GET","/api/statistics","","",200);query("GET","/api/config","","",200);
     assert(!strstr(outgoing,"password_hash")&&!strstr(outgoing,"password_salt"));

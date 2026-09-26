@@ -125,10 +125,10 @@ set_property -dict [list CONFIG.IIC_FREQ_KHZ {100}] $sfp_iic
 
 # AXI-Lite control fabric: PS HPM0_LPD -> {3 MAC, 2 MDIO, DMA, SFP I2C}
 set sc_ctl [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect sc_ctl]
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {8} CONFIG.NUM_CLKS {2}] $sc_ctl
+set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {9} CONFIG.NUM_CLKS {2}] $sc_ctl
 # DDR fabric: switch masters -> HP0, DMA masters -> HP1
 set sc_ddr [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect sc_ddr]
-set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] $sc_ddr
+set_property -dict [list CONFIG.NUM_SI {4} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] $sc_ddr
 set sc_dma [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect sc_dma]
 set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] $sc_dma
 
@@ -181,6 +181,7 @@ foreach n {pl0_s_axi pl1_s_axi sfp_s_axi mdio0_s_axi mdio1_s_axi} {
 connect_bd_intf_net [get_bd_intf_pins sc_ctl/M05_AXI] [get_bd_intf_pins dma/S_AXI_LITE]
 connect_bd_intf_net [get_bd_intf_pins sc_ctl/M06_AXI] [get_bd_intf_pins sfp_iic/S_AXI]
 make_bd_intf_pins_external -name diag_s_axi [get_bd_intf_pins sc_ctl/M07_AXI]
+make_bd_intf_pins_external -name dump_s_axi [get_bd_intf_pins sc_ctl/M08_AXI]
 connect_bd_net [get_bd_pins ps/pl_clk0] [get_bd_pins sfp_iic/s_axi_aclk]
 connect_bd_net [get_bd_pins rst150/peripheral_aresetn] [get_bd_pins sfp_iic/s_axi_aresetn]
 make_bd_intf_pins_external -name sfp_iic [get_bd_intf_pins sfp_iic/IIC]
@@ -192,7 +193,7 @@ connect_bd_net [get_bd_ports link_irq] [get_bd_pins irq1/In1]
 connect_bd_net [get_bd_pins irq1/dout] [get_bd_pins ps/pl_ps_irq1]
 
 # DDR: switch masters -> HP0, DMA masters -> HP1
-foreach {n si} {m_axi_ing S00_AXI m_axi_egr S01_AXI m_axi_cpu S02_AXI} {
+foreach {n si} {m_axi_ing S00_AXI m_axi_egr S01_AXI m_axi_cpu S02_AXI m_axi_dump S03_AXI} {
   make_bd_intf_pins_external -name $n [get_bd_intf_pins sc_ddr/$si]
 }
 connect_bd_intf_net [get_bd_intf_pins sc_ddr/M00_AXI] [get_bd_intf_pins ps/S_AXI_HP0_FPD]
@@ -237,10 +238,10 @@ foreach g {0 1} {
 }
 
 # match the RTL's actual interface subsets so the BD wrapper carries no dangling signals
-foreach n {pl0_s_axi pl1_s_axi sfp_s_axi mdio0_s_axi mdio1_s_axi diag_s_axi} {
+foreach n {pl0_s_axi pl1_s_axi sfp_s_axi mdio0_s_axi mdio1_s_axi diag_s_axi dump_s_axi} {
   set_property CONFIG.PROTOCOL AXI4LITE [get_bd_intf_ports $n]
 }
-foreach n {m_axi_ing m_axi_egr m_axi_cpu} {
+foreach n {m_axi_ing m_axi_egr m_axi_cpu m_axi_dump} {
   set_property -dict [list CONFIG.DATA_WIDTH 128 CONFIG.HAS_LOCK 0 CONFIG.HAS_CACHE 0 CONFIG.HAS_PROT 0 CONFIG.HAS_QOS 0 CONFIG.HAS_REGION 0] [get_bd_intf_ports $n]
 }
 source $root/ip_repo/production.tcl
@@ -255,6 +256,7 @@ foreach {seg off rng} {
   pl1/s_axi/reg0        0x80080000 256K
   sfp/s_axi/reg0        0x800C0000 256K
   management/s_axi/reg0       0x80100000 64K
+  fabric/s_axi_dump/reg0      0x80110000 64K
 } {
   assign_bd_address -offset $off -range $rng -target_address_space [get_bd_addr_spaces ps/Data] [get_bd_addr_segs $seg]
 }
@@ -272,7 +274,7 @@ set fh [open $proj/reports/address_map.txt w]
 foreach seg [get_bd_addr_segs -of_objects [get_bd_addr_spaces ps/Data]] {
   puts $fh "[get_property NAME $seg]  offset=[get_property OFFSET $seg]  range=[get_property RANGE $seg]"
 }
-foreach as {fabric/m_axi_ing fabric/m_axi_egr fabric/m_axi_cpu dma/Data_SG dma/Data_MM2S dma/Data_S2MM} {
+foreach as {fabric/m_axi_ing fabric/m_axi_egr fabric/m_axi_cpu fabric/m_axi_dump dma/Data_SG dma/Data_MM2S dma/Data_S2MM} {
   foreach seg [get_bd_addr_segs -of_objects [get_bd_addr_spaces $as]] {
     puts $fh "$as -> [get_property NAME $seg]  offset=[get_property OFFSET $seg]  range=[get_property RANGE $seg]"
   }

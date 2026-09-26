@@ -168,7 +168,148 @@ module tb_switch_top;
   logic        cpu_m_axis_tvalid;
   logic        cpu_m_axis_tlast;
 
+  reg [7:0] s_axi_dump_awaddr = 0;
+  reg s_axi_dump_awvalid = 0;
+  wire s_axi_dump_awready;
+  reg [31:0] s_axi_dump_wdata = 0;
+  reg [3:0] s_axi_dump_wstrb = 0;
+  reg s_axi_dump_wvalid = 0;
+  wire s_axi_dump_wready;
+  wire [1:0] s_axi_dump_bresp;
+  wire s_axi_dump_bvalid;
+  reg s_axi_dump_bready = 0;
+  reg [7:0] s_axi_dump_araddr = 0;
+  reg s_axi_dump_arvalid = 0;
+  wire s_axi_dump_arready;
+  wire [31:0] s_axi_dump_rdata;
+  wire [1:0] s_axi_dump_rresp;
+  wire s_axi_dump_rvalid;
+  reg s_axi_dump_rready = 0;
+  wire [0:0] m_axi_dump_awid;
+  wire [31:0] m_axi_dump_awaddr;
+  wire [7:0] m_axi_dump_awlen;
+  wire [2:0] m_axi_dump_awsize;
+  wire [1:0] m_axi_dump_awburst;
+  wire m_axi_dump_awvalid;
+  reg m_axi_dump_awready = 0;
+  wire [127:0] m_axi_dump_wdata;
+  wire [15:0] m_axi_dump_wstrb;
+  wire m_axi_dump_wlast;
+  wire m_axi_dump_wvalid;
+  reg m_axi_dump_wready = 0;
+  reg [0:0] m_axi_dump_bid = 0;
+  reg [1:0] m_axi_dump_bresp = 0;
+  reg m_axi_dump_bvalid = 0;
+  wire m_axi_dump_bready;
+
+  reg dump_test_done=0;
+  integer dump_beats=0, dump_bursts=0, dump_cycle=0;
+  reg [3:0] packet_seen=0, outstanding=0;
+  reg offered=0;
+  // Independent monitor of all packet AXI transaction lifetimes. Admission
+  // must yield even during AW-to-B / AR-to-RLAST gaps with no VALID asserted.
+  always @(posedge clk) if (rst_n) begin
+    if (m_axi_dump_awvalid && !offered &&
+        ((|outstanding) || m_axi_ing_awvalid || m_axi_egr_arvalid ||
+         m_axi_cpu_awvalid || m_axi_cpu_arvalid))
+      $fatal(1,"dump admitted ahead of packet DMA");
+    if (m_axi_dump_awvalid) offered=1;
+    if (m_axi_dump_bvalid && m_axi_dump_bready) offered=0;
+    if(m_axi_ing_bvalid && m_axi_ing_bready)outstanding[0]=0;
+    if(m_axi_egr_rvalid && m_axi_egr_rready && m_axi_egr_rlast)outstanding[1]=0;
+    if(m_axi_cpu_bvalid && m_axi_cpu_bready)outstanding[2]=0;
+    if(m_axi_cpu_rvalid && m_axi_cpu_rready && m_axi_cpu_rlast)outstanding[3]=0;
+    if(m_axi_ing_awvalid && m_axi_ing_awready)outstanding[0]=1;
+    if(m_axi_egr_arvalid && m_axi_egr_arready)outstanding[1]=1;
+    if(m_axi_cpu_awvalid && m_axi_cpu_awready)outstanding[2]=1;
+    if(m_axi_cpu_arvalid && m_axi_cpu_arready)outstanding[3]=1;
+    packet_seen=packet_seen | outstanding;
+    if(m_axi_dump_awvalid && m_axi_dump_awready) begin
+      if(m_axi_dump_awaddr!==32'h22000000+dump_bursts*256 ||
+         m_axi_dump_awlen!=15 || m_axi_dump_awsize!=4 || m_axi_dump_awburst!=1)
+        $fatal(1,"integration dump burst shape");
+      dump_bursts=dump_bursts+1;
+    end
+    if(m_axi_dump_wvalid && m_axi_dump_wready) begin
+      if(m_axi_dump_wdata[95:80]!==16'(dump_beats) ||
+         m_axi_dump_wlast!==((dump_beats%16)==15))
+        $fatal(1,"integration dump record order");
+      dump_beats=dump_beats+1;
+    end
+  end
+  always @(negedge clk) if (rst_n) begin
+    dump_cycle=dump_cycle+1;
+    m_axi_dump_awready=(dump_cycle%3)!=0;
+    m_axi_dump_wready=(dump_cycle%5)!=0;
+  end
+  always @(posedge clk) begin
+    if(!rst_n)m_axi_dump_bvalid<=0;
+    else begin
+      if(m_axi_dump_bvalid && m_axi_dump_bready)m_axi_dump_bvalid<=0;
+      if(m_axi_dump_wvalid && m_axi_dump_wready && m_axi_dump_wlast)m_axi_dump_bvalid<=1;
+    end
+  end
+  task automatic dump_write(input [7:0] a,input [31:0] d);
+    @(negedge clk);s_axi_dump_awaddr=a;s_axi_dump_awvalid=1;
+    do @(posedge clk);while(!s_axi_dump_awready);
+    @(negedge clk);s_axi_dump_awvalid=0;s_axi_dump_wdata=d;
+    s_axi_dump_wstrb=15;s_axi_dump_wvalid=1;
+    do @(posedge clk);while(!s_axi_dump_wready);
+    @(negedge clk);s_axi_dump_wvalid=0;s_axi_dump_bready=1;
+    do @(posedge clk);while(!s_axi_dump_bvalid);
+    if(s_axi_dump_bresp!=0)$fatal(1,"integration dump CSR write");
+    @(negedge clk);s_axi_dump_bready=0;
+  endtask
+  initial begin
+    wait(rst_n && axis_rst_n);
+    dump_write(4,32'h22000000);
+    dump_write(8,1);
+    wait(dump_beats==2048);
+    wait(m_axi_dump_bvalid && m_axi_dump_bready);
+    repeat(5) @(negedge clk);
+    // Verify completion through the public CPU register interface.
+    s_axi_dump_araddr=8'h0c;s_axi_dump_arvalid=1;
+    do @(posedge clk);while(!s_axi_dump_arready);
+    @(negedge clk);s_axi_dump_arvalid=0;s_axi_dump_rready=1;
+    do @(posedge clk);while(!s_axi_dump_rvalid);
+    if(s_axi_dump_rdata!=2 || dump_bursts!=128)$fatal(1,"integration dump completion");
+    @(negedge clk);s_axi_dump_rready=0;dump_test_done=1;
+  end
+
   switch_top #(.AGE_TICK_DIVIDE_COUNT(100)) dut (
+    .s_axi_dump_awaddr(s_axi_dump_awaddr),
+    .s_axi_dump_awvalid(s_axi_dump_awvalid),
+    .s_axi_dump_awready(s_axi_dump_awready),
+    .s_axi_dump_wdata(s_axi_dump_wdata),
+    .s_axi_dump_wstrb(s_axi_dump_wstrb),
+    .s_axi_dump_wvalid(s_axi_dump_wvalid),
+    .s_axi_dump_wready(s_axi_dump_wready),
+    .s_axi_dump_bresp(s_axi_dump_bresp),
+    .s_axi_dump_bvalid(s_axi_dump_bvalid),
+    .s_axi_dump_bready(s_axi_dump_bready),
+    .s_axi_dump_araddr(s_axi_dump_araddr),
+    .s_axi_dump_arvalid(s_axi_dump_arvalid),
+    .s_axi_dump_arready(s_axi_dump_arready),
+    .s_axi_dump_rdata(s_axi_dump_rdata),
+    .s_axi_dump_rresp(s_axi_dump_rresp),
+    .s_axi_dump_rvalid(s_axi_dump_rvalid),
+    .s_axi_dump_rready(s_axi_dump_rready),
+    .m_axi_dump_awid(m_axi_dump_awid),
+    .m_axi_dump_awaddr(m_axi_dump_awaddr),
+    .m_axi_dump_awlen(m_axi_dump_awlen),
+    .m_axi_dump_awsize(m_axi_dump_awsize),
+    .m_axi_dump_awburst(m_axi_dump_awburst),
+    .m_axi_dump_awvalid(m_axi_dump_awvalid),
+    .m_axi_dump_awready(m_axi_dump_awready),
+    .m_axi_dump_wdata(m_axi_dump_wdata),
+    .m_axi_dump_wstrb(m_axi_dump_wstrb),
+    .m_axi_dump_wlast(m_axi_dump_wlast),
+    .m_axi_dump_wvalid(m_axi_dump_wvalid),
+    .m_axi_dump_wready(m_axi_dump_wready),
+    .m_axi_dump_bid(m_axi_dump_bid),
+    .m_axi_dump_bresp(m_axi_dump_bresp),
+    .m_axi_dump_bvalid(m_axi_dump_bvalid),
+    .m_axi_dump_bready(m_axi_dump_bready),
     .clk                (clk),
     .rst_n              (rst_n),
     .axis_clk           (axis_clk),
@@ -755,6 +896,9 @@ module tb_switch_top;
       end else $display("PASS: a later, un-overridden CPU frame resolves normally again (the override does not stick)");
     end
 
+    wait(dump_test_done);
+    if(packet_seen!=4'hf)$fatal(1,"packet DMA coverage %b",packet_seen);
+    $display("PASS: concurrent MAC dump with all four packet DMA directions");
     if (errors == 0) $display("=== ALL TESTS PASSED ===");
     else              $display("=== %0d TEST(S) FAILED ===", errors);
     $finish;

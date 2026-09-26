@@ -4,7 +4,7 @@
 <style>
 :root{color-scheme:dark;font:15px system-ui,sans-serif;background:#101820;color:#e6edf3}body{max-width:1280px;margin:0 auto;padding:32px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #344452;padding-bottom:20px}h1{font-size:24px;margin:0}h2{font-size:19px;margin-top:32px}nav a{color:#9fd8ef;margin-left:24px}a[aria-current]{color:white;font-weight:bold}p{color:#afbecb;line-height:1.6}.panel{background:#17232e;border:1px solid #344452;border-radius:12px;padding:22px;margin:24px 0;overflow:auto}table{border-collapse:collapse;width:100%;font-size:14px;white-space:nowrap}th,td{text-align:right;padding:12px;border-bottom:1px solid #344452}th:first-child,td:first-child{text-align:left}th{color:#9eafbf;font-weight:500}button{background:#9fe2c0;color:#102c20;padding:12px 22px;border:0;border-radius:6px;font:inherit;font-weight:600;cursor:pointer}button:disabled{opacity:.5;cursor:wait}input{width:20px;height:20px;accent-color:#9fe2c0}.ok{color:#9fe2c0}.bad{color:#ffad9e}#status{min-height:24px}small{color:#afbecb}td{font-variant-numeric:tabular-nums}footer{margin:32px 0;color:#afbecb}@media(max-width:600px){body{padding:16px}header{display:block}nav{margin-top:20px}nav a{margin:0 24px 0 0}}
 </style>
-<header><h1>KR260 <small>/ Ethernet switch</small></h1><nav><a href="/configuration">Configuration</a><a href="/statistics">Statistics</a></nav></header>
+<header><h1>KR260 <small>/ Ethernet switch</small></h1><nav><a href="/configuration">Configuration</a><a href="/statistics">Statistics</a><a href="/mac-table">MAC table</a></nav></header>
 <p id="status" role="status" aria-live="polite">Connecting…</p><main id="content"></main><footer>R5 management · No login required</footer>
 <script>
 'use strict';
@@ -15,8 +15,8 @@ const debugNames=['GEM0 ingress stall','GEM1 ingress stall','PL0 ingress stall',
 const stpStates=['Disabled','Blocking','Listening','Learning','Forwarding'];
 const stpRoles=['Disabled','Root','Designated','Blocking'];
 const content=document.querySelector('#content'),status=document.querySelector('#status');
-const config=location.pathname==='/configuration';
-document.querySelector(`a[href="/${config?'configuration':'statistics'}"]`).setAttribute('aria-current','page');
+const config=location.pathname==='/configuration',macTable=location.pathname==='/mac-table';
+document.querySelector(`a[href="/${config?'configuration':macTable?'mac-table':'statistics'}"]`).setAttribute('aria-current','page');
 function esc(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function table(title,headers,rows){return `<section class="panel"><h2>${esc(title)}</h2><table><thead><tr>${headers.map(x=>`<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>'<tr>'+row.map(x=>`<td>${esc(x)}</td>`).join('')+'</tr>').join('')}</tbody></table></section>`;}
 async function api(path,options={}){const {timeoutMs=5000,...fetchOptions}=options;const r=await fetch(path,{...fetchOptions,cache:'no-store',signal:AbortSignal.timeout(timeoutMs)});if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}
@@ -75,5 +75,39 @@ async function refreshPortStatus(){
  document.querySelectorAll('[data-speed]').forEach(e=>{const i=Number(e.dataset.speed);e.textContent=speed(p.speed_mbps[i],i);});
  }catch(e){failed(e);}finally{statusBusy=false;}
 }
-if(config){loadConfig().catch(failed);setInterval(refreshPortStatus,1000);}else{refresh();setInterval(refresh,1000);}
+
+function macLayout(){
+ content.innerHTML='<h2>MAC address table</h2><p>Refresh is manual. Opening this page does not scan hardware. A refresh reads the live table while learning and forwarding continue; the rows are not an atomic snapshot. Ages shown are remaining seconds when captured, not a countdown.</p><button id="mac-refresh">Refresh MAC table</button><p id="mac-info">No snapshot captured yet.</p><div id="mac-rows"></div>';
+ document.querySelector('#mac-refresh').onclick=()=>loadMac(true);
+}
+async function loadMac(requestRefresh=false){
+ if(busy)return;busy=true;const button=document.querySelector('#mac-refresh');button.disabled=true;
+ try{
+  let s=await api('/api/mac-table',requestRefresh?{method:'POST',headers:{'X-KR260-Request':'1','Content-Type':'application/x-www-form-urlencoded'},body:'refresh=1'}:{});
+  // Poll only the manually requested operation; GET never starts a scan.
+  if(requestRefresh){
+   const deadline=Date.now()+10000;
+   while(s.busy && Date.now()<deadline){
+    status.textContent='Reading MAC table… Previous snapshot remains visible.';
+    await new Promise(resolve=>setTimeout(resolve,250));
+    s=await api('/api/mac-table');
+   }
+  }
+  if(s.busy){status.textContent='Refresh pending. Click Refresh MAC table to check again; an in-flight scan will be reused.';return;}
+  const dumpError=s.error;
+  if(dumpError && !s.ready)throw Error('MAC dump error '+dumpError);
+  if(!s.ready){status.textContent='Click Refresh MAC table to capture the first snapshot.';return;}
+  const rows=[];
+  for(let page=0;page<s.pages;page++){
+   const part=await api('/api/mac-table/'+page);
+   if(part.generation!==s.generation)throw Error('Snapshot changed in another browser. Click Refresh MAC table again.');
+   rows.push(...part.entries);
+  }
+  document.querySelector('#mac-info').textContent=`${s.count} learned entries · Snapshot ${s.generation} · Captured ${(s.age_ms/1000).toFixed(1)} seconds before this load. No automatic refresh.`;
+  document.querySelector('#mac-rows').innerHTML=table('Learned addresses',['Bank / row','MAC address','Ports','Age at capture (s)'],rows.map(([i,mac,mask,age])=>[`${Math.floor(i/512)} / ${i%512}`,mac,ports.filter((_,p)=>mask&(1<<p)).join(', ')||'None',age]));
+  if(dumpError)throw Error('MAC dump error '+dumpError+'; showing previous snapshot');
+  status.textContent='MAC snapshot loaded. Click Refresh MAC table to update.';status.className='ok';
+ }catch(e){failed(e);}finally{busy=false;button.disabled=false;}
+}
+if(macTable){macLayout();loadMac();}else if(config){loadConfig().catch(failed);setInterval(refreshPortStatus,1000);}else{refresh();setInterval(refresh,1000);}
 </script></html>

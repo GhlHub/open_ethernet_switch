@@ -1,7 +1,7 @@
 // mac_table_bank.sv
 //
 // One 512-entry way of the 4-way associative MAC table. True dual-port RAM:
-//   Port A - shared by the learn engine and this bank's aging_sweep_fsm
+//   Port A - shared by learning, aging and the low-priority dump reader
 //            (arbitrated per-bank at the top level, learn has fixed
 //            priority); needs read+write since both learn and aging read
 //            an entry before deciding whether to write it back

@@ -121,3 +121,24 @@ Statistics capability bits, bank numbers and interrupt routing are unchanged.
 `check_production_bd.py` checks these production addresses and connections.
 Do not infer the deployed address map from the separate validation BD's
 automatic address assignment.
+
+
+## Fabric 1.2 MAC-table dump interfaces
+
+`s_axi_dump` is an AXI-Lite slave clocked by fabric `clk` / `rst_n`.
+Production maps it to control M08 at 0x80110000; SmartConnect supplies the
+PS-control clock crossing. ABI register 0x00 reports 0x4D445001.
+
+`m_axi_dump` is a write-only 128-bit AXI master on the same fabric clock/reset,
+connected to HP0 SmartConnect S03. Its 16-beat, 256-byte INCR bursts have full
+byte strobes and ID zero. One burst is outstanding at a time, with AxCACHE
+tied to 0000 in production. Admission yields to address requests and
+outstanding transactions from all four packet-DMA directions. An offered
+AWVALID is retained under backpressure; later packet requests cannot retract
+that burst.
+
+MAC RAM port A grants dump reads below learning and aging, with preemption
+between entries. Reads form 16-entry chunks; DDR waiting never holds the RAM
+port. The 32 KiB destination belongs exclusively to DMA until completion,
+including after a software timeout. The scan is live, not atomic.
+See the [register, record and cache-ownership contract](../docs/mac-table-dump.md).

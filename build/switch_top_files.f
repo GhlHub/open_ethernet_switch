@@ -45,6 +45,7 @@
 ../rtl/mac_table/mac_lookup_port.sv
 ../rtl/mac_table/mac_addr_table_top.sv
 ../rtl/mac_table/mac_addr_resolver.sv
+../rtl/mac_table/mac_table_dump.sv
 ../rtl/mac_table/mac_forwarding_top.sv
 ../ip_repo/switch_fabric/hdl/ingress_datapath.sv
 ../ip_repo/switch_fabric/hdl/switch_fabric.sv

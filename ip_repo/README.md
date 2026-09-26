@@ -156,3 +156,7 @@ See [CPU transmit metadata](../docs/cpu-tx-metadata.md). Native counter-option
 runs now exercise the current functional regression; generated/native assembly
 miters compare the current contract. They do not claim raw-stream historical
 equivalence across this intentional ABI change.
+
+Fabric 1.2 adds a lowest-priority MAC-table dump writer on HP0 and a control
+slave at 0x80110000. Both use the fabric clock. See the
+[register, burst and ownership contract](../docs/mac-table-dump.md).

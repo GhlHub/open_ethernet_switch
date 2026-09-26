@@ -1,4 +1,5 @@
 #include "web.h"
+#include "mac_table_web.h"
 #include "board.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -17,7 +18,7 @@ static struct http_buffers buffers[HTTP_WORKERS];
 static QueueHandle_t clients;
 /* Serializes authentication + configuration read/modify/save, including the
  * single-owner USB/FAT stack. Statistics and ordinary pages do not take it. */
-static SemaphoreHandle_t settings_lock;
+static SemaphoreHandle_t settings_lock, mac_table_lock;
 static int send_all(Socket_t socket,const char *data,size_t size,TickType_t start)
 {
     while (size && (TickType_t)(xTaskGetTickCount()-start)<pdMS_TO_TICKS(5000)) {
@@ -40,7 +41,8 @@ static void serve(Socket_t socket,struct http_buffers *buffer)
     const char *body="Bad request\n", *type="text/plain; charset=utf-8", *status="400 Bad Request";
     size_t size=strlen(body);
     bool unauthorized=false, locked=false;
-    if (parsed==1 && (!strcmp(r.method,"POST") ||
+    bool mac_refresh=parsed==1 && !strcmp(r.method,"POST") && !strcmp(r.path,"/api/mac-table");
+    if (parsed==1 && ((!strcmp(r.method,"POST") && !mac_refresh) ||
         (!strcmp(r.method,"GET") && !strcmp(r.path,"/api/config")))) {
         locked=xSemaphoreTake(settings_lock,pdMS_TO_TICKS(2000))==pdTRUE;
         if (!locked) {
@@ -48,7 +50,7 @@ static void serve(Socket_t socket,struct http_buffers *buffer)
             body="Configuration busy; retry later\n";size=strlen(body);
         }
     }
-    if (parsed==1 && !strcmp(r.method,"POST")) {
+    if (parsed==1 && !strcmp(r.method,"POST") && !mac_refresh) {
         struct switch_config cfg;settings_get(&cfg,NULL,NULL);
         if (!auth_verify(&cfg,r.authorization)) {
             unauthorized=true;parsed=0;status="401 Unauthorized";
@@ -59,8 +61,16 @@ static void serve(Socket_t socket,struct http_buffers *buffer)
         }
     }
     if (parsed==1) {
-        if (!strcmp(r.method,"GET") && (!strcmp(r.path,"/") || !strcmp(r.path,"/statistics") || !strcmp(r.path,"/configuration"))) {
+        if (!strcmp(r.method,"GET") && (!strcmp(r.path,"/") || !strcmp(r.path,"/statistics") || !strcmp(r.path,"/configuration") || !strcmp(r.path,"/mac-table"))) {
             body=web_page;size=sizeof(web_page)-1;type="text/html; charset=utf-8";status="200 OK";
+        } else if ((!strcmp(r.method,"GET") || mac_refresh) &&
+                   (!strcmp(r.path,"/api/mac-table") || !strncmp(r.path,"/api/mac-table/",15))) {
+            if(xSemaphoreTake(mac_table_lock,pdMS_TO_TICKS(250))==pdTRUE) {
+                int code=web_mac_table(response,sizeof(buffer->response),r.path,mac_refresh,&size);
+                xSemaphoreGive(mac_table_lock);
+                body=response;type="application/json";
+                status=code==200?"200 OK":code==202?"202 Accepted":code==404?"404 Not Found":"500 Internal Server Error";
+            } else {status="503 Service Unavailable";body="MAC table busy; retry later\n";size=strlen(body);}
         } else if ((!strcmp(r.method,"GET") || !strcmp(r.method,"POST")) && !strcmp(r.path,"/api/config")) {
             struct switch_config cfg;bool saved,writable;
             settings_get(&cfg,&saved,&writable);
@@ -130,7 +140,8 @@ void web_task(void *unused)
     (void)unused;
     clients=xQueueCreate(HTTP_QUEUE_DEPTH,sizeof(struct http_job));
     settings_lock=xSemaphoreCreateMutex();
-    configASSERT(clients && settings_lock);
+    mac_table_lock=xSemaphoreCreateMutex();
+    configASSERT(clients && settings_lock && mac_table_lock);
     for (unsigned i=0;i<HTTP_WORKERS;i++)
         configASSERT(xTaskCreate(worker,"http-worker",4096,&buffers[i],1,NULL)==pdPASS);
     Socket_t listener=FreeRTOS_socket(FREERTOS_AF_INET,FREERTOS_SOCK_STREAM,FREERTOS_IPPROTO_TCP);

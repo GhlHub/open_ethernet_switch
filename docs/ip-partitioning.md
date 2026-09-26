@@ -214,3 +214,13 @@ fresh output directories, then runs package and assembly regressions. Use
 `--implement` to add PNR/bitstream generation and routed reports. The production
 packet miter substitutes the CSR source with its existing mailbox stimulus;
 the separate management-wrapper test verifies AXI-Lite-to-bank behavior.
+
+## Fabric 1.2: MAC-table dump master
+
+The dump engine belongs inside `switch_fabric`, alongside MAC port-A arbitration
+and packet-DMA admission tracking. It exports `m_axi_dump` (128-bit writes, HP0
+S03) and `s_axi_dump` (control M08, 0x80110000), both on the fabric clock.
+Control SmartConnect now has nine outputs and HP0 SmartConnect four inputs.
+Manifest-owned source/tests and native/production equivalence include both new
+interfaces. Physical shells and the HP1 CPU stream DMA retain their interfaces.
+See [the complete contract](mac-table-dump.md).

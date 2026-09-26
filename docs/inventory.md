@@ -1,5 +1,38 @@
 # Design inventory and pending development
 
+## Current remaining work (after MAC-table deployment)
+
+This list is the current backlog; dated sections below preserve earlier
+milestones and may describe issues subsequently fixed.
+
+| Priority | Work | Completion criteria |
+| --- | --- | --- |
+| 1 | Timing and CDC closure | Complete MDIO timing constraints and RGMII board/PHY budgets; review statistics mailbox crossings and SmartConnect reset fan-out. Current routed timing passes, but overall setup margin is 18 ps. |
+| 2 | Sustained-load qualification | Exercise simultaneous ports, minimum-size frames, flooding and buffer exhaustion. Measure throughput, latency and loss, plus MAC-dump completion time and forwarding impact under contention. Dump starvation under continuous traffic is permitted by its priority policy. |
+| 3 | Recovery and fault injection | Test cable flaps, stopped/restarted clocks, independent resets, AXI errors, queue flushes and recovery without reboot. A timed-out dump must retain buffer ownership until hardware completion or coordinated reset. |
+| 4 | Remaining physical IP partitioning | Package RGMII/MDIO and SFP transceiver/clock/reset shells with owned constraints, reset contracts and reusable verification. |
+| 5 | Speed expansion | Add PL copper 10/100/1000 full duplex. Widen the SFP packet interface to 128 bits before faster MAC/PCS/transceiver development for 1/2.5/5/10G. GEM0 remains board-limited to 1G. |
+| 6 | STP completion | Resolve remaining protocol/state and CPU RX-tag ownership issues, add web enable/disable and persistent settings, then verify loops and topology recovery. STP remains disabled. The old CPU TX override crossing has already been removed. |
+| 7 | Boot and storage reliability | Package persistent boot artifacts and validate cold boot, restart, SD removal, failed writes and interrupted saves. Current FPGA/firmware deployment is volatile JTAG. |
+| 8 | DMA cache optimization | Measure CPU cost/throughput before revisiting the non-cacheable HP1 descriptors and packet bounce buffers. Validate ownership, cache-line isolation, ring reuse and error recovery for any change. |
+
+Completed: CPU TX frame metadata/override CDC removal, pipelined CPU DDR writes,
+125 MHz fabric, HTTP worker concurrency, MAC dump DMA, and the manual-refresh
+MAC-table web page. The latest connected GEM1/PL0 ping and HTTP runs pass;
+long-duration and all-port qualification remain open. Broader management
+features such as LLDP/LACP and SNMPv3 are separate feature work.
+
+## MAC-table dump DMA and manual web view (2026-09-26 deployed)
+
+Fabric 1.2 adds a fourth HP0 master and a CPU AXI-Lite command window at
+0x80110000. It scans all MAC entries and ages into a caller-owned 32 KiB DDR
+buffer using 16-beat bursts, yielding to packet DMA and table learning/aging.
+The R5 helper handles cache ownership. The public `/mac-table` page provides
+manual refresh only, with no startup/page-load/periodic scan. The design is
+routed and deployed: +0.018 ns setup / +0.010 ns hold; simultaneous CPU/miner
+pings each passed 1,000/1,000, with live manual dumps and HTTP tests passing.
+See [deployment evidence](verification.md#2026-09-26-mac-table-dma-and-manual-web-view-deployed). See [interface contract](mac-table-dump.md).
+
 ## 125 MHz fabric and trunk preparation (2026-09-26 deployed)
 
 The fabric target is now 125 MHz, with 250 ms MAC aging preserved. The hardware
@@ -31,8 +64,9 @@ The previous routed review below remains historical evidence.
 
 Fresh reports confirm setup WNS +0.018 ns and hold WHS +0.010 ns. All 2,632
 CDC-1 rows trace to statistics selector logic and require the documented
-mailbox protocol, rather than blanket waivers. CPU TX override transfer, MDIO
-timing, RGMII board/PHY margins and reset recovery remain sign-off items.
+mailbox protocol, rather than blanket waivers. The CPU TX override crossing
+was subsequently removed. MDIO timing, RGMII board/PHY margins and reset
+recovery remain sign-off items.
 See [review and closure order](timing-cdc-review-20260926.md). RTL, constraints
 and the running board image were not changed by this review.
 
@@ -342,11 +376,11 @@ The following development and verification remain incomplete.
 | FreeRTOS firmware and boot flow | Initial R5 startup, TTC tick/timestamp, DMA network interface, 250 ms link service and DHCP minute retry are implemented and cross-linked. JTAG boot, UART, timer progress, DHCP acquisition and ping through all four copper ports are demonstrated. R5 D-cache now uses cacheable application DDR plus a reserved non-cacheable DMA region. Package FSBL/PMU/bitstream/application, measure cache-enabled performance and add fault restart. |
 | Management and status plane | MAC/MDIO/DMA, SFP IIC and RX/SFP diagnostics are connected. Counters, sensors, SNMP, and HTTP port configuration/statistics are implemented. Persistent microSD configuration passed board save/reload verification; broader forwarding policy and complete PCS configuration remain pending. Link status/events and flush controls now exist. Default age remains constant; PCS sync/link still drive LEDs. |
 | DMA descriptor and buffer cache policy | Current R5 implementation keeps descriptors and bounce buffers non-cacheable. Revisit descriptor and payload policies separately after measuring CPU cost and throughput. Cached DMA storage would require explicit ownership-based cache maintenance, cache-line isolation, and ring-reuse/reset/error-recovery validation. |
-| PS/DDR and CPU DMA verification | HP0 carries the three switch memory interfaces; HP1 carries the CPU AXI DMA masters. Verify generated address windows, arbitration, reset behavior, sustained throughput, descriptor/cache ownership and AXI error recovery. Basic DHCP/ping traffic is demonstrated; sustained bandwidth and fault recovery remain unverified. |
+| PS/DDR and CPU DMA verification | HP0 carries three packet memory interfaces plus the low-priority MAC dump writer; HP1 carries the CPU AXI DMA masters. Verify generated address windows, arbitration, reset behavior, sustained throughput, descriptor/cache ownership and AXI error recovery. Basic DHCP/ping traffic is demonstrated; sustained bandwidth and fault recovery remain unverified. |
 | PL RGMII timing and PHY setup | Automatic PL PHY setup, I/O delays and RX elastic buffering now exist. Validate fitted-board reset behavior, delay variation and trace skew; review IDELAY calibration readiness and abnormal receive recovery. FPGA RX clock-delay branch remains unplaceable. |
 | SFP hardware validation | Module IIC and sideband control are connected. Validate real modules, timing parameters, lockout/recovery, GT/PCS phase and receive clock correction. No optical hardware test exists. |
 | SFP link management | Board timer values now propagate through enclosing tops. Implement compatibility/fault, idle/config stability and link-down TX admission rules. Next Page and complete asymmetric-pause resolution are absent. |
-| Constraints and CDC review | Latest local CDC summary: zero critical and 13 warning clock-pair rows. Review residual timing/CDC findings and the new diagnostics/PHY-start/sideband paths; verify hardware margins and reset contracts. See CDC review and verification evidence. |
+| Constraints and CDC review | Current routed reports retain 2,632 CDC-1, 13 CDC-10 and eight CDC-12 findings, plus two vendor SmartConnect reset fan-out CDC-11 rows. Review residual timing/CDC findings and the new diagnostics/PHY-start/sideband paths; verify hardware margins and reset contracts. See CDC review and verification evidence. |
 | Full-system verification | Expand the GEM0-to-CPU smoke test to all port pairs, learned unicast, flood, contention, exhaustion, reset/error recovery and sustained load through a shared memory/interconnect model. Test independent GEM RX/TX clocks; current benches tie each pair together. |
 
 A 10G SFP path would be a separate extension: the current 1000BASE-X PCS, 1G

@@ -53,6 +53,8 @@ module tb_mac_forwarding_top;
   assign s_axis_tready = {NUM_PORTS{1'b1}}; // see header note
 
   mac_forwarding_top dut (
+    .dump_req_i(1'b0),.dump_bank_i(2'd0),.dump_addr_i(9'd0),
+    .dump_gnt_o(),.dump_valid_o(),.dump_data_o(),
     .clk                (clk),
     .rst_n              (rst_n),
     .age_tick_i         (age_tick_i),

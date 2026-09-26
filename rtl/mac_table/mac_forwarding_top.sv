@@ -28,6 +28,12 @@ module mac_forwarding_top
   import buf_mgr_pkg::*;
   import mac_table_pkg::*;
 (
+  input wire dump_req_i,
+  input wire [1:0] dump_bank_i,
+  input wire [8:0] dump_addr_i,
+  output wire dump_gnt_o,
+  output wire dump_valid_o,
+  output wire [64:0] dump_data_o,
   input  logic clk,
   input  logic rst_n,
 
@@ -79,6 +85,13 @@ module mac_forwarding_top
   assign lookup_mac[NUM_LOOKUP_PORTS-1:NUM_PORTS] = '0;
 
   mac_addr_table_top u_table (
+    .dump_req_i(dump_req_i),
+    .dump_bank_i(dump_bank_i),
+    .dump_addr_i(dump_addr_i),
+    .dump_gnt_o(dump_gnt_o),
+    .dump_valid_o(dump_valid_o),
+    .dump_data_o(dump_data_o),
+
     .clk                       (clk),
     .rst_n                     (rst_n),
     .age_tick_i                (age_tick_i),
