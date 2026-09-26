@@ -1,5 +1,140 @@
 # Design inventory verification
 
+## 2026-09-25 return to PL0: loss no longer reproduced
+
+The user returned the same miner cable to left-upper PL0, leaving GEM1 as
+the uplink. The port API confirmed physical/forwarding mask `0x06`, both
+active ports at 1 Gb/s, and Wi-Fi remained down. No firmware, FPGA, PHY tuning
+or administrator settings were changed during the comparison.
+
+The initial repeat passed 1,000/1,000 full-size pings to the miner and
+1,000/1,000 to the CPU simultaneously, at 20 requests/s per target.
+A subsequent 3,000-packet full-size miner run with an `a55a` payload pattern
+also passed without loss over 154 seconds. HTTP regression during that run
+passed all 120 mixed requests (maximum 0.108 seconds), authentication isolation
+and overload recovery. Final SNMP and PL0 MAC reads showed no bad packets,
+DDR errors, collection timeouts, CRC errors, receive overflows or filter drops;
+elastic-buffer error flags remained clear. Total miner result after returning
+to PL0: 4,000/4,000.
+
+A later PL0 recheck also passed 1,000/1,000 full-size pings each to the miner
+and CPU over approximately 51 seconds. No new bad packets, DDR errors,
+statistics timeouts or link flushes were observed. These additional artifacts
+are under `build/ip_refactor/packet_loss_pl0_recheck/`.
+
+This reverses the earlier PL0 loss observation: GEM0 and PL1 passed, but PL0
+also passes after the cable moves. The evidence therefore does not establish
+a persistent PL0-specific hardware or timing fault.
+
+Reconnecting entails PHY link renegotiation and firmware-triggered forwarding
+queue flushing on link loss (`links.c`, `LINK_CLR`). These are plausible
+state changes associated with recovery, not proof of the cause. A marginal
+connection or intermittent port/PHY/forwarding condition remains possible.
+Capture endpoint receive errors and link/queue diagnostics if loss recurs,
+before reseating or resetting the link. The initial five-second shared gap
+and the later scattered endpoint loss should remain separate observations.
+
+Artifacts: `build/ip_refactor/packet_loss_pl0_return/`.
+
+## 2026-09-25 PL1 comparison
+
+The user moved the same miner and cable from GEM0 to left-lower PL1, leaving
+GEM1 as the uplink. Wi-Fi remained down, and tests bound to `eth1`. The port
+API reported physical/forwarding mask `0x0a` with GEM1 and PL1 at 1 Gb/s.
+
+- Simultaneous full-size pings (1,472-byte payload, 20 requests/s) passed
+  1,000/1,000 to the miner and 1,000/1,000 to the CPU.
+- A second miner run using an `a55a` payload pattern passed 1,000/1,000 during
+  HTTP concurrency testing.
+- All 120 mixed HTTP requests passed (maximum response time 0.144 seconds),
+  including the separate authentication-isolation and overload-recovery checks.
+- SNMP reported zero bad packets, DDR errors, statistics timeouts, saturation
+  and late polls. No link flush occurred during the baseline measurement.
+- PL1 MAC reads showed no receive CRC errors, overflows or filter drops;
+  elastic-buffer error flags were clear (`STATUS=0x30`).
+
+Both GEM0 and PL1 now pass with the same endpoint and cable, whereas PL0 lost
+8–11% of full-size replies in the preceding tests. This strengthens the
+localization to PL0 and makes a defect affecting all instances of the shared
+PL MAC/RGMII design less likely. It does not establish the exact fault or rule
+out an intermittent condition. A repeat on PL0, followed by checking its PHY
+configuration, transmit timing and endpoint receive errors, is the next useful
+comparison. No FPGA or firmware changes were made; the miner remains on PL1.
+Artifacts: `build/ip_refactor/packet_loss_pl1/`.
+
+## 2026-09-25 GEM0 comparison isolates the PL0 path
+
+The user moved the same ZCU104 miner and cable from left-upper PL0 to
+right-upper GEM0, leaving the right-lower GEM1 uplink unchanged. Wi-Fi remained
+down. The port API confirmed physical/forwarding mask `0x03`, GEM0/GEM1 at
+1 Gb/s and PL0 down. No FPGA or firmware changes were made.
+
+Simultaneous 1,472-byte-payload pings at 20 requests/s passed 1,000/1,000 to
+the miner and 1,000/1,000 to the KR260 CPU. The comparable settled PL0 test
+lost 81/1,000 miner replies while CPU replies passed 1,000/1,000.
+SNMP showed no bad packets, DDR errors, collection timeouts, saturation or
+late polls; no link flush occurred during the GEM0 measurement.
+
+A second full-size miner test with an `a55a` payload pattern passed another
+1,000/1,000 while the HTTP concurrency regression ran. All 120 mixed HTTP
+requests passed (maximum 0.119 seconds), as did authentication isolation and
+overload recovery.
+
+This comparison strongly implicates the PL0 port path rather than a general
+HTTP/CPU issue or the shared GEM1 uplink. It does not yet isolate the PL0 MAC,
+RGMII timing, PHY, connector or port-specific forwarding logic. The same cable
+and miner passing on GEM0 makes a general endpoint overload or cable fault
+less likely. PL0 receive diagnostics were clean in the preceding tests, so
+checking the miner's receive errors and PL0 transmit timing is a useful next
+step. A controlled return to PL0 would strengthen the result against a
+transient fault that happened to clear during the cable move.
+
+Artifacts: `build/ip_refactor/packet_loss_gem0/`.
+
+## 2026-09-25 packet loss investigation with Wi-Fi disabled
+
+The workstation's `wlan0` was confirmed down; `eth1` retained `10.0.1.24`.
+All pings below bind to `eth1`. The KR260 remains at `10.0.1.104`, with GEM1
+as the uplink and PL0 connected to `10.0.1.140`. The endpoint is a ZCU104
+OdoCrypt miner; its read-only management snapshot reports application 1.1.1
+(build Sep 23 2026 04:56:34), hardware 1.1.0 and FSBL 1.0.0.
+
+The initial simultaneous full-MTU tests missed sequences 1–103 on both targets
+(about five seconds). CPU replies were uninterrupted after that gap; the
+endpoint also had scattered losses. This is consistent with stale neighbor
+state after disabling Wi-Fi, but no packet capture establishes the cause.
+Subsequent tests isolate a persistent endpoint-path issue:
+
+| Test | Replies / requests | Loss |
+| --- | --- | --- |
+| Settled CPU, 1,472-byte ICMP payload, 20 requests/s | 1,000 / 1,000 | 0% |
+| Concurrent endpoint, same size/rate | 919 / 1,000 | 8.1% |
+| Endpoint alone, 56-byte payload, 20 requests/s | 295 / 300 | 1.67% |
+| Endpoint alone, 512-byte payload, 20 requests/s | 288 / 300 | 4% |
+| Endpoint alone, 1,472-byte payload, 5 requests/s | 133 / 150 | 11.33% |
+| Endpoint alone, 1,472-byte payload, 20 requests/s | 266 / 300 | 11.33% |
+
+The endpoint-only trials had no simultaneous CPU ping stream; management and
+ordinary LAN traffic remained present. Larger packets lose more often, and
+reducing rate did not eliminate loss. This warrants checking PL0 transmission,
+the cable and endpoint receive handling; it does not establish a root cause.
+
+SNMP snapshots showed no bad packets, DDR response errors, mailbox timeouts,
+saturation or late statistics polls. No link flush occurred during the settled
+comparison. Read-only JTAG checks before and after the size/rate trials showed
+zero PL0 receive FCS errors, receive overflows and filter drops. Elastic-buffer
+overflow/underrun flags were clear (`STATUS=0x30`); link status was `0x426`.
+These receive-side checks do not measure frames rejected at the miner, and
+good-frame counts alone cannot rule out payload corruption inside the fabric.
+
+HTTP regression also passed with Wi-Fi down: 120 mixed requests across six
+clients, maximum response time 0.112 seconds, authentication isolation and
+recovery after excess idle connections. A simultaneous CPU full-MTU ping run
+passed 500/500. The FPGA and firmware were unchanged.
+A same-miner/same-cable comparison on GEM0 was requested to distinguish PL0
+from the common forwarding path. Logs and snapshots are under
+`build/ip_refactor/packet_loss_wifi_off/`.
+
 ## 2026-09-25 HTTP concurrency fix
 
 Replaced serial HTTP serving with a dedicated acceptor, four fixed workers,
