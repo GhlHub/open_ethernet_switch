@@ -1,10 +1,12 @@
 #include "board.h"
+#include "ip_discovery.h"
 #include "config.h"
 #include "policy.h"
 #include "pstate.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "FreeRTOS_IP.h"
+#include "FreeRTOS_ARP.h"
 #include "FreeRTOS_IP_Private.h"
 #include "FreeRTOS_Routing.h"
 #include "NetworkBufferManagement.h"
@@ -94,6 +96,7 @@ static void network_service(void *arg)
         for (unsigned j=0;j<16;j++) {
             size_t n=fabric_dma_receive(frame,sizeof frame);
             if (!n) break;
+            ip_discovery_observe(frame,n);
             /* IEEE 802.1D reserved block (01:80:C2:00:00:0x): STP/LACP/LLDP/etc,
              * never IP/ARP traffic for this board's own MAC -- see pstate.h. */
             if (n>=6 && frame[0]==0x01 && frame[1]==0x80 && frame[2]==0xc2 &&
@@ -133,4 +136,18 @@ void network_start(void)
     configASSERT(fabric_dma_init());
     configASSERT(FreeRTOS_IPInit_Multi()==pdPASS);
     configASSERT(xTaskCreate(network_service,"fabric-rx",2048,NULL,3,&service)==pdPASS);
+}
+
+/* R5 is single-core; the short critical section prevents IP-task cache changes.
+ * Neither lookup ages/refreshes the entry or generates traffic. */
+int network_cached_ipv4(const uint8_t mac[6],uint8_t ip[4])
+{
+    MACAddress_t address; uint32_t value=0;
+    memcpy(address.ucBytes,mac,6);
+    taskENTER_CRITICAL();
+    int found=eARPGetCacheEntryByMac(&address,&value,NULL)==eResolutionCacheHit &&
+              xIsIPInARPCache(value);
+    taskEXIT_CRITICAL();
+    if(found)memcpy(ip,&value,4);
+    return found && ip[0]!=0 && ip[0]!=127 && ip[0]<224;
 }

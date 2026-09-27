@@ -131,3 +131,8 @@ The matching FPGA image and R5 firmware are now deployed in the lab. Routed
 timing, manual web captures and CPU/forwarded-packet checks passed; see the
 [deployment evidence](verification.md#2026-09-26-mac-table-dma-and-manual-web-view-deployed)
 for coverage and remaining CDC/reset limitations.
+
+
+The deployed 2026-09-27 firmware adds passive IPv4 observations to the web view.
+They are joined by MAC in the R5 and are not part of the hardware dump record.
+See [web discovery behavior and limits](web-interface.md#passive-ipv4-discovery-2026-09-27-deployed).

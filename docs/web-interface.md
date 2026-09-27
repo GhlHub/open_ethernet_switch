@@ -142,7 +142,9 @@ already pending dump is reused. `GET /api/mac-table` returns status/count/
 generation/age; `GET /api/mac-table/0` through `/15` returns valid records from
 128-slot pages. GET requests never start DMA.
 
-Rows are `[index, "mac", port_mask, age_seconds]`. The browser checks that all
+Rows are `[index, "mac", port_mask, age_seconds, ipv4_observations]`.
+Each IPv4 observation is `["address", age_ms]`; `null` age means an ARP-cache
+fallback without a known observation time, and an empty array means unknown. The browser checks that all
 pages share the same generation, preventing mixed snapshots if another user
 refreshes. It polls only a manually requested operation, for up to ten seconds,
 then stops and permits another manual check. A pending transfer retains DMA
@@ -174,3 +176,30 @@ are documented in [statistics.md](statistics.md). This requires matching ABI-2
 hardware/firmware; both were deployed on 2026-09-26. Live browser testing
 passes with 13 bank rows, advancing collection, one-second refresh and no
 JavaScript errors, including while GEM1 RX has no clock progress.
+
+## Passive IPv4 discovery (2026-09-27, deployed)
+
+The MAC-table page adds IPv4 addresses and Last observed columns. Up to four
+addresses per MAC are kept in a 128-mapping R5 observation table. Valid untagged
+Ethernet/IPv4 ARP requests and replies reaching the CPU update sender mappings
+before the IP stack's destination filtering. A mapping expires ten minutes after
+its last observed packet. Repeated packets refresh its timestamp; an IP observed
+on a different MAC replaces the old association. Capacity pressure evicts the
+oldest observation. These mappings are volatile and independent of the FPGA's
+MAC-table aging and dump generation.
+
+When no passive observation exists for a MAC, the firmware tries the FreeRTOS
+ARP cache without transmitting or extending its lifetime. This fallback returns
+one address and displays `Unknown (ARP cache)` for its observation time.
+Otherwise the page displays `Unknown`. Unknown does not establish that a device
+has no IP address. Multiple observed addresses and their ages appear in matching
+order. IP ages are evaluated when each API page is read; they do not count down
+in the browser. Reloading the page reads cached MAC records and current IP
+observations without starting a hardware dump or network scan.
+
+This is best-effort discovery of packets already delivered to the CPU; it does
+not mirror transit traffic, scan subnets, query DHCP leases, or discover IPv6.
+Tagged ARP is ignored because the current table has no VLAN key. Sender Ethernet
+and ARP MAC addresses must match, with a nonzero unicast MAC and a usable unicast
+IPv4 sender address. Observations are network claims, not authenticated identity.
+No FPGA changes or bitstream rebuild are required.

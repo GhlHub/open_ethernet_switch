@@ -8,7 +8,7 @@ milestones and may describe issues subsequently fixed.
 | Priority | Work | Completion criteria |
 | --- | --- | --- |
 | 1 | Timing and CDC closure | Complete MDIO timing constraints and RGMII board/PHY budgets; complete review of bundled-data CDC classifications and SmartConnect reset fan-out. Independent mailbox and Gray-progress paths were reviewed; current routed timing passes, but overall setup margin is 18 ps. |
-| 2 | Sustained-load qualification | Exercise simultaneous ports, minimum-size frames, flooding and buffer exhaustion. Measure throughput, latency and loss, plus MAC-dump completion time and forwarding impact under contention. Dump starvation under continuous traffic is permitted by its priority policy. |
+| 2 | Sustained-load qualification | Exercise simultaneous ports, minimum-size frames, flooding and buffer exhaustion. Measure throughput, latency and loss, plus MAC-dump completion time and forwarding impact under contention. Add pool occupancy/high-water marks, per-ingress allocation waits/failures, and DMA request-to-completion latency including arbitration. Dump starvation under continuous traffic is permitted by its priority policy. |
 | 3 | Recovery and fault injection | Extend the passing GEM1 stopped/resumed-clock test to cable flaps and other banks; test independent resets, AXI errors, queue flushes and recovery without reboot. A timed-out dump must retain buffer ownership until hardware completion or coordinated reset. |
 | 4 | Remaining physical IP partitioning | Package RGMII and SFP transceiver/clock/reset shells with owned constraints, reset contracts and reusable verification. |
 | 5 | Speed expansion | PL copper 10/100/1000 full-duplex functional qualification passes on both ports (see [speed support](pl-ethernet-speeds.md)). Widen the SFP packet interface to 128 bits before faster MAC/PCS/transceiver development for 1/2.5/5/10G. GEM0 remains board-limited to 1G. |
@@ -30,6 +30,15 @@ recovers without reboot. Both the CPU and forwarded miner passed 450/450
 full-size pings across linked, stopped-clock and recovered windows. See
 [statistics](statistics.md) and [deployment evidence](verification.md#2026-09-26-independent-statistics-bank-mailboxes-deployed). Broader management
 features such as LLDP/LACP and SNMPv3 are separate feature work.
+
+## Passive IPv4 discovery (2026-09-27 deployed)
+
+The R5 and MAC-table web page now support passive ARP sender observations,
+multiple IPv4 addresses per MAC, observation age, and stack ARP-cache fallback.
+Host/browser tests and the all-counter firmware build pass. The firmware is
+deployed; live discovery identifies the workstation, miner and other observed
+ARP senders. There are no RTL changes.
+See [web behavior](web-interface.md#passive-ipv4-discovery-2026-09-27-deployed).
 
 ## PL PHY-management catalog partition (2026-09-26 deployed)
 

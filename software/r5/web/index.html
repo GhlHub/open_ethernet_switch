@@ -81,7 +81,7 @@ async function refreshPortStatus(){
 }
 
 function macLayout(){
- content.innerHTML='<h2>MAC address table</h2><p>Refresh is manual. Opening this page does not scan hardware. A refresh reads the live table while learning and forwarding continue; the rows are not an atomic snapshot. Ages shown are remaining seconds when captured, not a countdown.</p><button id="mac-refresh">Refresh MAC table</button><p id="mac-info">No snapshot captured yet.</p><div id="mac-rows"></div>';
+ content.innerHTML='<h2>MAC address table</h2><p>Refresh is manual. Opening this page does not scan hardware. A refresh reads the live table while learning and forwarding continue; the rows are not an atomic snapshot. Ages shown are remaining seconds when captured, not a countdown. IPv4 addresses are learned passively from ARP; observations expire after 10 minutes. Last observed is measured when this page is loaded. Unknown means no mapping is available, not that the device has no IP address.</p><button id="mac-refresh">Refresh MAC table</button><p id="mac-info">No snapshot captured yet.</p><div id="mac-rows"></div>';
  document.querySelector('#mac-refresh').onclick=()=>loadMac(true);
 }
 async function loadMac(requestRefresh=false){
@@ -108,7 +108,7 @@ async function loadMac(requestRefresh=false){
    rows.push(...part.entries);
   }
   document.querySelector('#mac-info').textContent=`${s.count} learned entries · Snapshot ${s.generation} · Captured ${(s.age_ms/1000).toFixed(1)} seconds before this load. No automatic refresh.`;
-  document.querySelector('#mac-rows').innerHTML=table('Learned addresses',['Bank / row','MAC address','Ports','Age at capture (s)'],rows.map(([i,mac,mask,age])=>[`${Math.floor(i/512)} / ${i%512}`,mac,ports.filter((_,p)=>mask&(1<<p)).join(', ')||'None',age]));
+  document.querySelector('#mac-rows').innerHTML=table('Learned addresses',['Bank / row','MAC address','Ports','Age at capture (s)','IPv4 addresses','Last observed'],rows.map(([i,mac,mask,age,ips=[]])=>[`${Math.floor(i/512)} / ${i%512}`,mac,ports.filter((_,p)=>mask&(1<<p)).join(', ')||'None',age,ips.length?ips.map(x=>x[0]).join(', '):'Unknown',ips.length?ips.map(x=>x[1]===null?'Unknown (ARP cache)':(x[1]/1000).toFixed(1)+' s ago').join(', '):'Unknown']));
   if(dumpError)throw Error('MAC dump error '+dumpError+'; showing previous snapshot');
   status.textContent='MAC snapshot loaded. Click Refresh MAC table to update.';status.className='ok';
  }catch(e){failed(e);}finally{busy=false;button.disabled=false;}

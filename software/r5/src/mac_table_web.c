@@ -1,5 +1,6 @@
 #include "mac_table_web.h"
 #include "mac_dump.h"
+#include "ip_discovery.h"
 #include "board.h"
 #include <stdio.h>
 #include <stdarg.h>
@@ -59,11 +60,22 @@ int web_mac_table(char *out,size_t capacity,const char *path,bool refresh,size_t
     if(ready && page<16)for(unsigned i=page*128;i<(page+1)*128;i++) {
         const struct mac_dump_record *r=&published[i];
         if(!(r->flags&1))continue;
-        append(out,capacity,&used,"%s[%u,\"%02x:%02x:%02x:%02x:%02x:%02x\",%u,%u]",
+        append(out,capacity,&used,"%s[%u,\"%02x:%02x:%02x:%02x:%02x:%02x\",%u,%u,[",
             comma?",":"",r->index,r->mac_high>>8,r->mac_high&255,
             (unsigned)(r->mac_low>>24),(unsigned)((r->mac_low>>16)&255),
             (unsigned)((r->mac_low>>8)&255),(unsigned)(r->mac_low&255),
             r->port_mask,r->age_seconds);
+        uint8_t mac[6]={r->mac_high>>8,r->mac_high&255,r->mac_low>>24,
+            r->mac_low>>16,r->mac_low>>8,r->mac_low};
+        struct ip_observation ips[IP_DISCOVERY_PER_MAC];
+        size_t n=ip_discovery_lookup(mac,ips);
+        for(size_t j=0;j<n;j++) append(out,capacity,&used,
+            "%s[\"%u.%u.%u.%u\",%lu]",j?",":"",ips[j].ip[0],ips[j].ip[1],
+            ips[j].ip[2],ips[j].ip[3],(unsigned long)ips[j].age_ms);
+        uint8_t cached[4];
+        if(!n && network_cached_ipv4(mac,cached)) append(out,capacity,&used,
+            "[\"%u.%u.%u.%u\",null]",cached[0],cached[1],cached[2],cached[3]);
+        append(out,capacity,&used,"]]");
         comma=true;
     }
     append(out,capacity,&used,"]}");

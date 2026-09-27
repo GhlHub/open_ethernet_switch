@@ -27,7 +27,7 @@ const fs=require('fs'),path=require('path');
      return route.fulfill({status:202,json:mac});
     }
     if(mac.busy && ++macPolls>=2){mac.busy=false;mac.ready=true;mac.generation++;}
-    const entries=url.pathname==='/api/mac-table/0'?[[17,'00:0a:35:0f:37:45',6,299]]:[];
+    const entries=url.pathname==='/api/mac-table/0'?[[17,'00:0a:35:0f:37:45',6,299,[['10.0.1.140',1250],['10.0.1.141',2000]]],[18,'00:0a:35:0f:37:46',2,100,[]],[19,'00:0a:35:0f:37:47',2,100,[['10.0.1.142',null]]]]:[];
     return route.fulfill({json:{...mac,entries}});
    }
    if(url.pathname==='/api/statistics'){refreshes++;return route.fulfill({json:fixture});}
@@ -91,6 +91,8 @@ const fs=require('fs'),path=require('path');
   await page.getByRole('button',{name:'Refresh MAC table',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('#mac-refresh').disabled && document.querySelector('#status').textContent.startsWith('MAC snapshot loaded.'));
   if(macPosts!==1 || !await page.getByRole('cell',{name:'00:0a:35:0f:37:45',exact:true}).count())throw Error('Manual snapshot not displayed');
+  for(const text of ['10.0.1.140, 10.0.1.141','1.3 s ago, 2.0 s ago','Unknown','Unknown (ARP cache)'])
+   if(!await page.getByRole('cell',{name:text,exact:true}).count())throw Error('Missing IP discovery display: '+text);
   if(!await page.getByRole('cell',{name:'299',exact:true}).count())throw Error('MAC age missing');
   const gets=macGets;await page.waitForTimeout(1600);
   if(macPosts!==1 || macGets!==gets)throw Error('MAC page automatically refreshes');

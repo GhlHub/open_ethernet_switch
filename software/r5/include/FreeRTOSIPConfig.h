@@ -29,6 +29,7 @@ void network_dhcp_message(const char *message);
 #define ipconfigUSE_LLMNR 0
 #define ipconfigUSE_MDNS 0
 #define ipconfigUSE_NBNS 0
+#define ipconfigUSE_ARP_REVERSED_LOOKUP 1
 #define ipconfigUSE_DNS 1
 #define ipconfigUSE_DNS_CACHE 1
 #define ipconfigUSE_DNS_CALLBACKS 0

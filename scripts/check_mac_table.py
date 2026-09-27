@@ -3,6 +3,7 @@
 import argparse
 import http.client
 import json
+import ipaddress
 import re
 import time
 
@@ -38,7 +39,14 @@ if s["ready"]:
     for page in range(s["pages"]):
         part = query(f"/api/mac-table/{page}")
         assert part["generation"] == s["generation"], "Another client replaced the snapshot; retry"
-        for index, mac, mask, age in part["entries"]:
+        for row in part["entries"]:
+            assert len(row) in (4, 5)
+            index, mac, mask, age = row[:4]
+            if len(row) == 5:
+                assert len(row[4]) <= 4
+                for ip, observed_age in row[4]:
+                    ipaddress.IPv4Address(ip)
+                    assert observed_age is None or 0 <= observed_age < 600000
             assert page*128 <= index < (page+1)*128
             assert re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac)
             assert 0 <= mask <= 255 and 1 <= age <= 511

@@ -66,7 +66,7 @@ test-snmp: | out
 	  python3 tests/test_snmp.py out/test_snmp_$$ddr$$debug.so $$((1 + 2*ddr + 4*debug)); \
 	done; done
 clean:
-	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_mac_dump out/test_mac_table_web out/test_statistics out/test_snmp*.so out/test_web out/test_links out/test_pstate out/test_stp out/test_config out/test_settings out/test_web.json out/web_page.h
+	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_mac_dump out/test_mac_table_web out/test_ip_discovery out/test_statistics out/test_snmp*.so out/test_web out/test_links out/test_pstate out/test_stp out/test_config out/test_settings out/test_web.json out/web_page.h
 -include $(OBJECTS:.o=.d)
 
 .PHONY: test-web
@@ -150,3 +150,9 @@ test: test-mac-table-web
 test-mac-table-web: | out
 	cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/dump_fakes -Iinclude src/mac_table_web.c tests/test_mac_table_web.c -o out/test_mac_table_web
 	./out/test_mac_table_web
+
+.PHONY: test-ip-discovery
+test: test-ip-discovery
+test-ip-discovery: | out
+	cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stats_fakes -Iinclude src/ip_discovery.c tests/test_ip_discovery.c -o out/test_ip_discovery
+	./out/test_ip_discovery

@@ -15,7 +15,9 @@ It includes [CPU TX frame metadata](docs/cpu-tx-metadata.md), pipelined CPU DDR
 writes and a [low-priority MAC-table dump master](docs/mac-table-dump.md).
 The public `/mac-table` web page displays MAC addresses, ports and ages; its
 **Refresh MAC table** button requests a scan. Opening/reloading the page uses
-cached data; no automatic scans are scheduled.
+cached data; no automatic scans are scheduled. The latest firmware source also
+adds [passive IPv4 discovery](docs/web-interface.md#passive-ipv4-discovery-2026-09-27-deployed)
+to this page; it is deployed and verified on the board.
 
 The matching FPGA and R5 firmware are deployed over JTAG at DHCP address
 `10.0.1.104`. Routed timing passes (fabric +1.236 ns setup; overall +0.018 ns

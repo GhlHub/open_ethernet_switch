@@ -308,3 +308,32 @@ staging into the published array. HTTP workers serialize access under a
 dedicated mutex and release it before socket transmission. These allocations
 do not use the HP1 descriptor/bounce-buffer region. Their exact addresses are
 linker-dependent; the deployment ELF/map is authoritative.
+
+
+## Packet-pool capacity assessment (2026-09-27)
+
+The current 256 × 2,048-byte fabric pool reserves 512 KiB of the K26's 4 GB
+DDR4. The PL has 64 UltraRAM blocks (2.25 MiB raw); the deployed routed design
+uses none. A 128-bit packet store using 64 data bits per 72-bit UltraRAM word
+could hold the current pool in 16 blocks, but moving it requires memory-interface
+and arbitration changes. See [K26 memory resources](https://docs.amd.com/r/en-US/ds987-k26-som/Programmable-Logic).
+
+For five 1 Gb/s physical inputs carrying 1,518-byte frames, including eight
+preamble/SFD bytes and twelve interpacket-gap byte times, aggregate arrivals
+are approximately 406,000 packets/s. An initially empty 256-slot pool represents
+about 630 microseconds of arrivals with no buffer releases. This is a hypothetical
+all-1G case; the currently linked GEM1 is at 100 Mb/s.
+
+A live light-load observation at 125 MHz recorded maximum accepted-address-to-
+completion latencies of 137 cycles (1.096 microseconds) for physical ingress
+writes and 221 cycles (1.768 microseconds) for physical egress reads. These are
+observed transaction maxima, not worst-case bounds or complete packet residence
+times: pre-address arbitration and queue waits are excluded. The MAC lookup core
+is pipelined at one lookup per cycle with approximately two cycles of core
+latency, plus request arbitration and result delivery.
+
+The present pool therefore appears sufficient for the observed memory/lookup
+latency, but sustained balanced wire-rate traffic still needs qualification.
+Pool high-water marks, allocation failures/waits, and latency including DMA
+arbitration are needed to validate this estimate. Finite buffers cannot absorb
+sustained egress oversubscription, including flooding toward a slower port.

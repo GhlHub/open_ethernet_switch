@@ -1,5 +1,43 @@
 # Design inventory verification
 
+## 2026-09-27 Passive MAC-to-IPv4 discovery (deployed)
+
+R5 firmware now observes ARP sender mappings and adds up to four IPv4
+addresses plus observation ages to each web MAC-table row. The existing
+FreeRTOS ARP cache supplies a fallback with an unknown observation age.
+Hardware MAC dump format and manual-only refresh remain unchanged.
+
+Host tests pass under AddressSanitizer/UndefinedBehaviorSanitizer for truncated
+and malformed frames, request/reply learning, duplicates, timestamps, multiple
+addresses, reassignment, expiry and bounded eviction. MAC web tests cover
+unknown/cache fallback results and full 128-row pages with four addresses per
+row within the 24 KiB response buffer. Web protocol tests pass in all four
+statistics configurations. Chromium tests pass for multiple addresses, unknown
+values, observation ages, navigation and no automatic hardware scans.
+
+The all-counter R5 ELF builds and passes memory-layout checks. Logs:
+`build/r5/ip_discovery_tests.log`, `ip_discovery_browser.log` and
+`ip_discovery_build.log`.
+
+Deployed over JTAG on 2026-09-27 using the station at `10.0.1.109:3121`
+(UART `10.0.1.109:2323`; the previously used `.107` was unreachable). The
+existing verified ABI-2 bitstream was reused with the new R5 ELF. Saved SD
+settings loaded, DHCP reacquired `10.0.1.104`, and physical/forwarding masks
+returned to `0x0e` (GEM1 100 Mb/s; PL0/PL1 1 Gb/s).
+
+The live browser passed IPv4/observation-age rendering, unknown entries,
+manual-only refresh and JavaScript-error checks. One hardware dump captured
+34 MAC rows, with 13 MAC-to-IP mappings observed in the subsequent API read,
+including `02:00:00:10:04:00` → `10.0.1.140` on PL1 and the workstation
+at `10.0.1.24` on PL0. The updated command-line MAC-table checker passed.
+Deployment logs, snapshots and screenshot are in
+`build/r5/ip_discovery_deploy/`. R5 ELF SHA-256:
+`7747b2eb35d7b558e72f867caa37d5e60f68e9c8fb671b442da1b12bd8ab91a4`.
+Both CPU and forwarded-miner destinations passed 100/100 full-size pings
+(1,472-byte ICMP payload). All 13 statistics banks stayed fresh over 30 seconds
+and 120 polls, with no new faults, late polls or saturation. Port settings
+matched the pre-deployment values. Deployment remains volatile JTAG.
+
 ## 2026-09-26 Independent statistics-bank mailboxes (deployed)
 
 Statistics ABI 2 (`0x53540200` plus capability bits) replaces the single
