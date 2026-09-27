@@ -7,7 +7,7 @@ static bool present,write_fail;
 static unsigned writes;
 static uint8_t admitted;
 int xil_printf(const char *fmt,...){(void)fmt;return 0;}
-bool board_ports_configure(uint8_t mask,const uint8_t adv[2]){assert(adv[0]==4);admitted=mask;return true;}
+bool board_ports_configure(uint8_t mask,const uint8_t adv[4]){assert(adv[0]==4);admitted=mask;return true;}
 bool settings_media_present(void){return present;}
 const char *settings_media_status(void){return "no card";}
 bool settings_media_read(unsigned slot,unsigned offset,void *data,size_t size)
@@ -22,14 +22,14 @@ int main(void)
     settings_init();settings_get(&c,&saved,&writable);assert(!saved&&!writable&&admitted==31&&writes==0);
     assert(!settings_save(&c));present=true;settings_init();settings_get(&c,&saved,&writable);
     assert(!saved&&writable&&c.dhcp&&!strcmp(c.username,"admin"));
-    c.advertise[2]=3;c.sfp_speed=2500;assert(settings_save(&c));assert(admitted==11);
+    c.advertise[2]=3;c.sfp_speed=2500;assert(settings_save(&c));assert(admitted==15);
     settings_init();settings_get(&c,&saved,&writable);
 #if CONFIG_RECOVERY
     assert(!saved&&writable&&c.sfp_speed==0&&admitted==31);
     assert(writes==3);assert(settings_save(&c));
     puts("PASS: recovery uses defaults without writing until explicit save");return 0;
 #else
-    assert(saved&&writable&&c.sfp_speed==2500&&admitted==11);
+    assert(saved&&writable&&c.sfp_speed==2500&&admitted==15);
     assert(settings_save(&c)&&writes==3);
     present=false;settings_get(&c,&saved,&writable);assert(!writable);
     assert(!settings_save(&c)&&writes==3); /* even unchanged save needs a card */

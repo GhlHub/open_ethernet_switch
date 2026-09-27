@@ -81,7 +81,7 @@ void snmp_mib_build(struct snmp_mib *m,const struct statistics_snapshot *s,
     for (unsigned row=0;row<6;row++)
         add(m,2,12,row+1,GAUGE,port_state->speed_mbps[row],NULL);
     for (unsigned row=0;row<6;row++)
-        add(m,2,13,row+1,GAUGE,row<2?port_state->advertise[row]:0,NULL);
+        add(m,2,13,row+1,GAUGE,row<4?port_state->advertise[row]:0,NULL);
 #if STATS_DDR
     for (unsigned col=1;col<=9;col++) for (unsigned row=0;row<4;row++)
         add(m,3,col,row+1,col==1?STRING:col==5?GAUGE:COUNTER64,

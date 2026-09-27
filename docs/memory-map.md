@@ -186,10 +186,10 @@ inside an aperture are not allocatable memory.
 | Address range | Size | Block | Control owner |
 | --- | ---: | --- | --- |
 | `0x80000000–0x8000FFFF` | 64 KiB | CPU-port AXI DMA | R5 DMA driver; MM2S at offset 0, S2MM at offset 0x30 |
-| `0x80010000–0x8001FFFF` | 64 KiB | PL0 MDIO controller | PL sequencer initializes/polls PHY; R5 reads the completed status snapshot |
+| `0x80010000–0x8001FFFF` | 64 KiB | PL0 MDIO controller | PL sequencer initializes/polls PHY; R5 reads snapshots and pauses polling for advertisement writes |
 | `0x80020000–0x8002FFFF` | 64 KiB | PL1 MDIO controller | Same ownership model as PL0 |
 | `0x80030000–0x8003FFFF` | 64 KiB | SFP AXI IIC | Current firmware leaves it unused; diagnostic tools access module EEPROM/PHY |
-| `0x80040000–0x8007FFFF` | 256 KiB | PL0 MAC registers | R5 initializes MAC; hardware updates counters/status |
+| `0x80040000–0x8007FFFF` | 256 KiB | PL0 MAC registers | R5 initializes MAC and owns speed/physical enable at `+0x41C`; hardware updates counters/status |
 | `0x80080000–0x800BFFFF` | 256 KiB | PL1 MAC registers | Same as PL0 |
 | `0x800C0000–0x800FFFFF` | 256 KiB | SFP MAC registers | R5 initializes MAC; hardware updates counters/status |
 | `0x80100000–0x8010FFFF` | 64 KiB | Fabric diagnostics and link control | R5 link task controls port admission/flush; PL supplies status/events; also per-port forward/learn enable, a CPU TX destination override, and a CPU RX ingress-port tag for control-protocol hooks, owned by `software/r5/src/pstate.c`/`fabric_dma.c`; `stp_task.c` is the current consumer running real STP |

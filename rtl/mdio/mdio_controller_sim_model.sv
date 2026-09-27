@@ -74,7 +74,7 @@ module mdio_controller_sim_model #(
     .clk (s_axi_lite_clk), .rstn (s_axi_lite_resetn), .go_i (init_go_i),
     .m_start_o (seq_start), .m_write_o (seq_write), .m_phy_o (seq_phy),
     .m_reg_o (seq_reg), .m_wdata_o (seq_wdata),
-    .m_busy_i (busy), .m_done_i (done), .m_error_i (error), .m_rdata_i (read_data),
+    .poll_hold_i(1'b0), .m_busy_i (busy | start_pulse), .m_done_i (done), .m_error_i (error), .m_rdata_i (read_data),
     .active_o (init_active), .done_o (init_done_o), .fail_o (init_fail_o),
     .link_o (phy_link_o), .link_speed_o (phy_speed), .link_full_o (phy_full),
     .link_valid_o (phy_valid), .link_change_o (phy_link_change_o)

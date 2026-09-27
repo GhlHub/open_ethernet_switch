@@ -7,11 +7,11 @@
 #define PS_ADV_ALL 7u
 struct port_snapshot {
     uint8_t admin, physical, forwarding;
-    uint8_t advertise[2], applied[2];
+    uint8_t advertise[4], applied[4];
     uint16_t speed_mbps[6]; /* 0 = no supported resolved link / CPU virtual */
 };
 void board_ports_snapshot(struct port_snapshot *out);
-bool board_ports_configure(uint8_t mask,const uint8_t advertise[2]);
+bool board_ports_configure(uint8_t mask,const uint8_t advertise[4]);
 unsigned ps_phy_speed(uint16_t status);
 uint16_t ps_phy_advertisement(unsigned capabilities);
 uint32_t ps_gem_config(uint32_t old,unsigned speed);

@@ -60,6 +60,7 @@ int main(void)
     snprintf(text,sizeof(text),"%s&username=admin",good);assert(!form(text));
     assert(!form("mask=31"));
     char json[1024];assert(config_json(json,sizeof(json),&c,true,true));assert(!strstr(json,"password")&&!strstr(json,"salt")&&!strstr(json,"hash"));
+    assert(strstr(json,"\"copper_supported\":[4,7,7,7]"));
     assert(!config_json(json,10,&c,true,true));
     puts("PASS: defaults, all-byte CRC corruption, interrupted saves, redundant recovery, foreign-region protection, sequence wrap, port/IP validation and public JSON");
 }

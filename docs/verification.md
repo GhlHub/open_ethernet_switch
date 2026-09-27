@@ -1,5 +1,76 @@
 # Design inventory verification
 
+## 2026-09-26 PL 10/100/1000 implementation validation
+
+PL MAC and PHY-management packages are now version 1.1. The board rate
+converter supplies independent RX/TX byte enables, and R5 manages full-duplex
+advertisement and safely quiesces a port before changing rates. Web and SNMP
+report the four copper advertisement masks. See [the implementation](pl-ethernet-speeds.md).
+
+Completed before hardware deployment:
+
+- 30 native and 30 packaged IP cases, including physical-wire payload/FCS
+  checks at 10, 100 and 1000 Mb/s, independent RX clocks, stopped-clock
+  transitions and PHY polling/CPU transaction arbitration.
+- Whole-switch regressions for all four counter configurations and generated
+  production wiring equivalence.
+- Production BD, address, digital-interface and retained physical-pin audits.
+- R5 host tests, browser configuration tests, all-counter firmware build and
+  ELF memory-region checks.
+
+Synthesis, place-and-route and bitstream generation pass. Final routed setup
+WNS is **+0.019 ns**, hold WHS **+0.010 ns**, and fabric setup WNS is
+**+0.968 ns** at 125 MHz. All 31 bus-skew checks pass (minimum +5.845 ns).
+Utilization is 30,318 LUTs, 38,860 registers and 51.5 BRAM tiles.
+
+The new mode controls add no critical CDC findings: totals remain 2,632
+CDC-1, 13 CDC-10, two CDC-11 and eight CDC-12. The rate-control reset and
+TX-enable structures have an explicit routed-report regression guard.
+The two-bit speed synchronizers use a disabled/stable-mode protocol; mode
+changes and stopped RX clocks are covered in simulation. Existing statistics
+CDC, external timing budgets and independent-reset qualification remain open.
+
+The matching bitstream and all-counter R5 ELF were deployed over JTAG through
+`10.0.1.107:3121`. UART confirms SD settings loaded, D-cache enabled, both PL
+links at 1 Gb/s, and DHCP `10.0.1.104`. Deployment is volatile.
+
+- Bitstream SHA-256: `eb8c388c68587f6b97b6392a77b9bbb066a57f9fc9a6c489ffb8f2657909ac5b`.
+- R5 ELF SHA-256: `f2b1a10b3a61e39960d12705dcc3abd084de296283fec151fccbb7cc744e8a82`.
+
+Final-image qualification passes for both PL ports:
+
+| Uplink under test | Other port | Speeds tested | CPU / forwarded full-size pings at each speed | HTTP / SNMP |
+| --- | --- | --- | --- | --- |
+| PL1, left lower | PL0: gigabit-only miner | 1000, 100, 10 Mb/s | 1,000/1,000 each; zero loss | 60 requests with six clients and SNMP walk pass |
+| PL0, left upper | PL1: gigabit-only miner | 1000, 100, 10 Mb/s | 1,000/1,000 each; zero loss | 60 requests with six clients and SNMP walk pass |
+
+This totals 12,000 full-size pings and 360 HTTP requests on the final image.
+All port bad-packet and DDR AXI-error counters remain zero. No collector late
+polls, saturation, mailbox-release timeouts or PL counter-bank timeouts occur.
+Original advertisement masks `[4,7,7,7]` are restored; both PL links return
+to 1 Gb/s. Final cabling is switch uplink on PL0, miner `10.0.1.140` on PL1.
+
+A separate collector observation remains open: three snapshot-response
+timeouts on the **unplugged GEM1 RX bank 2**, two at slot 0 (`rx_good_packets`)
+and one at slot 3 (`rx_bad_bytes`). Two were present in the PL0 1000 Mb/s
+snapshot and a third in the 100 Mb/s snapshot; the total did not increase in
+the 10 Mb/s test. No PL bank timed out. The hardware response deadline is
+4,095 control cycles (about 28.7 us). Intermittent GEM1 RX clock availability
+is a candidate explanation, but the cause is not confirmed by these tests.
+The collector subsequently resumes valid reads without a reset. Evidence is
+in `board_pl0/*_snmp.json` and `post_pl0_snmp.json`.
+
+Live browser checks with the matching R5 firmware also pass: PL capability
+controls, both speed displays, authenticated save, public statistics and no
+JavaScript errors.
+
+Artifacts: `build/ip_refactor/pl_multirate/` (13-step `results.json`, reports,
+bitstream, ELF, deployment UART, saved baseline configuration and live tests).
+R5 host/browser/build logs are `build/ip_refactor/pl_rates_firmware_tests.log`,
+`pl_rates_browser.log` and `pl_rates_r5_build.log`. The focused alignment test
+first reproduced erroneous acceptance of an error end token, then passed
+with the correction (`pl_alignment_repro/`, `pl_alignment_fixed/`).
+
 ## 2026-09-26 PL PHY-management IP partition deployed
 
 The new `pl_phy_mdio` 1.0 catalog IP owns the real MDIO controller, IOBUF,

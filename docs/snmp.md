@@ -225,10 +225,13 @@ location cannot be recovered retrospectively.
 See [live counter observations](verification.md#2026-09-21-live-snmp-counter-observation)
 for packet, latency, backpressure and sensor results and their limits.
 
-## Negotiated PS Ethernet speeds
+## Negotiated Ethernet speeds
 
 Port-table column 12 reports supported physical link speed in Mb/s (0, 10,
-100, 1000); column 13 reports requested PS advertisement bits (1=10FD,
+100, 1000); column 13 reports requested copper advertisement bits (1=10FD,
 2=100FD, 4=1000FD; other ports return zero). Column 11 remains the inaccessible
 index. See [PS speed selection](ps-ethernet-speeds.md). All-counter builds now
 expose 365 total objects, including four standard system objects.
+
+PL0/PL1 now report their requested 10/100/1000 full-duplex advertisement masks
+in column 13, alongside GEM0/GEM1. See [PL speed support](pl-ethernet-speeds.md).

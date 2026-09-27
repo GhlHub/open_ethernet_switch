@@ -56,6 +56,8 @@ int web_parse(const char *data,size_t length,struct web_request *out)
             if (!strcmp(p,"mask")) field=1;
             else if (!strcmp(p,"adv0")) field=2;
             else if (!strcmp(p,"adv1")) field=4;
+            else if (!strcmp(p,"adv2")) field=8;
+            else if (!strcmp(p,"adv3")) field=16;
             else return -1;
             if (fields&field) return -1;
             fields|=field;
@@ -64,12 +66,12 @@ int web_parse(const char *data,size_t length,struct web_request *out)
             unsigned long n=strtoul(value,&tail,10);
             if (*tail && *tail!='&') return -1;
             if (field==1) {if (n>31) return -1; r.mask=(unsigned)n;}
-            else {if (!n || n>7) return -1;r.advertise[field==2?0:1]=(uint8_t)n;}
+            else {if (!n || n>7) return -1;r.advertise[field==2?0:field==4?1:field==8?2:3]=(uint8_t)n;}
             if (*tail=='&' && !tail[1]) return -1;
             p=*tail?tail+1:tail;
         }
-        if (fields!=1 && fields!=7) return -1;
-        if (fields==7 && r.advertise[0]!=4) return -1;
+        if (fields!=1 && fields!=7 && fields!=31) return -1;
+        if (fields!=1 && r.advertise[0]!=4) return -1;
     } else if (body) return -1;
     *out=r; return 1;
 }
@@ -136,6 +138,6 @@ size_t web_stats(char *out,size_t size,const struct statistics_snapshot *s,
 size_t web_ports(char *out,size_t size,const struct port_snapshot *p)
 {
     struct writer w={out,size,0,0};
-    put(&w,"{\"admin\":%u,\"physical\":%u,\"forwarding\":%u,\"advertise\":[%u,%u],\"applied\":[%u,%u],\"speed_mbps\":[%u,%u,%u,%u,%u,%u]}",p->admin,p->physical,p->forwarding,p->advertise[0],p->advertise[1],p->applied[0],p->applied[1],p->speed_mbps[0],p->speed_mbps[1],p->speed_mbps[2],p->speed_mbps[3],p->speed_mbps[4],p->speed_mbps[5]);
+    put(&w,"{\"admin\":%u,\"physical\":%u,\"forwarding\":%u,\"advertise\":[%u,%u,%u,%u],\"applied\":[%u,%u,%u,%u],\"speed_mbps\":[%u,%u,%u,%u,%u,%u]}",p->admin,p->physical,p->forwarding,p->advertise[0],p->advertise[1],p->advertise[2],p->advertise[3],p->applied[0],p->applied[1],p->applied[2],p->applied[3],p->speed_mbps[0],p->speed_mbps[1],p->speed_mbps[2],p->speed_mbps[3],p->speed_mbps[4],p->speed_mbps[5]);
     return w.failed?0:w.used;
 }

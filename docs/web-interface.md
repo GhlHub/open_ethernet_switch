@@ -22,12 +22,20 @@ The current lab address after the permanent-MAC change is `http://10.0.1.104/`
 
 Settings now persist in two files on the microSD card. Defaults enable all ports, request
 GEM0 1000FD and other copper ports 10/100/1000FD, select SFP Auto and DHCP.
-The page distinguishes future PL/SFP speeds from current implementation;
+PL copper 10/100/1000 choices are active. The page marks higher SFP speeds as future;
 unsupported-only selections disable admission. IP changes apply after restart.
 The five permanent MACs and administrator username are displayed; stored
 password verifiers are never returned. See [persistent configuration](configuration.md)
 for storage layout, credentials, recovery and current hardware limits.
-See [PS speed selection](ps-ethernet-speeds.md) for PS transition behavior.
+See [PS speed selection](ps-ethernet-speeds.md) and
+[PL speed selection](pl-ethernet-speeds.md) for transition behavior.
+For GEM1, PL0 and PL1, select the advertised speeds independently in
+**Requested full-duplex speeds**. Selecting all three allows negotiation of
+the highest common speed; selecting only 100 limits negotiation to 100 Mb/s.
+At least one speed must remain selected. Save with administrator credentials
+to persist and apply the selection. Changing the uplink's advertisement
+briefly interrupts access while it renegotiates. GEM0 stays fixed at 1000 Mb/s.
+
 The CPU virtual port is not administratively configurable. Disabling
 ports changes MAC receive enables and masks the link task's desired fabric
 ports. The existing link-clear/queue flush/MAC-learning flush sequence handles

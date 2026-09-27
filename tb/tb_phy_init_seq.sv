@@ -94,6 +94,7 @@ module mdio_phy_model #(
             if (ext_addr != 16'h31 && ext_addr != 16'h32 && ext_addr != 16'h86) bad_writes++;
           end
         end
+        5'h04: begin regs[4]=frame[15:0]; end
         5'h10: begin regs[5'h10] = frame[15:0]; nwrites++; end
         default: bad_writes++;
       endcase
@@ -260,6 +261,20 @@ module tb_phy_init_seq #(parameter logic [4:0] TEST_PHY_ADDR = 5'd2);
         axi_read(8'h08, rd);
         check(st[1] === 1'b1 && rd[15:0] === 16'hA231, $sformatf("CPU read %0d during polling: done=%b data=%h", k, st[1], rd[15:0]));
       end
+`ifdef TEST_PL_PHY_MDIO
+      // CPU configuration window must prevent new polls, including expiry.
+      axi_write(8'h18,1,1);
+      do begin axi_read(8'h10,st); end while (st[0]);
+      phy0.regs[5'h11]=0;
+      repeat(10000) @(posedge clk);
+      check(link0===1'b1,"poll hold preserves last snapshot");
+      axi_write(8'h00,(32'h00010400 | {27'b0,TEST_PHY_ADDR}),7);
+      axi_write(8'h04,32'h141,3);
+      axi_write(8'h10,6,1); axi_write(8'h0c,1,1);
+      do begin axi_read(8'h10,st); end while (!st[1]);
+      check(!st[2] && phy0.regs[4]==16'h141,"CPU advertisement write with polling paused");
+      axi_write(8'h18,0,1);
+`endif
       phy0.regs[5'h11] = 16'h0000;                 // link lost
       repeat (8000) @(posedge clk);
       check(link0 === 1'b0 && chg_count == c0 + 2, $sformatf("poll: link-down seen (%0d pulses)", chg_count - c0));

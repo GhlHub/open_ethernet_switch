@@ -81,6 +81,11 @@ def fixture(bd, out):
         value = rename(values[0])
         lhs, rhs = (value, port) if direction == 'input' else (port, value)
         assignments.append(f'  assign {lhs} = {rhs};')
+    # The physical RGMII shell is outside this digital comparison. Supply
+    # one byte per cycle, matching the native fixture's gigabit GMII boundary.
+    for cell in ['pl0', 'pl1']:
+        for pin in ['rx_byte_ce_i', 'tx_byte_ce_i']:
+            assignments.append(f"  assign {rename(actual[cell][pin])} = 1'b1;")
     result = header + '\n' + '\n'.join(map(rename, declarations)) + '\n'
     result += '\n'.join(instances + assignments) + '\nendmodule\n'
     target = out / 'production_assembly.sv'

@@ -11,15 +11,19 @@ milestones and may describe issues subsequently fixed.
 | 2 | Sustained-load qualification | Exercise simultaneous ports, minimum-size frames, flooding and buffer exhaustion. Measure throughput, latency and loss, plus MAC-dump completion time and forwarding impact under contention. Dump starvation under continuous traffic is permitted by its priority policy. |
 | 3 | Recovery and fault injection | Test cable flaps, stopped/restarted clocks, independent resets, AXI errors, queue flushes and recovery without reboot. A timed-out dump must retain buffer ownership until hardware completion or coordinated reset. |
 | 4 | Remaining physical IP partitioning | Package RGMII and SFP transceiver/clock/reset shells with owned constraints, reset contracts and reusable verification. |
-| 5 | Speed expansion | Add PL copper 10/100/1000 full duplex. Widen the SFP packet interface to 128 bits before faster MAC/PCS/transceiver development for 1/2.5/5/10G. GEM0 remains board-limited to 1G. |
+| 5 | Speed expansion | PL copper 10/100/1000 full-duplex functional qualification passes on both ports (see [speed support](pl-ethernet-speeds.md)). Widen the SFP packet interface to 128 bits before faster MAC/PCS/transceiver development for 1/2.5/5/10G. GEM0 remains board-limited to 1G. |
 | 6 | STP completion | Resolve remaining protocol/state and CPU RX-tag ownership issues, add web enable/disable and persistent settings, then verify loops and topology recovery. STP remains disabled. The old CPU TX override crossing has already been removed. |
 | 7 | Boot and storage reliability | Package persistent boot artifacts and validate cold boot, restart, SD removal, failed writes and interrupted saves. Current FPGA/firmware deployment is volatile JTAG. |
 | 8 | DMA cache optimization | Measure CPU cost/throughput before revisiting the non-cacheable HP1 descriptors and packet bounce buffers. Validate ownership, cache-line isolation, ring reuse and error recovery for any change. |
 
 Completed: CPU TX frame metadata/override CDC removal, pipelined CPU DDR writes,
 125 MHz fabric, HTTP worker concurrency, MAC dump DMA, and the manual-refresh
-MAC-table web page, plus packaged PL PHY management. The latest connected GEM1/PL0 ping and HTTP runs pass;
-long-duration and all-port qualification remain open. Broader management
+MAC-table web page, packaged PL PHY management, and full-duplex PL 10/100/1000.
+Both PL ports pass CPU/forwarded ping, HTTP and SNMP checks at every speed;
+long-duration, congested mixed-speed and simultaneous-all-port qualification
+remain open. Three snapshot-response timeouts were observed on unplugged GEM1
+RX bank 2 during the PL0 run; the cause needs investigation (see
+[verification](verification.md#2026-09-26-pl-101001000-implementation-validation)). Broader management
 features such as LLDP/LACP and SNMPv3 are separate feature work.
 
 ## PL PHY-management catalog partition (2026-09-26 deployed)
@@ -35,7 +39,7 @@ SNMP and manual MAC-table refresh. Both packaged PHY controllers report
 successful initialization and valid polling. RGMII I/O, clocks, physical reset requests,
 GTH and SFP sideband remain in the board shell. External MDIO timing and
 broader physical-shell migration remain pending. See [partitioning](ip-partitioning.md)
-and [interface contract](../ip_repo/INTERFACES.md#pl-phy-management-pl_phy_mdio-10).
+and [interface contract](../ip_repo/INTERFACES.md#pl-phy-management-pl_phy_mdio-11).
 
 ## MAC-table dump DMA and manual web view (2026-09-26 deployed)
 

@@ -1,9 +1,10 @@
 # KR260 board integration status
 
-Production assembly updated 2026-09-25: packaged digital endpoints, fabric
-and management now live inside `system.bd`. Physical RGMII, MDIO, GTH,
-clock/reset and sideband logic remain in `kr260_pl_top`, preserving board
-constraint targets. Register addresses and firmware ABI are unchanged.
+Production assembly updated 2026-09-26: packaged digital endpoints, fabric,
+management and two PL PHY-management blocks live inside `system.bd`. Physical
+RGMII, GTH, clock/reset and sideband logic remain in `kr260_pl_top`.
+Register base addresses are unchanged; PL MAC/PHY version 1.1 adds
+[10/100/1000 byte pacing and speed control](pl-ethernet-speeds.md).
 
 The preceding native assembly has been demonstrated on the board with
 FreeRTOS, DHCP, CPU/endpoint traffic, SNMP/web and microSD persistence.
@@ -124,8 +125,9 @@ master with a 32-bit AXI-Lite slave and a physical IOBUF. Its separate
 [`portable model`](../rtl/mdio/mdio_controller_sim_model.sv) replaces only
 the pin stage with tristate logic. The board assembly uses one controller per
 PL MDIO bus; the source records PHY addresses 2 and 3 for PL0 and PL1.
-Both controllers are instantiated in `kr260_pl_top`, with registers mapped
-through `sc_ctl`; the initial R5 link service reads their hardware-polled status.
+Both controllers are inside `pl_phy_mdio` catalog instances in `system.bd`,
+with registers mapped through `sc_ctl`. The R5 link service reads their
+hardware-polled status and pauses polling before advertisement changes.
 
 | Offset | Register | Current behavior |
 | --- | --- | --- |
@@ -133,19 +135,21 @@ through `sc_ctl`; the initial R5 link service reads their hardware-polled status
 | `0x04` | WRITE_DATA | Staged 16-bit data, byte-strobe writable |
 | `0x08` | READ_DATA | Live master read shift register; use after completion |
 | `0x0C` | CONTROL | Bit 0 starts a transaction; one pending START is remembered during sequencer ownership; START during a CPU transaction is ignored |
-| `0x10` | STATUS | Bit 0 BUSY (including initialization), bit 1 sticky DONE, bit 2 sticky ERROR, bit 3 INIT_DONE, bit 4 INIT_FAIL, bit 5 LINK, bits 7:6 SPEED (10/100/1000), bit 8 FULL, bit 9 link-status valid; bits 1–2 are write-one-to-clear |
+| `0x10` | STATUS | Bit 0 BUSY (including initialization), bit 1 sticky DONE, bit 2 sticky ERROR, bit 3 INIT_DONE, bit 4 INIT_FAIL, bit 5 LINK, bits 7:6 SPEED (10/100/1000), bit 8 FULL, bit 9 link-status valid, bit 10 speed/duplex resolved; bits 1–2 are write-one-to-clear |
 | `0x14` | CLK_DIVIDER | 16-bit divider, reset value 35; MDC toggles every divider + 1 input clocks while busy |
+| `0x18` | POLL_HOLD | Bit 0 prevents new sequencer polls; an active poll completes normally |
 
 At the observed 142.857 MHz register clock, the reset value 35 gives about
 1.98 MHz MDC (period 72 clocks; 2.08 MHz at 150 MHz). One 64-bit transaction
 takes about 32 us. These are calculated rates, not hardware measurements.
-Clear old status, configure the transaction, issue START, wait for completion,
-and inspect ERROR before consuming data. The master clears READ_DATA on every
+Set POLL_HOLD and wait for BUSY to clear. Clear old status, configure the transaction, issue START, wait for completion,
+and inspect ERROR before consuming data. Release POLL_HOLD on both success and failure. The master clears READ_DATA on every
 START, including writes; it is not a separately retained last-successful-read
 register. Keep the divider stable while a transaction is running. There is no
 interrupt output or native Clause 45 transaction engine. The automatic PL PHY setup uses Clause 22 indirect extended-register access;
-initial software management and PS PHY setup are in `software/r5/src/links.c`;
-board validation remains pending.
+software management and PS PHY setup are in `software/r5/src/links.c`.
+See [verification](verification.md) for board results; external MDIO timing
+budget qualification remains pending.
 
 ## SFP negotiation and transceiver integration
 

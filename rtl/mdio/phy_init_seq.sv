@@ -55,6 +55,7 @@ module phy_init_seq #(
 ) (
   input  logic        clk,
   input  logic        rstn,
+  input wire poll_hold_i,
   input  logic        go_i,        // rising edge starts (or restarts) the sequence
 
   output logic        m_start_o,
@@ -74,6 +75,7 @@ module phy_init_seq #(
   output logic        link_o,          // PHYSTS.LINK_STATUS from the last good poll (0 until valid)
   output logic [1:0]  link_speed_o,    // 00 10M, 01 100M, 10 1000M
   output logic        link_full_o,
+  output logic        link_resolved_o,
   output logic        link_valid_o,    // latest poll succeeded
   output logic        link_change_o    // one-cycle pulse when link_o changes
 );
@@ -156,7 +158,7 @@ module phy_init_seq #(
       go_q      <= 1'b0;
       err_q     <= 1'b0;
       link_o    <= 1'b0; link_speed_o <= '0; link_full_o <= 1'b0; link_valid_o <= 1'b0;
-      link_change_o <= 1'b0;
+      link_change_o <= 1'b0; link_resolved_o <= 1'b0;
       strap11_q <= 1'b0;
       rd_q      <= '0;
     end else begin
@@ -173,15 +175,15 @@ module phy_init_seq #(
             err_q   <= 1'b0;
           end
           if (link_valid_o || link_o) begin
-            link_valid_o <= 1'b0; link_o <= 1'b0;
+            link_valid_o <= 1'b0; link_o <= 1'b0; link_resolved_o <= 1'b0;
             if (link_o) link_change_o <= 1'b1;
           end
         end
         S_POLL_WAIT: begin
           if (!go_i) state_q <= S_IDLE;
-          else if (wait_q == 0) begin
+          else if (wait_q == 0 && !poll_hold_i && !m_busy_i) begin
             state_q <= S_ISSUE; step_q <= 4'd13; sub_q <= 2'd3;
-          end else wait_q <= wait_q - 1'b1;
+          end else if (wait_q != 0) wait_q <= wait_q - 1'b1;
         end
         S_WAIT: begin
           if (!go_i) state_q <= S_IDLE;
@@ -203,9 +205,10 @@ module phy_init_seq #(
                 link_o       <= m_rdata_i[10];
                 link_speed_o <= m_rdata_i[15:14];
                 link_full_o  <= m_rdata_i[13];
+                link_resolved_o <= m_rdata_i[11];
                 if (m_rdata_i[10] != link_o) link_change_o <= 1'b1;
               end else begin
-                link_valid_o <= 1'b0;
+                link_valid_o <= 1'b0; link_resolved_o <= 1'b0;
                 link_o <= 1'b0;
                 if (link_o) link_change_o <= 1'b1;
               end

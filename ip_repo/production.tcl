@@ -154,6 +154,10 @@ digital_net gtx_clk_pl0 1 {pl0/gtx_clk}
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant mac_enable
 set_property -dict {CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 1} [get_bd_cells mac_enable]
 connect_bd_net [get_bd_pins {mac_enable/dout pl0/clk_en pl1/clk_en sfp/clk_en}]
+set_property CONFIG.EXTERNAL_PACING 1 [get_bd_cells pl0]
+digital_net pl0_port_mode 1 {pl0/port_mode_o}
+digital_net pl0_rx_byte_ce 1 {pl0/rx_byte_ce_i}
+digital_net pl0_tx_byte_ce 1 {pl0/tx_byte_ce_i}
 digital_net pl0_gmii_rxd 1 {pl0/gmii_rxd}
 digital_net pl0_gmii_rx_dv 1 {pl0/gmii_rx_dv}
 digital_net pl0_gmii_rx_er 1 {pl0/gmii_rx_er}
@@ -166,6 +170,10 @@ digital_net pl1_req 0 {pl1/stats_request management/pl1_req}
 digital_net pl1_acks 0 {pl1/stats_ack management/pl1_acks}
 digital_net pl1_values 0 {pl1/stats_value management/pl1_values}
 digital_net gtx_clk_pl1 1 {pl1/gtx_clk}
+set_property CONFIG.EXTERNAL_PACING 1 [get_bd_cells pl1]
+digital_net pl1_port_mode 1 {pl1/port_mode_o}
+digital_net pl1_rx_byte_ce 1 {pl1/rx_byte_ce_i}
+digital_net pl1_tx_byte_ce 1 {pl1/tx_byte_ce_i}
 digital_net pl1_gmii_rxd 1 {pl1/gmii_rxd}
 digital_net pl1_gmii_rx_dv 1 {pl1/gmii_rx_dv}
 digital_net pl1_gmii_rx_er 1 {pl1/gmii_rx_er}

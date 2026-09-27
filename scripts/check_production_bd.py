@@ -73,6 +73,11 @@ def check(path, compare_physical=False):
             assert bd_pins[f'pl{i}_{signal}'] == f'pl{i}_{signal}'
         assert bd_pins[f'pl{i}_phy_ready'] == shell_pins[f'pl{i}_phy_reset_n']
     assert bd_pins['phy_link_chg'] == shell_pins['phy_link_chg']
+    for i in [0, 1]:
+        assert design['components'][f'pl{i}']['parameters']['EXTERNAL_PACING']['value'] in ['true','1']
+        for name,pin in [('port_mode','port_mode_o'),('rx_byte_ce','rx_byte_ce_i'),('tx_byte_ce','tx_byte_ce_i')]:
+            connected(f'pl{i}_{name}',f'pl{i}/{pin}')
+            assert bd_pins[f'pl{i}_{name}']==shell_pins[f'pl{i}_{name}']
     connected('phy_link/dout', 'management/phy_link_i')
     connected('phy_change/dout', 'phy_link_chg')
     for cell in CELLS:
@@ -107,7 +112,10 @@ def check(path, compare_physical=False):
         physical = ['u_clkgen0', 'u_clkgen1', 'u_rgmii0', 'u_rgmii1', 'u_gth',
                     'u_sfp_clkgen', 'u_sfp_sideband', 'u_gem0_rx_rst', 'u_gem0_tx_rst', 'u_gem1_rx_rst', 'u_gem1_tx_rst']
         for instance in physical:
-            assert connections(previous, instance) == connections(current, instance), instance
+            before,after=connections(previous,instance),connections(current,instance)
+            if instance in ['u_rgmii0','u_rgmii1']:
+                for pin in ['port_mode_i','rx_byte_ce_o','tx_byte_ce_o']:after.pop(pin)
+            assert before==after,instance
         print('PASS: physical instance connections match the previous native assembly')
 
 

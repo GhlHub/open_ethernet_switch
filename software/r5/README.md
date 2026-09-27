@@ -24,11 +24,12 @@ Implemented:
   DP83867 PHYs (addresses 4/9, verified on the development carrier) are read
   over GEM1's shared MDIO bus. PL0/PL1
   PHYs (addresses 2/3) are read through their hardware-maintained PHYSTS
-  snapshots: the RTL pollers still run about every 10 ms. Firmware does not
-  compete for their MDIO masters. SFP uses PCS state and module/LOS/fault
+  snapshots: the RTL pollers run about every 10 ms. Firmware pauses new polls
+  and waits for idle before changing full-duplex advertisements. SFP uses PCS state and module/LOS/fault
   signals, since it has no copper MDIO PHY.
-- GEM1 supports 10/100/1000 full duplex; GEM0 and the PL/SFP paths currently
-  admit only 1 Gb/s full duplex. Lower-speed PL links remain disabled. PHY read
+- GEM1 and both PL ports support 10/100/1000 full duplex; GEM0 and SFP
+  admit only 1 Gb/s full duplex. PL rate changes quiesce and flush before
+  selecting independent RX/TX byte pacing. PHY read
   failures disable the affected link; failed PL hardware polls now invalidate
   their cached state. PS PHY initialization failures are retried on later polls.
 - Link-down writes `LINK_CLR` once per transition. Re-enable waits at least
@@ -250,7 +251,8 @@ See [web interface](../../docs/web-interface.md) for API, behavior, and tests.
 GEM1 (right lower, RGMII) supports 10/100/1000 full duplex with selectable
 PHY advertisement on the web page. GEM0 (right upper, PS SGMII) remains
 1000-only due to the PS interface restriction. Both interfaces report
-physical speed via HTTP and SNMP. See [PS speeds](../../docs/ps-ethernet-speeds.md).
+physical speed via HTTP and SNMP. PL0/PL1 also support selectable 10/100/1000
+full duplex; see [PL speeds](../../docs/pl-ethernet-speeds.md). See [PS speeds](../../docs/ps-ethernet-speeds.md).
 
 Startup timing and the confirmed HTTP connection-capacity limitation are
 documented in [the investigation](../../docs/startup-and-http-investigation.md).

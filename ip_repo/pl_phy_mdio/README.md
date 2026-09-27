@@ -1,6 +1,6 @@
 # PL PHY MDIO management
 
-`ghlhub.org:ethernet:pl_phy_mdio:1.0` packages one independent PHY-management
+`ghlhub.org:ethernet:pl_phy_mdio:1.1` packages one independent PHY-management
 bus. The public top is `switch_pl_phy_mdio`; `manifest.json` owns its source
 closure. It includes the real IOBUF, Clause 22 master, register shim and
 DP83867 startup/link-polling sequencer.
@@ -18,7 +18,12 @@ review these parameters and the software-programmed MDC divider when
 reusing the block at another frequency. The initializer specifically
 configures the DP83867; it is not a generic PHY initialization sequence.
 
-See the [interface contract](../INTERFACES.md#pl-phy-management-pl_phy_mdio-10)
+Version 1.1 adds poll hold at `0x18` and resolved link status at STATUS bit 10.
+Software pauses polls, waits for idle, performs its transactions, and resumes
+polling on both success and failure. This supports R5 full-duplex capability
+selection without racing the hardware poller.
+
+See the [interface contract](../INTERFACES.md#pl-phy-management-pl_phy_mdio-11)
 and [MDIO register map](../../docs/board-integration.md#mdio-management-interface).
 
 Run the actual public-wrapper tests with:

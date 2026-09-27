@@ -41,7 +41,7 @@
 // Xilinx AXI Ethernet.  The AXI stream/control contract and the software-visible
 // register subset are intentionally compatible with the no-checksum-offload
 // configuration of AMD AXI Ethernet.
-module open_eth_mac_1g_switch (
+module open_eth_mac_1g_switch #(parameter bit EXTERNAL_PACING = 0) (
   input wire stats_request,
   input wire [3:0] stats_select,
   output wire stats_ack,
@@ -57,6 +57,8 @@ module open_eth_mac_1g_switch (
     (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME gtx_clk, ASSOCIATED_BUSIF gmii, FREQ_HZ 125000000" *)
     input  wire gtx_clk,
     input  wire clk_en,
+    input wire rx_byte_ce_i, tx_byte_ce_i,
+    output wire [2:0] port_mode_o,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axi_txd_arstn RST" *)
     (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME axi_txd_arstn, POLARITY ACTIVE_LOW" *) input wire axi_txd_arstn,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axi_txc_arstn RST" *)
@@ -196,6 +198,10 @@ reg [31:0] tx_mem [0:(TX_BYTES/4)-1];
 (* ram_style = "block" *) reg [31:0] rx_mem [0:(RX_BYTES/4)-1];
 
 // AXI-Lite register subset used by the no-checksum-offload AXI Ethernet path.
+reg [2:0] reg_port_mode;
+assign port_mode_o=reg_port_mode;
+wire rx_ce=EXTERNAL_PACING ? rx_byte_ce_i : clk_en;
+wire tx_ce=EXTERNAL_PACING ? tx_byte_ce_i : clk_en;
 reg [31:0] reg_raf, reg_ie, reg_rcw0, reg_rcw1, reg_tc, reg_fcc, reg_emmc;
 reg [31:0] reg_rxfc, reg_txfc, reg_uaw0, reg_uaw1, reg_fmi;
 reg [31:0] irq_status;
@@ -307,6 +313,7 @@ task automatic write_reg(input [17:0] addr, input [31:0] value, input [31:0] mas
           18'h00408: reg_tc   <= (reg_tc   & ~mask) | (value & mask);
           18'h0040c: reg_fcc  <= (reg_fcc  & ~mask) | (value & mask);
           18'h00410: reg_emmc <= (reg_emmc & ~mask) | (value & mask);
+          18'h0041c: if (mask[0] && value[1:0]!=2'b11) reg_port_mode <= value[2:0];
           18'h00414: reg_rxfc <= (reg_rxfc & ~mask) | (value & mask);
           18'h00418: reg_txfc <= (reg_txfc & ~mask) | (value & mask);
           18'h00700: reg_uaw0 <= (reg_uaw0 & ~mask) | (value & mask);
@@ -320,6 +327,7 @@ endtask
 always @(posedge s_axi_lite_clk) begin
     if (!lite_resetn) begin
         reg_raf <= 0; reg_ie <= 0; reg_rcw0 <= 0; reg_rcw1 <= 32'h02000000;
+        reg_port_mode <= 3'b010; // disabled, gigabit mode
         reg_tc <= 0; reg_fcc <= 0; reg_emmc <= 32'h80000000;
         reg_rxfc <= 32'd16384; reg_txfc <= 32'd4096;
         reg_uaw0 <= 0; reg_uaw1 <= 0; reg_fmi <= 0; irq_status <= 32'hc0;
@@ -358,6 +366,7 @@ always @(posedge s_axi_lite_clk) begin
               18'h00408: s_axi_rdata <= reg_tc;
               18'h0040c: s_axi_rdata <= reg_fcc;
               18'h00410: s_axi_rdata <= reg_emmc;
+              18'h0041c: s_axi_rdata <= {29'b0,reg_port_mode};
               18'h00414: s_axi_rdata <= reg_rxfc;
               18'h00418: s_axi_rdata <= reg_txfc;
               18'h004f8: s_axi_rdata <= CORE_ID;
@@ -542,10 +551,17 @@ always @(posedge gtx_clk) begin
     end
 end
 
+// Register the combined control before crossing; the synchronizer must see
+// one source flop, not a combinational function of independently written CSRs.
+reg tx_enable_lite;
+always @(posedge s_axi_lite_clk) begin
+    if (!lite_resetn) tx_enable_lite <= 0;
+    else tx_enable_lite <= reg_tc[28] && reg_port_mode[2];
+end
 always @(posedge gtx_clk) begin
     tx_desc_wr_gray_sync1 <= tx_desc_wr_gray;
     tx_desc_wr_gray_sync2 <= tx_desc_wr_gray_sync1;
-    tx_enable_sync <= {tx_enable_sync[0], reg_tc[28]};
+    tx_enable_sync <= {tx_enable_sync[0], (EXTERNAL_PACING ? tx_enable_lite : reg_tc[28])};
     if (!gtx_tx_resetn) begin
         tx_state <= TX_IDLE; gmii_txd <= 0; gmii_tx_en <= 0; gmii_tx_er <= 0;
         tx_phase <= 0; tx_rd_addr <= 0; tx_start_gmii <= 0;
@@ -555,9 +571,14 @@ always @(posedge gtx_clk) begin
         tx_desc_rd_bin <= 0; tx_desc_rd_gray <= 0;
         tx_data_rd_bin <= 0; tx_enable_sync <= 0;
         tx_byte_count <= 0; tx_frame_count <= 0;
-    end else if (clk_en) begin
+    end else if (tx_ce) begin
         gmii_tx_er <= 0;
-        case (tx_state)
+        if (EXTERNAL_PACING && !tx_enable_sync[1] &&
+            tx_state>=TX_PREAMBLE && tx_state<=TX_FCS3) begin
+            // Quiesce an in-flight frame without publishing a successful TX.
+            // DISCARD releases its descriptor exactly once; IFG already did so.
+            gmii_tx_en<=0;gmii_txd<=0;tx_state<=TX_DISCARD;
+        end else case (tx_state)
           TX_IDLE: begin
               gmii_tx_en <= 0; gmii_txd <= 0; tx_rd_addr <= 0; tx_rd_lane <= 0;
               if (tx_desc_rd_gray != tx_desc_wr_gray_sync2) begin
@@ -599,7 +620,7 @@ always @(posedge gtx_clk) begin
               end else if (tx_rd_lane == 3) begin
                   tx_rd_lane <= 0;
               end else begin
-                  // Advance the synchronous RAM address one byte early. At
+                  // Advance the synchronous RAM address one byte enable early. At
                   // lane 3 the old word is still in tx_mem_q while the next
                   // word is captured for lane 0 of the following cycle.
                   if (tx_rd_lane == 2) tx_rd_addr <= tx_rd_addr + 1'b1;
@@ -651,13 +672,13 @@ xpm_memory_sdpram #(
     .clka(axis_clk), .ena(1'b1), .wea(tx_mem_write),
     .addra(tx_data_work_bin[TX_ADDR_BITS-1:0]), .dina(s_axis_txd_tdata),
     .injectdbiterra(1'b0), .injectsbiterra(1'b0),
-    .clkb(gtx_clk), .enb(1'b1), .addrb(tx_rd_addr), .doutb(tx_mem_q),
+    .clkb(gtx_clk), .enb(tx_ce), .addrb(tx_rd_addr), .doutb(tx_mem_q),
     .regceb(1'b1), .rstb(!gtx_tx_resetn), .sleep(1'b0),
     .dbiterrb(), .sbiterrb());
 `else
 reg [31:0] tx_mem_q_sim;
 assign tx_mem_q = tx_mem_q_sim;
-always @(posedge gtx_clk) tx_mem_q_sim <= tx_mem[tx_rd_addr];
+always @(posedge gtx_clk) if (tx_ce) tx_mem_q_sim <= tx_mem[tx_rd_addr];
 `endif
 
 // RX GMII: locate SFD and store complete frames in a circular 16 KiB data
@@ -676,6 +697,10 @@ reg [1:0] rx_byte_lane;
 reg [31:0] rx_word_accum;
 reg [47:0] rx_destination;
 reg rx_accepted, rx_error_seen, rx_is_broadcast, rx_is_multicast;
+// The paced RGMII stream can report alignment errors on its explicit end
+// token (e.g. an odd trailing nibble). Include it when accepting/counting RX.
+wire rx_frame_error = rx_error_seen || (EXTERNAL_PACING && gmii_rx_er);
+
 reg [31:0] rx_crc;
 reg rx_store_frame;
 reg [RX_ADDR_BITS-1:0] rx_frame_start_word;
@@ -747,7 +772,7 @@ always @(posedge gtx_clk) begin
         rx_promiscuous_sync <= 0;
         rx_fcs_error_count <= 0; rx_broadcast_count <= 0; rx_multicast_count <= 0;
         rx_filter_drop_count <= 0; rx_overflow_count <= 0;
-    end else if (clk_en) begin
+    end else if (rx_ce) begin
         case (rx_state)
           RX_SEARCH: begin
               rx_preamble_count <= 0;
@@ -791,7 +816,7 @@ always @(posedge gtx_clk) begin
                   rx_wire_count <= rx_wire_count + 1'b1;
               end else begin
                   rx_state <= RX_SEARCH;
-                  if (rx_accepted && !rx_error_seen &&
+                  if (rx_accepted && !rx_frame_error &&
                       rx_crc == CRC_RESIDUE &&
                       rx_wire_count >= RX_MIN_WIRE_BYTES &&
                       rx_wire_count <= RX_MAX_DMA_BYTES + 4) begin
@@ -828,7 +853,7 @@ always @(posedge gtx_clk) begin
                       end
                   end else if (!rx_accepted) begin
                       rx_filter_drop_count <= rx_filter_drop_count + 1'b1;
-                  end else if (rx_error_seen || rx_crc != CRC_RESIDUE ||
+                  end else if (rx_frame_error || rx_crc != CRC_RESIDUE ||
                                rx_wire_count < RX_MIN_WIRE_BYTES) begin
                       rx_fcs_error_count <= rx_fcs_error_count + 1'b1;
                   end else begin
@@ -971,23 +996,24 @@ end
 
 // Standard per-port read/clear statistics, independent of legacy registers.
 wire [7:0][31:0] stats_inc;
-wire stats_rx_done = gtx_rx_resetn && clk_en && rx_state == RX_FRAME && !gmii_rx_dv;
+wire stats_rx_done = gtx_rx_resetn && rx_ce && rx_state == RX_FRAME && !gmii_rx_dv;
 reg [26:0] stats_rx_length;
 always @(posedge gtx_clk) begin
   if (!gtx_rx_resetn) stats_rx_length <= 0;
-  else if (clk_en) begin
+  else if (rx_ce) begin
     if (rx_state != RX_FRAME || !gmii_rx_dv) stats_rx_length <= 0;
     else if (!(&stats_rx_length)) stats_rx_length <= stats_rx_length + 1'b1;
   end
 end
-wire stats_rx_good = rx_accepted && rx_store_frame && !rx_error_seen && rx_crc == CRC_RESIDUE &&
+wire stats_rx_good = rx_accepted && rx_store_frame && !rx_frame_error && rx_crc == CRC_RESIDUE &&
                     stats_rx_length >= RX_MIN_WIRE_BYTES && stats_rx_length <= RX_MAX_DMA_BYTES + 4;
 wire [31:0] stats_rx_bytes = stats_rx_length >= 4 ? 32'(stats_rx_length)-4 : 32'(stats_rx_length);
 assign stats_inc[0] = 32'(stats_rx_done && stats_rx_good);
 assign stats_inc[1] = 32'(stats_rx_done && !stats_rx_good);
 assign stats_inc[2] = stats_rx_done && stats_rx_good ? stats_rx_bytes : 0;
 assign stats_inc[3] = stats_rx_done && !stats_rx_good ? stats_rx_bytes : 0;
-assign stats_inc[4] = 32'(gtx_tx_resetn && clk_en && tx_state == TX_FCS3);
+assign stats_inc[4] = 32'(gtx_tx_resetn && tx_ce && tx_state == TX_FCS3 &&
+    (!EXTERNAL_PACING || tx_enable_sync[1]));
 assign stats_inc[5] = 0; // Store/forward TX cannot underrun; rejects never reach GMII.
 assign stats_inc[6] = stats_inc[4] != 0 ? (tx_length_gmii < 60 ? 32'd60 : 32'(tx_length_gmii)) : 0;
 assign stats_inc[7] = 0;

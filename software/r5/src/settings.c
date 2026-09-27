@@ -9,7 +9,6 @@ static const struct config_io io={settings_media_read,settings_media_truncate,se
 static uint8_t effective_mask(const struct switch_config *c)
 {
     uint8_t mask=c->admin;
-    for (unsigned i=2;i<4;i++) if (!(c->advertise[i]&4u)) mask&=(uint8_t)~(1u<<i);
     if (c->sfp_speed && c->sfp_speed!=1000) mask&=(uint8_t)~0x10u;
     return mask;
 }

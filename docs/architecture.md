@@ -14,8 +14,8 @@ The source now also includes a [low-priority MAC-table dump DMA](mac-table-dump.
 inside fabric 1.2. It reads table port A in 16-entry chunks and writes 256-byte
 bursts to host DDR through HP0. Its CPU control slave is at 0x80110000. This
 addition is deployed with the public manual-refresh web view. The current
-125 MHz image passes routed timing and connected GEM1/PL0 board validation;
-see [deployment results](verification.md#2026-09-26-mac-table-dma-and-manual-web-view-deployed).
+125 MHz image includes full-duplex PL 10/100/1000 operation;
+see [deployment results](verification.md#2026-09-26-pl-101001000-implementation-validation).
 
 ## System view
 
@@ -29,7 +29,7 @@ packaging and verification work is listed in [partitioning](ip-partitioning.md).
 flowchart TB
     subgraph board[kr260_top — board assembly]
         subgraph shell[kr260_pl_top — physical shell]
-            RGMII[Two RGMII adapters and elastic buffers]
+            RGMII[Two multirate RGMII adapters and RX FIFOs]
             GT[GTH, SFP sideband and status]
             CLOCK[PL and SFP clocks, GEM reset synchronizers]
         end
@@ -95,7 +95,7 @@ all-port concurrent traffic qualification remain pending.
 | Index | Port | Digital-switch boundary and board connection |
 | --- | --- | --- |
 | 0–1 | PS GEM0 / GEM1 | External FIFO signals, separate RX/TX clocks and synchronized resets per GEM; connected to PS FIFO ports by the block design and static top |
-| 2–3 | PL GMII0 / GMII1 | GMII to two RGMII adapters; each has a local 125 MHz MAC clock, PHY RX clock, MDIO controller and reset request |
+| 2–3 | PL GMII0 / GMII1 | Paced GMII to two 10/100/1000 RGMII adapters; each has a local 125 MHz MAC clock, PHY RX clock, MDIO controller and reset request |
 | 4 | SFP 1G | Decoded 16-bit GTH interface; board wrapper joins the transceiver and a new 125/62.5 MHz PCS clock generator |
 | 5 | Virtual CPU | 16-bit AXI-S pair connected to vendor AXI DMA MM2S/S2MM |
 
@@ -119,11 +119,13 @@ the 300 MHz clock outputs now supply active delay calibration. PHY internal
 RX/TX delays are configured for 2.00/1.75 ns. The optional FPGA RX-clock delay
 remains disabled because its IDELAYE3-to-BUFG path cannot be implemented.
 
-`rgmii_rx_elastic` uses a 2048-entry FIFO36E2, a 64-word startup cushion and
-idle-only rate adjustment above 128 words, preserving at least eight idle
-words. Overflow/underrun events reach CPU-visible sticky diagnostics.
-Separate tests exercise modeled clock offsets; hardware margins and abnormal
-recovery remain unverified.
+`rgmii_rate_adapter` reconstructs received bytes at all three copper rates
+and transfers valid bytes plus explicit frame-end/error tokens through a
+2048-entry FIFO36E2. Independent receive/transmit byte strobes keep the MAC
+and fabric clocks at 125 MHz. The legacy matched-rate elastic module remains
+for its older tests; production no longer uses it. Overflow reaches the
+sticky diagnostic; empty between received bytes is normal, so underrun is
+held zero. See [PL speed control and verification](pl-ethernet-speeds.md).
 
 `async_fifo` now selects XPM in synthesis and the portable Gray-pointer model
 otherwise. Their reset/capacity details differ. The MAC now synchronizes resets

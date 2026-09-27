@@ -32,7 +32,7 @@ contracts are not physical CDC sign-off.
 | Catalog name | Version / public module | Clocks and reset inputs | Interfaces / ownership |
 | --- | --- | --- | --- |
 | `gem_port` | 1.0 / `switch_gem_port` | `clk/rst_n`; `gem_rx_clk/gem_rx_rst_n`; `gem_tx_clk/gem_tx_rst_n` | 16-bit packet streams, PS GEM external RX-write/TX-read FIFO signals, two local counter banks |
-| `pl_port` | 1.0 / `pl_gmii_mac_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk`, `clk_en` | Packet streams; 32-bit AXI-Lite MAC registers; 8-bit GMII; local counter bank |
+| `pl_port` | 1.1 / `pl_gmii_mac_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk`, `clk_en` | Packet streams; 32-bit AXI-Lite MAC registers; 8-bit GMII; local counter bank |
 | `sfp_port` | 1.0 / `sfp_port_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk/gtx_rst_n`; `gth_clk/gth_rst_n` | Packet streams; 32-bit AXI-Lite MAC registers; decoded 16-bit GTH data/control; PCS status; local counter bank |
 | `switch_fabric` | 1.1 / `switch_fabric` | `clk/rst_n`; `axis_clk/axis_rst_n` | Five physical packet-stream pairs, CPU stream pair, three DDR AXI masters, shared packet buffers/queues, forwarding table, six counter banks |
 | `management` | 1.2 / `switch_management` | `clk/rst_n` (production control clock) | 32-bit AXI-Lite controls, link/forward/learn masks, CPU TX ABI identifier and RX tag, statistics mailbox and 13-bank decoder |
@@ -42,12 +42,12 @@ In production, the fabric runs at 125 MHz, control at approximately
 streams on all packages use `clk`; MAC AXI-Lite uses `axis_clk`.
 The GEM FIFO clocks follow the negotiated link. The bridge is tested at
 125/25/2.5 MHz, but KR260 GEM0 is restricted to 1 Gb/s by the current board
-integration. GEM1 supports full-duplex 10/100/1000 Mb/s. PL copper and SFP
-currently support only 1 Gb/s full duplex. Faster SFP settings stored in
+integration. GEM1 and both PL copper ports support full-duplex 10/100/1000 Mb/s.
+SFP currently supports only 1 Gb/s full duplex. Faster SFP settings stored in
 configuration are not implemented hardware capabilities.
 
-PL RGMII, receive elasticity, MDIO, PHY reset and clock generation remain
-board-shell dependencies. SFP GTH, clock generation and module sideband
+PL RGMII, receive rate conversion, physical PHY reset and clock generation
+remain board-shell dependencies. MDIO is a separate catalog IP. SFP GTH, clock generation and module sideband
 protection also remain board-shell dependencies. Their eventual packaging
 must preserve delay groups, reference clocks, reset ordering and pin timing.
 
@@ -143,14 +143,16 @@ port. The 32 KiB destination belongs exclusively to DMA until completion,
 including after a software timeout. The scan is live, not atomic.
 See the [register, record and cache-ownership contract](../docs/mac-table-dump.md).
 
-## PL PHY management (`pl_phy_mdio` 1.0)
+## PL PHY management (`pl_phy_mdio` 1.1)
 
 One `switch_pl_phy_mdio` instance owns a separate MDIO bus, its IOBUF,
 Clause 22 engine, AXI-Lite registers and DP83867 startup/polling sequencer.
 `clk` and active-low `rst_n` use the 142.857 MHz control domain in the KR260.
 `s_axi` has 32-bit data and 8-bit register addresses; the board reserves
 64 KiB at `0x80010000` (PL0, PHY address 2) and `0x80020000` (PL1, address 3).
-The existing register layout and divider defaults are preserved.
+The existing register layout and divider defaults are preserved. Version 1.1
+adds poll hold at offset `0x18` bit 0 and resolved status at `0x10` bit 10.
+See [PL speed control](../docs/pl-ethernet-speeds.md) for ownership and sequencing.
 
 `phy_reset_released_i` samples the board's clock-lock/PS-reset request through
 two `ASYNC_REG` stages before starting initialization. It is a level, not a
@@ -165,3 +167,8 @@ this partition does not complete the outstanding external MDIO timing budget.
 Production retains the prior two-million-cycle startup wait and
 1,430,000-cycle polling interval. Simulation models only the external IOBUF
 primitive; the actual controller and sequencer come from the package.
+
+PL MAC 1.1 adds `rx_byte_ce_i`, `tx_byte_ce_i`, and `port_mode_o[2:0]`.
+Production sets `EXTERNAL_PACING=1`; the board RGMII shell owns rate conversion.
+Legacy native GMII fixtures retain shared `clk_en` through the default parameter.
+MAC register `0x41c` controls rate and physical enable; see the PL speed guide.

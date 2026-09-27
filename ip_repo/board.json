@@ -10,7 +10,8 @@
     "rtl/pl_gmii/rgmii_rx_elastic.sv",
     "rtl/sfp_pcs/gth_sfp_wrapper.sv",
     "rtl/sfp_pcs/sfp_pcs_clk_gen.sv",
-    "rtl/sfp_pcs/sfp_sideband.sv"
+    "rtl/sfp_pcs/sfp_sideband.sv",
+    "rtl/pl_gmii/rgmii_rate_adapter.sv"
   ],
   "vendor_ip": [
     "rtl/sfp_pcs/ip/gth_sfp_ip.xci",

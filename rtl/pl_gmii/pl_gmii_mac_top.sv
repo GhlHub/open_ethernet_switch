@@ -28,7 +28,7 @@
 // are passed straight through to the top level; how they get wired to a
 // CPU/register-access path is not yet scoped in this project.
 
-module pl_gmii_mac_top (
+module pl_gmii_mac_top #(parameter bit EXTERNAL_PACING = 0) (
   input wire stats_request,
   input wire [3:0] stats_select,
   output wire stats_ack,
@@ -40,6 +40,8 @@ module pl_gmii_mac_top (
   input  logic axis_rst_n,
   input  logic gtx_clk,      // GMII-side clock (125 MHz)
   input  logic clk_en,
+  input wire rx_byte_ce_i, tx_byte_ce_i,
+  output wire [2:0] port_mode_o,
 
   // GMII port pins
   input  logic [7:0] gmii_rxd,
@@ -113,7 +115,8 @@ module pl_gmii_mac_top (
   logic        mac_rxs_tvalid;
   wire         mac_rxs_tready = 1'b1;
 
-  open_eth_mac_1g_switch u_mac (
+  open_eth_mac_1g_switch #(.EXTERNAL_PACING(EXTERNAL_PACING)) u_mac (
+    .rx_byte_ce_i(rx_byte_ce_i), .tx_byte_ce_i(tx_byte_ce_i), .port_mode_o(port_mode_o),
     .stats_request(stats_request), .stats_select(stats_select),
     .stats_ack(stats_ack), .stats_value(stats_value),
     .axis_clk          (axis_clk),

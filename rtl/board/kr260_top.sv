@@ -49,6 +49,8 @@ module kr260_top (
   wire  gem1_rx_rst_n;
   wire  gem1_tx_rst_n;
   wire  gtx_clk_pl0;
+  wire [2:0] pl0_port_mode;
+  wire pl0_rx_byte_ce, pl0_tx_byte_ce;
   wire [7:0] pl0_gmii_rxd;
   wire  pl0_gmii_rx_dv;
   wire  pl0_gmii_rx_er;
@@ -56,6 +58,8 @@ module kr260_top (
   wire  pl0_gmii_tx_en;
   wire  pl0_gmii_tx_er;
   wire  gtx_clk_pl1;
+  wire [2:0] pl1_port_mode;
+  wire pl1_rx_byte_ce, pl1_tx_byte_ce;
   wire [7:0] pl1_gmii_rxd;
   wire  pl1_gmii_rx_dv;
   wire  pl1_gmii_rx_er;
@@ -109,6 +113,8 @@ module kr260_top (
     .gem1_rx_rst_n(gem1_rx_rst_n),
     .gem1_tx_rst_n(gem1_tx_rst_n),
     .gtx_clk_pl0(gtx_clk_pl0),
+    .pl0_port_mode(pl0_port_mode),
+    .pl0_rx_byte_ce(pl0_rx_byte_ce), .pl0_tx_byte_ce(pl0_tx_byte_ce),
     .pl0_gmii_rxd(pl0_gmii_rxd),
     .pl0_gmii_rx_dv(pl0_gmii_rx_dv),
     .pl0_gmii_rx_er(pl0_gmii_rx_er),
@@ -116,6 +122,8 @@ module kr260_top (
     .pl0_gmii_tx_en(pl0_gmii_tx_en),
     .pl0_gmii_tx_er(pl0_gmii_tx_er),
     .gtx_clk_pl1(gtx_clk_pl1),
+    .pl1_port_mode(pl1_port_mode),
+    .pl1_rx_byte_ce(pl1_rx_byte_ce), .pl1_tx_byte_ce(pl1_tx_byte_ce),
     .pl1_gmii_rxd(pl1_gmii_rxd),
     .pl1_gmii_rx_dv(pl1_gmii_rx_dv),
     .pl1_gmii_rx_er(pl1_gmii_rx_er),
@@ -194,6 +202,8 @@ module kr260_top (
     .gem1_rx_rst_n(gem1_rx_rst_n),
     .gem1_tx_rst_n(gem1_tx_rst_n),
     .gtx_clk_pl0(gtx_clk_pl0),
+    .pl0_port_mode(pl0_port_mode),
+    .pl0_rx_byte_ce(pl0_rx_byte_ce), .pl0_tx_byte_ce(pl0_tx_byte_ce),
     .pl0_gmii_rxd(pl0_gmii_rxd),
     .pl0_gmii_rx_dv(pl0_gmii_rx_dv),
     .pl0_gmii_rx_er(pl0_gmii_rx_er),
@@ -201,6 +211,8 @@ module kr260_top (
     .pl0_gmii_tx_en(pl0_gmii_tx_en),
     .pl0_gmii_tx_er(pl0_gmii_tx_er),
     .gtx_clk_pl1(gtx_clk_pl1),
+    .pl1_port_mode(pl1_port_mode),
+    .pl1_rx_byte_ce(pl1_rx_byte_ce), .pl1_tx_byte_ce(pl1_tx_byte_ce),
     .pl1_gmii_rxd(pl1_gmii_rxd),
     .pl1_gmii_rx_dv(pl1_gmii_rx_dv),
     .pl1_gmii_rx_er(pl1_gmii_rx_er),

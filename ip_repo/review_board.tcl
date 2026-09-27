@@ -11,6 +11,15 @@ open_checkpoint $checkpoint
 report_timing_summary -report_unconstrained -check_timing_verbose -file $reports/timing_summary.rpt
 report_utilization -file $reports/utilization.rpt
 report_cdc -details -file $reports/routed_cdc.rpt
+# The rate converter must not add an unsynchronized receiver reset or a
+# combinational CSR cone ahead of the MAC TX-enable synchronizer.
+set cdc_file [open $reports/routed_cdc.rpt r]
+set cdc_text [read $cdc_file]
+close $cdc_file
+if {[regexp -line {CDC-(7|10)[^\n]*(u_pl/u_rgmii[01]/u_rate/|u_bd/system_i/pl[01]/inst/u_mac/tx_enable_sync_reg)} $cdc_text]} {
+    error "PL rate-control reset/TX-enable CDC regression; inspect routed_cdc.rpt"
+}
+puts "PASS: PL rate-control reset and TX-enable CDC structures"
 report_clock_interaction -file $reports/clock_interaction.rpt
 report_methodology -file $reports/methodology.rpt
 report_drc -file $reports/drc.rpt

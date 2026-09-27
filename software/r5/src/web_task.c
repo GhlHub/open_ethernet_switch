@@ -92,7 +92,7 @@ static void serve(Socket_t socket,struct http_buffers *buffer)
             bool ok=true;
             if (!strcmp(r.method,"POST")) {
                 struct switch_config cfg;settings_get(&cfg,NULL,NULL);cfg.admin=(uint8_t)r.mask;
-                if (r.advertise[0]) memcpy(cfg.advertise,r.advertise,2);
+                if (r.advertise[0]) memcpy(cfg.advertise,r.advertise,r.advertise[2]?4:2);
                 ok=settings_save(&cfg);
             }
             struct port_snapshot p; board_ports_snapshot(&p);

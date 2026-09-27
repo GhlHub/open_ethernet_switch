@@ -124,7 +124,7 @@ class SnmpTests(unittest.TestCase):
     def test_port_speeds_and_advertisement(self):
         names=[ROOT+(2,1,12,i) for i in range(1,7)] + [ROOT+(2,1,13,i) for i in range(1,7)]
         vals=decode(respond(request(names)))[3]
-        self.assertEqual([v[2] for v in vals],[1000,100,0,0,1000,0,4,3,0,0,0,0])
+        self.assertEqual([v[2] for v in vals],[1000,100,0,0,1000,0,4,3,5,6,0,0])
         self.assertEqual([v[1] for v in vals],[0x42]*12)
 
     def test_timeout_classes(self):

@@ -16,7 +16,7 @@ const fs=require('fs'),path=require('path');
   let settings={saved:false,writable:true,admin:31,advertise:[4,7,7,7],sfp:0,dhcp:true,
     ip:'0.0.0.0',netmask:'0.0.0.0',gateway:'0.0.0.0',username:'admin',
     macs:[45,46,47,48,49].map(n=>'00:0a:35:0f:37:'+n)};
-  let ports={admin:31,physical:17,forwarding:17,advertise:[4,7],applied:[4,7],speed_mbps:[10,0,0,0,1000,0]};
+  let ports={admin:31,physical:17,forwarding:17,advertise:[4,7,7,7],applied:[4,7,7,7],speed_mbps:[10,0,0,0,1000,0]};
   await page.route('http://kr260.test/**',async route=>{
    const req=route.request(),url=new URL(req.url());
    if(url.pathname.startsWith('/api/mac-table')){
@@ -41,7 +41,7 @@ const fs=require('fs'),path=require('path');
      settings.advertise=[0,1,2,3].map(i=>Number(form.get('adv'+i)));
      settings.sfp=Number(form.get('sfp'));settings.dhcp=form.get('dhcp')==='1';
      for(const k of ['ip','netmask','gateway'])settings[k]=form.get(k);
-     ports.admin=settings.admin;ports.advertise=settings.advertise.slice(0,2);ports.applied=ports.advertise;
+     ports.admin=settings.admin;ports.advertise=settings.advertise.slice();ports.applied=ports.advertise;
     }
     return route.fulfill({json:settings});
    }
@@ -65,6 +65,9 @@ const fs=require('fs'),path=require('path');
   await page.getByRole('button',{name:'Save settings'}).click();
   if(posts!==1 || !(await page.locator('#status').innerText()).includes('at least one'))throw Error('Empty advertisement validation');
   await page.getByLabel('GEM1 · Right lower advertise 10 Mb/s',{exact:true}).check();
+  await page.getByLabel('PL0 · Left upper advertise 1000 Mb/s',{exact:true}).uncheck();
+  await page.getByLabel('PL0 · Left upper advertise 10 Mb/s',{exact:true}).uncheck();
+  await page.getByLabel('PL1 · Left lower advertise 100 Mb/s',{exact:true}).uncheck();
   await page.locator('#ip-mode').selectOption('0');
   await page.locator('#ip').fill('10.0.1.215');
   await page.locator('#netmask').fill('255.255.255.0');
@@ -74,6 +77,7 @@ const fs=require('fs'),path=require('path');
   await page.getByRole('button',{name:'Save settings'}).click();
   await page.waitForTimeout(1000);
   if(settings.dhcp || settings.ip!=='10.0.1.215' || settings.sfp!==2500 || posts!==2)throw Error('Persistent IP/SFP POST');
+  if(ports.advertise[2]!==2 || ports.advertise[3]!==5)throw Error('PL advertisement POST');
   if(!await page.getByText('00:0a:35:0f:37:45',{exact:true}).count())throw Error('Missing allocated MAC');
   settings.writable=false;await page.getByRole('button',{name:'Reload status'}).click();
   await page.waitForTimeout(250);

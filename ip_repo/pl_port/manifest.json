@@ -1,6 +1,6 @@
 {
   "name": "pl_port",
-  "version": "1.0",
+  "version": "1.1",
   "description": "PL copper MAC packet endpoint (board RGMII PHY shell external)",
   "top": "pl_gmii_mac_top",
   "sources": [

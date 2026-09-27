@@ -43,6 +43,8 @@ module kr260_pl_top (
   output wire  gem1_rx_rst_n,
   output wire  gem1_tx_rst_n,
   output wire  gtx_clk_pl0,
+  input wire [2:0] pl0_port_mode,
+  output wire pl0_rx_byte_ce, pl0_tx_byte_ce,
   output wire [7:0] pl0_gmii_rxd,
   output wire  pl0_gmii_rx_dv,
   output wire  pl0_gmii_rx_er,
@@ -50,6 +52,8 @@ module kr260_pl_top (
   input wire  pl0_gmii_tx_en,
   input wire  pl0_gmii_tx_er,
   output wire  gtx_clk_pl1,
+  input wire [2:0] pl1_port_mode,
+  output wire pl1_rx_byte_ce, pl1_tx_byte_ce,
   output wire [7:0] pl1_gmii_rxd,
   output wire  pl1_gmii_rx_dv,
   output wire  pl1_gmii_rx_er,
@@ -128,6 +132,7 @@ module kr260_pl_top (
   // large placement changes
   rgmii_gmii_adapter #(.RX_DATA_IDELAY_PS(700)) u_rgmii0 (
     .gtx_clk (gtx_clk_pl0), .gtx_rst_n (gtx_rst_n_pl0),
+    .port_mode_i(pl0_port_mode), .rx_byte_ce_o(pl0_rx_byte_ce), .tx_byte_ce_o(pl0_tx_byte_ce),
     .idelay_refclk_i (idly_clk_pl0), .idelay_rst_n_i (idly_rst_n_pl0),
     .rgmii_txd_o (pl0_rgmii_txd), .rgmii_tx_ctl_o (pl0_rgmii_tx_ctl), .rgmii_txc_o (pl0_rgmii_txc),
     .rgmii_rxd_i (pl0_rgmii_rxd), .rgmii_rx_ctl_i (pl0_rgmii_rx_ctl), .rgmii_rxc_i (pl0_rgmii_rxc),
@@ -140,6 +145,7 @@ module kr260_pl_top (
 
   rgmii_gmii_adapter #(.RX_DATA_IDELAY_PS(750)) u_rgmii1 (
     .gtx_clk (gtx_clk_pl1), .gtx_rst_n (gtx_rst_n_pl1),
+    .port_mode_i(pl1_port_mode), .rx_byte_ce_o(pl1_rx_byte_ce), .tx_byte_ce_o(pl1_tx_byte_ce),
     .idelay_refclk_i (idly_clk_pl1), .idelay_rst_n_i (idly_rst_n_pl1),
     .rgmii_txd_o (pl1_rgmii_txd), .rgmii_tx_ctl_o (pl1_rgmii_tx_ctl), .rgmii_txc_o (pl1_rgmii_txc),
     .rgmii_rxd_i (pl1_rgmii_rxd), .rgmii_rx_ctl_i (pl1_rgmii_rx_ctl), .rgmii_rxc_i (pl1_rgmii_rxc),

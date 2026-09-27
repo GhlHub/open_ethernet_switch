@@ -25,7 +25,7 @@
 //   0x10 STATUS      byte0[0]=BUSY, byte0[1]=DONE (W1C), byte0[2]=ERROR (W1C)
 //                     byte0[3]=INIT_DONE, byte0[4]=INIT_FAIL, bit5 LINK, bits7:6 SPEED
 //                     (00 10M, 01 100M, 10 1000M), bit8 FULL duplex, bit9 link
-//                     status valid (read-only: DP83867
+//                     status valid, bit10 speed/duplex resolved (read-only: DP83867
 //                     start-up sequencer, see phy_init_seq.sv; BUSY reads 1 while it runs)
 //   0x14 CLK_DIVIDER [15:0] (byte0/byte1), see open_eth_mdio_master.sv --
 //                     default 35: MDC toggles every 36 clocks, i.e. about 1.98MHz at the
@@ -33,6 +33,10 @@
 //                     to the PS GEM MDC (~2.08MHz with the usual /48 of the 100MHz
 //                     LPD_LSBUS_CLK) and under Clause 22's 2.5MHz; software-adjustable
 //
+//   0x18 POLL_HOLD   bit0 pauses new PHY polls; active poll completes normally
+//
+// CPU transactions after initialization must set POLL_HOLD, wait for idle,
+// execute their transaction(s), and clear POLL_HOLD on success or failure.
 // Typical software sequence: write CONFIG, (for a write transaction)
 // write WRITE_DATA, write CONTROL with START=1, poll STATUS.BUSY (or
 // wait for DONE), read READ_DATA if it was a read.
@@ -90,18 +94,19 @@ module mdio_controller #(
 
   logic        init_active, seq_start, seq_write;
   logic [1:0]  phy_speed;
-  logic        phy_full, phy_valid;
+  logic        phy_full, phy_valid, phy_resolved;
   logic [4:0]  seq_phy, seq_reg;
   logic [15:0] seq_wdata;
+  logic poll_hold_q;
 
   phy_init_seq #(.PHY_ADDR(INIT_PHY_ADDR), .WAIT_CYCLES(INIT_WAIT_CYCLES), .POLL_CYCLES(INIT_POLL_CYCLES)) u_init (
     .clk (s_axi_lite_clk), .rstn (s_axi_lite_resetn), .go_i (init_go_i),
     .m_start_o (seq_start), .m_write_o (seq_write), .m_phy_o (seq_phy),
     .m_reg_o (seq_reg), .m_wdata_o (seq_wdata),
-    .m_busy_i (busy), .m_done_i (done), .m_error_i (error), .m_rdata_i (read_data),
+    .poll_hold_i(poll_hold_q), .m_busy_i (busy | start_pulse), .m_done_i (done), .m_error_i (error), .m_rdata_i (read_data),
     .active_o (init_active), .done_o (init_done_o), .fail_o (init_fail_o),
     .link_o (phy_link_o), .link_speed_o (phy_speed), .link_full_o (phy_full),
-    .link_valid_o (phy_valid), .link_change_o (phy_link_change_o)
+    .link_resolved_o(phy_resolved), .link_valid_o (phy_valid), .link_change_o (phy_link_change_o)
   );
 
   open_eth_mdio_master u_master (
@@ -175,6 +180,7 @@ module mdio_controller #(
       reg_addr_q       <= '0;
       write_data_q     <= '0;
       clk_divider_q    <= 16'd35;
+      poll_hold_q <= 0;
       done_sticky_q    <= 1'b0;
       error_sticky_q   <= 1'b0;
       start_pending_q  <= 1'b0;
@@ -214,6 +220,7 @@ module mdio_controller #(
             if (wstrb_hold[0] && w_hold[1]) done_sticky_q  <= 1'b0;
             if (wstrb_hold[0] && w_hold[2]) error_sticky_q <= 1'b0;
           end
+          8'h18: if (wstrb_hold[0]) poll_hold_q <= w_hold[0];
           8'h14: begin
             if (wstrb_hold[0]) clk_divider_q[7:0]  <= w_hold[7:0];
             if (wstrb_hold[1]) clk_divider_q[15:8] <= w_hold[15:8];
@@ -251,7 +258,8 @@ module mdio_controller #(
           8'h04:   s_axi_rdata <= {16'd0, write_data_q};
           8'h08:   s_axi_rdata <= {16'd0, read_data};
           8'h0C:   s_axi_rdata <= 32'd0; // START always reads back 0
-          8'h10:   s_axi_rdata <= {22'd0, phy_valid, phy_full, phy_speed, phy_link_o, init_fail_o, init_done_o, error_sticky_q, done_sticky_q, busy | init_active};
+          8'h10:   s_axi_rdata <= {21'd0, phy_resolved, phy_valid, phy_full, phy_speed, phy_link_o, init_fail_o, init_done_o, error_sticky_q, done_sticky_q, busy | init_active};
+          8'h18:   s_axi_rdata <= {31'b0,poll_hold_q};
           8'h14:   s_axi_rdata <= {16'd0, clk_divider_q};
           default: s_axi_rdata <= 32'd0;
         endcase

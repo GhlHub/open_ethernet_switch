@@ -8,6 +8,55 @@
     },
     {
       "top": "tb_mac_reset_reclock"
+    },
+    {
+      "top": "tb_pl_mac_linerate",
+      "name": "rgmii_1000",
+      "defines": [
+        "TEST_RGMII_RATES"
+      ],
+      "parameters": {
+        "RATE": 2
+      },
+      "support": [
+        "rtl/pl_gmii/rgmii_rate_adapter.sv",
+        "rtl/common/fifo36_async_2kx18.sv"
+      ]
+    },
+    {
+      "top": "tb_pl_mac_linerate",
+      "name": "rgmii_100",
+      "defines": [
+        "TEST_RGMII_RATES"
+      ],
+      "parameters": {
+        "RATE": 1
+      },
+      "support": [
+        "rtl/pl_gmii/rgmii_rate_adapter.sv",
+        "rtl/common/fifo36_async_2kx18.sv"
+      ]
+    },
+    {
+      "top": "tb_pl_mac_linerate",
+      "name": "rgmii_10",
+      "defines": [
+        "TEST_RGMII_RATES"
+      ],
+      "parameters": {
+        "RATE": 0
+      },
+      "support": [
+        "rtl/pl_gmii/rgmii_rate_adapter.sv",
+        "rtl/common/fifo36_async_2kx18.sv"
+      ]
+    },
+    {
+      "top": "tb_rgmii_rate_transition",
+      "support": [
+        "rtl/pl_gmii/rgmii_rate_adapter.sv",
+        "rtl/common/fifo36_async_2kx18.sv"
+      ]
     }
   ]
 }

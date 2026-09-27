@@ -16,7 +16,7 @@ and the [future 128-bit SFP interface](../docs/inventory.md#125-mhz-fabric-and-t
 | `gem_port` | `switch_gem_port` | One PS external-FIFO bridge, RX/TX CDC and local packet counters |
 | `pl_port` | `pl_gmii_mac_top` | One GMII MAC, packet-stream adapters, local counters and AXI-Lite registers |
 | `sfp_port` | `sfp_port_top` | One 1000BASE-X MAC/PCS, negotiation, packet adapters and counters |
-| `pl_phy_mdio` (1.0) | `switch_pl_phy_mdio` | One PL PHY: AXI-Lite MDIO, DP83867 initialization, link polling and reset-release CDC |
+| `pl_phy_mdio` (1.1) | `switch_pl_phy_mdio` | One PL PHY: AXI-Lite MDIO, DP83867 initialization, link polling and reset-release CDC |
 | `management` (1.2) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
 
 The current partition retains RGMII I/O, GTH/clock generation and SFP
@@ -25,7 +25,7 @@ inside the port IPs**. The production `system.bd` instantiates nine catalog cell
 through `production.tcl`. `rtl/switch_top.sv` remains the native simulation
 assembly. Management 1.1 owns the existing 13-bank mailbox router internally.
 Fabric 1.1 uses the mandatory CPU TX metadata header; management 1.2 reports
-that ABI. GEM/PL/SFP packages remain at 1.0. See [migration and verification](../docs/ip-partitioning.md).
+that ABI. PL MAC and PHY management are 1.1 for independent byte pacing and software advertisement control. GEM/SFP remain at 1.0. See [migration and verification](../docs/ip-partitioning.md).
 
 ## Generate and validate a catalog
 
@@ -105,7 +105,7 @@ make -C sim sim-ip-regression
 | Management | AXI-Lite controls/diagnostics; mailbox CDC, clear races, saturation, response backpressure and stopped-clock retry; public wrapper bank routing across all 256 indices |
 | PL PHY MDIO | Actual IOBUF-backed controller; read/write/status; DP83867 setup, polling and recovery at PHY addresses 2 and 3 |
 
-The 26 cases reuse the established self-checking benches. The GEM bench can
+The 30 cases reuse the established self-checking benches. The GEM bench can
 select the public `switch_gem_port` wrapper instead of its bridge leaf.
 Fabric cases exercise constituent blocks; the retained whole-switch miter
 checks their assembly. They do not constitute a new randomized six-port

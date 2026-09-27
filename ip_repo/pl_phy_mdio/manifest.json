@@ -1,6 +1,6 @@
 {
   "name": "pl_phy_mdio",
-  "version": "1.0",
+  "version": "1.1",
   "description": "PL PHY MDIO management, initialization, link polling and reset-release CDC",
   "top": "switch_pl_phy_mdio",
   "sources": [

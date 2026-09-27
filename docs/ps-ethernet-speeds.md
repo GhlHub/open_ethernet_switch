@@ -4,7 +4,8 @@ The R5 link service supports negotiated 10, 100 and 1000 Mb/s full-duplex
 operation on GEM1 (right lower, RGMII). GEM0 (right upper, PS-GTR SGMII)
 remains 1000 Mb/s only. AMD UG1087 network_config explicitly limits 10/100
 to RGMII, despite the more general speed-adaptation wording in UG1085.
-PL0, PL1 and SFP remain 1000 Mb/s only. Half-duplex links are never enabled
+PL0/PL1 now have separate [10/100/1000 support](pl-ethernet-speeds.md);
+SFP remains 1000 Mb/s only. Half-duplex links are never enabled
 for forwarding, even if a PHY reports link up. The partner must negotiate a
 common full-duplex ability; a forced-speed partner without auto-negotiation
 can resolve as half duplex through parallel detection and will be rejected.
@@ -13,7 +14,7 @@ The configuration webpage provides independent 10/100/1000 full-duplex
 advertisement checkboxes for GEM1. At least one must remain selected,
 even on an administratively disabled port. GEM0 displays its fixed 1000FD
 ability with disabled controls. Defaults are GEM0=1000FD and GEM1=all three.
-Settings are volatile. Changing an advertisement restarts that PHY's copper
+Settings are stored on the microSD card through the configuration page. Changing an advertisement restarts that PHY's copper
 negotiation and interrupts traffic on that port. Administrative enable/disable
 remains independent of advertised capabilities.
 
@@ -27,7 +28,7 @@ service requires PHYSTS link, speed/duplex-resolved and full-duplex bits,
 rejects reserved speed encodings, and checks the applied ability mask.
 
 `links.c` owns MDIO and all clock/MAC changes. Web requests atomically publish
-a requested administrative mask and two advertisement masks. At each 250 ms
+a requested administrative mask and four copper advertisement masks. At each 250 ms
 poll, a changed configuration, changed speed or invalid PHY status removes
 the affected port from desired forwarding and disables its GEM RX/TX. The
 existing link policy clears its queues/MAC entries. The service waits at least
@@ -52,7 +53,7 @@ chapter 34 external FIFO interfaces;
 
 ## Management interfaces
 
-`GET /api/ports` adds `advertise` and `applied` arrays for GEM0/GEM1, plus
+`GET /api/ports` adds `advertise` and `applied` arrays for GEM0/GEM1/PL0/PL1, plus
 six `speed_mbps` values. Capability mask bits are 1=10FD, 2=100FD, 4=1000FD.
 A difference between requested/applied masks means the change is pending.
 `POST /api/ports` accepts `mask=31&adv0=4&adv1=7`. Both ability fields must be
@@ -66,9 +67,9 @@ no supported resolved link, or the CPU virtual port (which has no PHY speed).
 The existing `physical` mask means a supported resolved full-duplex link.
 
 SNMP port table columns 12 (`krPortSpeedMbps`, Gauge32, Mb/s) and 13
-(`krPortAdvertise`, Gauge32 capability mask) report speed and requested PS
+(`krPortAdvertise`, Gauge32 capability mask) report speed and requested copper
 advertisement. Existing column 11 is the inaccessible index and is unchanged.
-Non-PS advertisement rows return zero. Existing port-link objects continue to
+SFP and CPU advertisement rows return zero. Existing port-link objects continue to
 report fabric link state. SNMP remains read-only. The supplied reader reports
 both fields in JSON and link speeds in text.
 

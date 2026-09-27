@@ -5,22 +5,23 @@
 #include "xil_printf.h"
 #define GEM0 0xff0b0000UL
 #define GEM1 0xff0c0000UL
-static bool ps_ready[2];
+static bool ps_ready[2], pl_ready[2];
 static struct port_snapshot ports={.admin=PHYSICAL_PORT_MASK,
-    .advertise={4,PS_ADV_ALL}};
-static uint16_t configured_speed[2];
+    .advertise={4,PS_ADV_ALL,PS_ADV_ALL,PS_ADV_ALL}};
+static uint16_t configured_speed[4];
 static struct link_policy link_state;
 void board_ports_snapshot(struct port_snapshot *out)
 {
     taskENTER_CRITICAL(); *out=ports; taskEXIT_CRITICAL();
 }
-bool board_ports_configure(uint8_t mask,const uint8_t advertise[2])
+bool board_ports_configure(uint8_t mask,const uint8_t advertise[4])
 {
     if (mask>PHYSICAL_PORT_MASK || (advertise &&
-        (advertise[0]!=4 || !advertise[1] || advertise[1]>7))) return false;
+        (advertise[0]!=4 || !advertise[1] || advertise[1]>7 ||
+         !advertise[2] || advertise[2]>7 || !advertise[3] || advertise[3]>7))) return false;
     taskENTER_CRITICAL();
     ports.admin=mask;
-    if (advertise) {ports.advertise[0]=advertise[0];ports.advertise[1]=advertise[1];}
+    if (advertise) for (unsigned i=0;i<4;i++) ports.advertise[i]=advertise[i];
     taskEXIT_CRITICAL(); return true;
 }
 void board_ports_set(uint8_t mask) { (void)board_ports_configure(mask,NULL); }
@@ -72,6 +73,39 @@ static bool phy_init(unsigned port,unsigned advertise)
         !phy_write(phy,9,(advertise&4u)?0x0200u:0)) return false;
     return phy_write(phy,0,0x1200); /* enable and restart autonegotiation */
 }
+/* Pause new hardware polls before issuing CPU MDIO transactions. The current
+ * poll completes normally; STATUS.DONE then belongs to the CPU until release. */
+static bool pl_wait(uintptr_t base,bool done)
+{
+    uint64_t start=board_timestamp(),limit=board_timestamp_hz()/100u;
+    do {
+        uint32_t s=mmio_read(base+0x10);
+        if (done ? (s&2u)!=0 : (s&1u)==0) return !done || !(s&4u);
+    } while (board_timestamp()-start<=limit);
+    return false;
+}
+static bool pl_write(uintptr_t base,unsigned phy,unsigned reg,uint16_t value)
+{
+    if (!pl_wait(base,false)) return false;
+    mmio_write(base+0x10,6); /* clear CPU DONE/ERROR */
+    mmio_write(base,(1u<<16)|(reg<<8)|phy);
+    mmio_write(base+4,value); mmio_write(base+0x0c,1);
+    return pl_wait(base,true);
+}
+static bool pl_advertise(unsigned port,unsigned capabilities)
+{
+    uintptr_t base=0x80010000UL+port*0x10000UL;
+    if ((mmio_read(base+0x10)&0x18u)!=8u) return false;
+    mmio_write(base+0x18,1);
+    bool ok=pl_wait(base,false) &&
+        pl_write(base,port+2,4,ps_phy_advertisement(capabilities)) &&
+        pl_write(base,port+2,9,(capabilities&4u)?0x200u:0) &&
+        pl_write(base,port+2,0,0x1200);
+    mmio_write(base+0x18,0);
+    return ok;
+}
+static uintptr_t pl_mac(unsigned i) { return 0x80040000UL+i*0x40000UL; }
+static uint32_t pl_mode(unsigned speed) {return speed==1000?2u:speed==100?1u:0u;}
 static void mac_init(void)
 {
     /* The GEM FIFO shims run on the PS clock routed through a PL BUFG and
@@ -85,6 +119,7 @@ static void mac_init(void)
     for (unsigned i=0;i<3;i++) {
         mmio_write(macs[i]+0x14,0); /* poll only; no MAC interrupts */
         mmio_write(macs[i]+0x410,0x80000000u); /* gigabit */
+        if (i<2) mmio_write(macs[i]+0x41c,2); /* port disabled until configured */
         mmio_write(macs[i]+0x404,0x12000000u); /* RX enable */
         mmio_write(macs[i]+0x408,0x10000000u); /* TX enable */
     }
@@ -113,14 +148,18 @@ bool board_phy_mask(uint8_t *mask)
     }
     uint32_t calibrated=mmio_read(DIAG_BASE);
     for (unsigned i=0;i<2;i++) {
-        /* Hardware owns PL MDIO and continuously polls PHYSTS. Read its
-         * completed, validity-qualified snapshot; never contend with it. */
+        /* Hardware publishes a completed, validity-qualified link snapshot. */
         uint32_t status=mmio_read(0x80010010UL+i*0x10000UL);
-        if ((status&0x3f8u)==0x3a8u && (calibrated&(1u<<(4+i)))) up |= 1u<<(i+2);
+        unsigned speed=((status>>6)&3u)==2?1000:((status>>6)&3u)==1?100:((status>>6)&3u)==0?10:0;
+        unsigned ability=speed==1000?4:speed==100?2:1;
+        bool valid=pl_ready[i] && (status&0x738u)==0x728u &&
+                   (calibrated&(1u<<(4+i))) && (ports.applied[i+2]&ability);
+        ports.speed_mbps[i+2]=valid?(uint16_t)speed:0;
+        if (ports.speed_mbps[i+2]) up |= 1u<<(i+2);
     }
     uint32_t sb=mmio_read(DIAG_BASE+4), pcs=mmio_read(DIAG_BASE+PCS_STATUS);
     if (!(sb&0x1fu) && (pcs&0xfu)==7u) up |= 0x10;
-    for (unsigned i=2;i<5;i++) ports.speed_mbps[i]=(up&(1u<<i))?1000:0;
+    ports.speed_mbps[4]=(up&0x10)?1000:0;
     *mask=up; return true;
 }
 /* Single owner of all MAC/PHY changes. Called at 250 ms intervals. */
@@ -137,6 +176,13 @@ static void link_poll(void)
         if (change) desired &= (uint8_t)~(1u<<i);
         /* Quiesce before queue flush, clock changes or PHY restart. */
         mmio_write(i?GEM1:GEM0,(desired&(1u<<i))?0x1cu:0x10u);
+    }
+    for (unsigned i=0;i<2;i++) {
+        unsigned p=i+2;
+        bool change=!pl_ready[i] || ports.applied[p]!=request.advertise[p] ||
+                    configured_speed[p]!=ports.speed_mbps[p];
+        if (change) desired &= (uint8_t)~(1u<<p);
+        mmio_write(pl_mac(i)+0x41c,pl_mode(configured_speed[p])|((desired&(1u<<p))?4u:0u));
     }
     const uintptr_t macs[]={0x80040000UL,0x80080000UL,0x800c0000UL};
     for (unsigned i=0;i<3;i++)
@@ -164,6 +210,23 @@ static void link_poll(void)
                     xil_printf("GEM%u: %u Mb/s full duplex\r\n",i,speed);
                 }
                 configured_speed[i]=(uint16_t)speed;
+            }
+        }
+    }
+    if (!busy && (uint32_t)(now-link_state.last_clear_ms)>=250u) {
+        for (unsigned i=0;i<2;i++) {
+            unsigned p=i+2;
+            if (link_state.enabled&(1u<<p)) continue;
+            if (!pl_ready[i] || ports.applied[p]!=request.advertise[p]) {
+                pl_ready[i]=pl_advertise(i,request.advertise[p]);
+                if (pl_ready[i]) ports.applied[p]=request.advertise[p];
+                configured_speed[p]=0; ports.speed_mbps[p]=0;
+                observed &= (uint8_t)~(1u<<p);
+            } else if (configured_speed[p]!=ports.speed_mbps[p]) {
+                unsigned speed=ports.speed_mbps[p];
+                mmio_write(pl_mac(i)+0x41c,pl_mode(speed)); /* disabled while mode settles */
+                configured_speed[p]=(uint16_t)speed;
+                if (speed) xil_printf("PL%u: %u Mb/s full duplex\r\n",i,speed);
             }
         }
     }

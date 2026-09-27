@@ -22,6 +22,15 @@
 # The receive clock port clocks (pl{0,1}_rgmii_rxc, 8 ns) are created in
 # kr260_pl_ethernet.xdc.
 
+# Rate-converter timing envelope: both TX data/control and forwarded TXC
+# still launch from these same 125 MHz ODDRE1s. The 25/2.5 MHz waveforms use
+# subsets of the same 4 ns edge grid and hold data across the extra edges.
+# Retain the tight gigabit skew envelope for all modes; do not relax I/O
+# paths to the slower byte-enable rate. Simulation checks the divider phase,
+# nibble order and full-width clock pulses during disable/speed changes.
+# RX is likewise constrained at its maximum 125 MHz rate. This does not
+# replace the outstanding board/PHY delay-budget qualification.
+
 # ---- forwarded transmit clocks (ODDRE1 -> OBUF -> pin) ----
 create_generated_clock -name pl0_rgmii_txc_fwd -source [get_pins u_pl/u_rgmii0/u_oddre1_txc/C] -divide_by 1 [get_ports pl0_rgmii_txc]
 create_generated_clock -name pl1_rgmii_txc_fwd -source [get_pins u_pl/u_rgmii1/u_oddre1_txc/C] -divide_by 1 [get_ports pl1_rgmii_txc]

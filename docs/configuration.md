@@ -25,14 +25,14 @@ password `admin`. All copper settings are full duplex only.
 | --- | --- | --- |
 | GEM0 | 1000 only | 1000 only, PS SGMII limitation |
 | GEM1 | Any nonempty subset of 10/100/1000 | Selected advertisement applied by link task |
-| PL0, PL1 | Any nonempty subset of 10/100/1000 | 1000 only; 10/100 implementation remains pending |
+| PL0, PL1 | Any nonempty subset of 10/100/1000 | Selected 10/100/1000 advertisement applied by link task |
 | SFP | Auto, 1G, 2.5G, 5G, 10G | Auto and 1G run the existing 1G PCS; other rates remain pending |
 | IPv4 mode | DHCP or static | Read at network startup |
 | Static IPv4 | Address, netmask, default gateway | Read at network startup; DHCP retry disabled in static mode |
 
 A port requesting **only unsupported speeds is de-admitted**: a saved preference
-is not evidence of active speed support. PL ports requesting 1000 alongside
-10/100 currently run only at 1000; the PL PHY advertisement itself is unchanged.
+is not evidence of active speed support. PL ports now apply the selected
+full-duplex abilities; see [PL speed support](pl-ethernet-speeds.md).
 The SFP higher-rate choices reserve configuration values; they do not add a
 multirate PCS, transceiver reconfiguration, or module compatibility guarantees.
 `GET /api/ports` reports effective admission and physical speed;

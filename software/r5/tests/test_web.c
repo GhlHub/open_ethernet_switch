@@ -21,13 +21,19 @@ int main(void)
     check("GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n",-1);
     check("GET / HTTP/1.1\r\n\r\nGET / HTTP/1.1\r\n\r\n",-1);
     const char *forms[]={"mask=31&adv0=4&adv1=2","adv1=7&mask=31&adv0=4",
+        "mask=31&adv0=4&adv1=7&adv2=1&adv3=2",
         "mask=31&adv0=0&adv1=7","mask=31&adv0=8&adv1=7","mask=31&adv0=7",
         "mask=31&adv0=7&adv1=7&adv1=1","mask=31&adv0=7&adv1=7&",
         "mask=31&adv0=7&adv1=7&extra=1","mask=31&adv0=1&adv1=7",
-        "mask=31&adv0=4&adv1=0"};
+        "mask=31&adv0=4&adv1=0",
+        "mask=31&adv0=4&adv1=7&adv2=1",
+        "mask=31&adv0=4&adv1=7&adv2=1&adv3=0",
+        "mask=31&adv0=4&adv1=7&adv2=8&adv3=2",
+        "mask=31&adv0=4&adv1=7&adv2=1&adv3=2&adv2=4"};
     for(unsigned i=0;i<sizeof(forms)/sizeof(forms[0]);i++) {
         char req[256];snprintf(req,sizeof(req),"POST /api/ports HTTP/1.1\r\nContent-Length: %u\r\nX-KR260-Request: 1\r\n\r\n%s",(unsigned)strlen(forms[i]),forms[i]);
-        assert(web_parse(req,strlen(req),&r)==(i<2?1:-1));
+        assert(web_parse(req,strlen(req),&r)==(i<3?1:-1));
+        if(i==2)assert(r.advertise[2]==1 && r.advertise[3]==2);
         if(i==0)assert(r.mask==31 && r.advertise[0]==4 && r.advertise[1]==2);
     }
     const char *cfg="mask=31&adv0=4&adv1=7&adv2=3&adv3=7&sfp=2500&dhcp=0&ip=10.0.1.215&netmask=255.255.255.0&gateway=10.0.1.1";

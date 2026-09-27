@@ -259,7 +259,7 @@ krPortAdvertise OBJECT-TYPE
     SYNTAX Gauge32
     MAX-ACCESS read-only
     STATUS current
-    DESCRIPTION "Requested PS PHY advertisement: bit0 10FD, bit1 100FD, bit2 1000FD. GEM0 is restricted to 1000FD (4); GEM1 accepts 1..7. Other port rows return zero. Applied by the link task; changing this via HTTP restarts negotiation."
+    DESCRIPTION "Requested copper PHY advertisement: bit0 10FD, bit1 100FD, bit2 1000FD. GEM0 is restricted to 1000FD (4); GEM1, PL0 and PL1 accept 1..7. SFP and CPU rows return zero. Applied by the link task; changing this via HTTP restarts negotiation."
     ::= { krPortEntry 13 }
 
 krDdrTable OBJECT-TYPE

@@ -7,8 +7,9 @@ the reusable blocks described in [`ip_repo`](ip_repo/README.md), with
 `rtl/switch_top.sv` retaining the native simulation assembly.
 
 The current 2026-09-26 lab build uses fabric 1.2 / management 1.2 at 125 MHz.
-Two `pl_phy_mdio` 1.0 instances now own PL PHY initialization, MDIO and link
-polling inside `system.bd`: nine catalog instances from six reusable IP kinds.
+PL MAC and PHY-management packages are version 1.1, supporting full-duplex
+10/100/1000 Mb/s on both PL copper ports. Production uses nine catalog
+instances from six reusable IP kinds.
 It includes [CPU TX frame metadata](docs/cpu-tx-metadata.md), pipelined CPU DDR
 writes and a [low-priority MAC-table dump master](docs/mac-table-dump.md).
 The public `/mac-table` web page displays MAC addresses, ports and ages; its
@@ -16,10 +17,12 @@ The public `/mac-table` web page displays MAC addresses, ports and ages; its
 cached data; no automatic scans are scheduled.
 
 The matching FPGA and R5 firmware are deployed over JTAG at DHCP address
-`10.0.1.104`. Routed timing passes (fabric +1.297 ns setup; overall +0.019 ns
-setup / +0.010 ns hold). Simultaneous CPU and forwarded miner tests each passed
-1,000 full-size pings during HTTP/manual-refresh traffic, and HTTP concurrency
-passed all 120 requests. See [deployment evidence](docs/verification.md#2026-09-26-pl-phy-management-ip-partition-deployed)
+`10.0.1.104`. Routed timing passes (fabric +0.968 ns setup; overall +0.019 ns
+setup / +0.010 ns hold). Both PL ports pass at 10, 100 and 1000 Mb/s, with
+1,000 full-size CPU pings and 1,000 forwarded miner pings per port/speed, plus
+HTTP and SNMP checks. Three snapshot timeouts were observed on the unplugged
+GEM1 RX counter bank; PL counters and packet traffic remained clean.
+See [deployment evidence](docs/verification.md#2026-09-26-pl-101001000-implementation-validation)
 and the [current backlog](docs/inventory.md#current-remaining-work).
 
 The intended port map is two PS GEM ports, two PL Ethernet ports, one SFP port,
@@ -61,6 +64,7 @@ hardware validation remain pending.**
 - [SNMP counter and sensor access](docs/snmp.md)
 - [MAC-table dump registers, records and DMA ownership](docs/mac-table-dump.md)
 - [Web port configuration, statistics and manual MAC-table view](docs/web-interface.md)
+- [PL copper full-duplex 10/100/1000 implementation](docs/pl-ethernet-speeds.md)
 - [PS Ethernet speeds and full-duplex advertisement](docs/ps-ethernet-speeds.md)
 - [R5 FreeRTOS startup, timers and networking](software/r5/README.md)
 - [Persistent settings and administrator authentication](docs/configuration.md)
