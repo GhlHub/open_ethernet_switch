@@ -11,9 +11,16 @@ module stats_bank #(
   input wire [N-1:0][31:0] increment,
   input wire request,
   input wire [3:0] select,
+  output reg [3:0] activity,
   output reg ack,
   output reg [31:0] value
 );
+  reg [3:0] activity_binary;
+  wire [3:0] activity_next = activity_binary + 1'b1;
+  always @(posedge clk) begin
+    if (!rst_n) begin activity_binary <= 0; activity <= 0; end
+    else begin activity_binary <= activity_next; activity <= activity_next ^ (activity_next >> 1); end
+  end
   (* ASYNC_REG = "TRUE" *) reg [1:0] req_sync;
   reg [WIDTH-1:0] count [N];
   reg [N-1:0] overflow;

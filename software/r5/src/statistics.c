@@ -6,13 +6,13 @@
 #define CAPS (DIAG_BASE+0x24)
 #define INDEX (DIAG_BASE+0x28)
 #define DATA (DIAG_BASE+0x2c)
-#define BUSY (DIAG_BASE+0x30)
-#define EXPECTED_CAPS (0x53540101u | (STATS_DDR<<1) | (STATS_DEBUG<<2))
+#define BANK_STATUS (DIAG_BASE+0x38)
+#define EXPECTED_CAPS (0x53540201u | (STATS_DDR<<1) | (STATS_DEBUG<<2))
 static struct statistics_snapshot totals={
     .last_release_index=UINT32_MAX, .last_release_target_index=UINT32_MAX,
     .last_response_index=UINT32_MAX
 };
-static int pending=-1;
+
 void statistics_get(struct statistics_snapshot *out)
 {
     taskENTER_CRITICAL(); *out=totals; taskEXIT_CRITICAL();
@@ -38,34 +38,65 @@ static void accumulate(unsigned index,uint32_t value)
     } else *p+=value;
     taskEXIT_CRITICAL();
 }
+static bool bank_enabled(unsigned bank)
+{
+    return !(bank>=8 && bank<12 && !STATS_DDR) && !(bank==12 && !STATS_DEBUG);
+}
+static void unavailable(unsigned bank)
+{
+    if (totals.bank[bank].state!=2) totals.bank[bank].clock_unavailable_events++;
+    totals.bank[bank].state=2;
+}
+/* No software busy-wait. Hardware bounds each DATA access; each bank has
+ * independent ownership. A ready result is drained even if its clock stopped. */
 static bool read_counter(unsigned index)
 {
-    if (pending<0) {
-        uint64_t start=board_timestamp();
-        while (mmio_read(BUSY))
-            if (board_timestamp()-start > board_timestamp_hz()/10000u) {
-                totals.read_timeouts++;
-                totals.mailbox_release_timeouts++;
-                unsigned active=mmio_read(INDEX)&0xffu;
-                totals.last_release_index=active;
-                totals.last_release_target_index=index;
-                if ((active>>4)<13) totals.release_timeout_by_index[active>>4][active&15]++;
-                return false;
-            }
-        mmio_write(INDEX,index);
-    }
+    unsigned bank=index>>4;
+    mmio_write(INDEX,index);
+    uint32_t status=mmio_read(BANK_STATUS);
+    totals.bank[bank].hardware_status=status;
+    if (!(status&8u) && !(status&2u)) { unavailable(bank); return false; }
     uint32_t value=mmio_read(DATA);
+    status=mmio_read(BANK_STATUS);
+    totals.bank[bank].hardware_status=status;
     if (value==UINT32_MAX) {
-        pending=(int)index;
-        totals.read_timeouts++;
-        totals.snapshot_response_timeouts++;
-        totals.last_response_index=index;
-        totals.response_timeout_by_index[index>>4][index&15]++;
+        if (!(status&8u) || ((status&0x101u)==0x101u)) unavailable(bank);
+        else {
+            totals.bank[bank].state=3;
+            totals.bank[bank].active_clock_timeouts++;
+            totals.read_timeouts++;
+            if (!(status&1u) && (status&4u)) {
+                totals.mailbox_release_timeouts++;
+                totals.last_release_index=(bank<<4)|((status>>4)&15u);
+                totals.last_release_target_index=index;
+                totals.release_timeout_by_index[bank][(status>>4)&15u]++;
+            } else {
+                totals.snapshot_response_timeouts++;
+                totals.last_response_index=index;
+                totals.response_timeout_by_index[bank][index&15]++;
+            }
+        }
         return false;
     }
-    pending=-1;
     accumulate(index,value);
     return true;
+}
+static void collect_bank(unsigned bank)
+{
+    unsigned count=bank<4?4:(bank==12?16:8);
+    mmio_write(INDEX,bank<<4);
+    uint32_t status=mmio_read(BANK_STATUS);
+    totals.bank[bank].hardware_status=status;
+    // Firmware can restart while a hardware read is pending. The retained
+    // hardware slot is authoritative; never substitute a new slot.
+    if (status&1u) {
+        unsigned slot=(status>>4)&15u;
+        if (slot>=count || !read_counter((bank<<4)|slot)) return;
+    }
+    for (unsigned slot=0;slot<count;slot++)
+        if (!read_counter((bank<<4)|slot)) return;
+    totals.bank[bank].last_success=board_timestamp();
+    totals.bank[bank].state=1;
 }
 void statistics_task(void *unused)
 {
@@ -75,18 +106,14 @@ void statistics_task(void *unused)
     totals.available=totals.capabilities==EXPECTED_CAPS;
     xil_printf("Statistics ABI/caps %08x expected %08x: %s\r\n",totals.capabilities,
                EXPECTED_CAPS,totals.available?"250 ms polling":"MISMATCH; collection disabled");
+    for (unsigned b=0;b<13;b++) totals.bank[b].state=bank_enabled(b)?4:0;
     TickType_t wake=xTaskGetTickCount();
     for (;;) {
         uint64_t now=board_timestamp();
         if (totals.timestamp && now-totals.timestamp > board_timestamp_hz()/2u) totals.late_polls++;
         if (totals.available) {
-            bool ok=pending<0 || read_counter((unsigned)pending);
-            for (unsigned bank=0;bank<13 && ok;bank++) {
-                if (bank>=8 && bank<12 && !STATS_DDR) continue;
-                if (bank==12 && !STATS_DEBUG) continue;
-                unsigned count=bank<4?4:(bank==12?16:8);
-                for (unsigned slot=0;slot<count && ok;slot++) ok=read_counter(bank*16+slot);
-            }
+            for (unsigned bank=0;bank<13;bank++)
+                if (bank_enabled(bank)) collect_bank(bank);
             totals.polls++;
         }
         taskENTER_CRITICAL(); totals.timestamp=now; taskEXIT_CRITICAL();

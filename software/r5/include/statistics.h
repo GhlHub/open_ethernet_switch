@@ -8,7 +8,15 @@
 #ifndef STATS_DEBUG
 #define STATS_DEBUG 0
 #endif
+/* 0 absent, 1 current, 2 clock unavailable, 3 active-clock fault, 4 not sampled. */
+struct statistics_bank_snapshot {
+    uint64_t last_success;
+    uint32_t clock_unavailable_events, active_clock_timeouts;
+    uint32_t hardware_status;
+    uint8_t state;
+};
 struct statistics_snapshot {
+    struct statistics_bank_snapshot bank[13];
     /* Per port: RX good packets, bad packets, good bytes, bad bytes;
      * TX good packets, bad packets, good bytes, bad bytes. CPU RX = into fabric. */
     uint64_t port[6][8];

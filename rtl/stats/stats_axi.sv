@@ -14,6 +14,7 @@ module stats_axi #(
   input wire [1:0] response,
   input wire request,
   input wire [3:0] select,
+  output wire [3:0] activity,
   output wire ack,
   output wire [31:0] value
 );
@@ -45,5 +46,5 @@ module stats_axi #(
     end
   end
   stats_bank #(.WIDTH(30), .MAX_MASK(8'h08)) counters
-    (.clk(clk),.rst_n(rst_n),.increment(inc),.request(request),.select(select),.ack(ack),.value(value));
+    (.clk(clk),.rst_n(rst_n),.increment(inc),.request(request),.select(select),.ack(ack),.value(value),.activity(activity));
 endmodule

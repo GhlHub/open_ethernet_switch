@@ -1,4 +1,4 @@
-// AXI-Lite management and statistics bank routing; firmware ABI unchanged.
+// AXI-Lite management and statistics bank routing; independent per-bank mailbox ABI 2.
 module switch_management #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
                       parameter integer STATS_TIMEOUT=4095) (
   input  logic        clk,
@@ -55,31 +55,45 @@ module switch_management #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
   input  logic       cpu_rx_tag_valid_i,
   output logic       cpu_rx_tag_pop_o,
 
-  output wire [3:0] stats_select,
+
+  output wire [7:0] gem0_select,
+  input wire [7:0] gem0_activity,
   output wire [1:0] gem0_req,
   input wire [1:0] gem0_acks,
   input wire [63:0] gem0_values,
+  output wire [7:0] gem1_select,
+  input wire [7:0] gem1_activity,
   output wire [1:0] gem1_req,
   input wire [1:0] gem1_acks,
   input wire [63:0] gem1_values,
+  output wire [3:0] pl0_select,
+  input wire [3:0] pl0_activity,
   output wire [0:0] pl0_req,
   input wire [0:0] pl0_acks,
   input wire [31:0] pl0_values,
+  output wire [3:0] pl1_select,
+  input wire [3:0] pl1_activity,
   output wire [0:0] pl1_req,
   input wire [0:0] pl1_acks,
   input wire [31:0] pl1_values,
+  output wire [3:0] sfp_select,
+  input wire [3:0] sfp_activity,
   output wire [0:0] sfp_req,
   input wire [0:0] sfp_acks,
   input wire [31:0] sfp_values,
+  output wire [23:0] fabric_select,
+  input wire [23:0] fabric_activity,
   output wire [5:0] fabric_req,
   input wire [5:0] fabric_acks,
   input wire [191:0] fabric_values
 );
-  wire stats_request, stats_ack;
+  wire stats_request, stats_ack, stats_take;
+  wire [31:0] stats_state;
   wire [7:0] stats_index;
   wire [31:0] stats_value;
   rx_diag_regs #(.STATS_DDR(STATS_DDR), .STATS_DEBUG(STATS_DEBUG),
                  .STATS_TIMEOUT(STATS_TIMEOUT)) regs (
+    .stats_take(stats_take), .stats_state(stats_state),
     .stats_request(stats_request),
     .stats_index(stats_index),
     .stats_ack(stats_ack),
@@ -124,27 +138,33 @@ module switch_management #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
     .cpu_rx_tag_valid_i(cpu_rx_tag_valid_i),
     .cpu_rx_tag_pop_o(cpu_rx_tag_pop_o)
   );
-  switch_stats_router router (
+  switch_stats_router router (.clk(clk),.rst_n(rst_n),
+    .stats_take(stats_take), .stats_state(stats_state),
     .stats_request(stats_request),
     .stats_index(stats_index),
     .stats_ack(stats_ack),
     .stats_value(stats_value),
-    .stats_select(stats_select),
+    .gem0_select(gem0_select), .gem0_activity(gem0_activity),
     .gem0_req(gem0_req),
     .gem0_acks(gem0_acks),
     .gem0_values(gem0_values),
+    .gem1_select(gem1_select), .gem1_activity(gem1_activity),
     .gem1_req(gem1_req),
     .gem1_acks(gem1_acks),
     .gem1_values(gem1_values),
+    .pl0_select(pl0_select), .pl0_activity(pl0_activity),
     .pl0_req(pl0_req),
     .pl0_acks(pl0_acks),
     .pl0_values(pl0_values),
+    .pl1_select(pl1_select), .pl1_activity(pl1_activity),
     .pl1_req(pl1_req),
     .pl1_acks(pl1_acks),
     .pl1_values(pl1_values),
+    .sfp_select(sfp_select), .sfp_activity(sfp_activity),
     .sfp_req(sfp_req),
     .sfp_acks(sfp_acks),
     .sfp_values(sfp_values),
+    .fabric_select(fabric_select), .fabric_activity(fabric_activity),
     .fabric_req(fabric_req),
     .fabric_acks(fabric_acks),
     .fabric_values(fabric_values)

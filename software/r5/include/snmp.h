@@ -13,7 +13,7 @@
 #endif
 #define SNMP_PACKET_MAX 1400
 #define SNMP_OID_MAX 24
-#define SNMP_OBJECT_MAX 384
+#define SNMP_OBJECT_MAX 448
 struct snmp_oid { uint32_t arc[SNMP_OID_MAX]; size_t length; };
 struct snmp_object {
     struct snmp_oid oid;

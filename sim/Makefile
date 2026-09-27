@@ -666,7 +666,7 @@ sim-sfp-tx-idle:
 
 .PHONY: sim-statistics
 sim-statistics:
-	iverilog -g2012 -s tb_statistics -o tb_statistics.vvp ../rtl/stats/stats_bank.sv ../rtl/board/rx_diag_regs.sv $(TB_DIR)/tb_statistics.sv
+	iverilog -g2012 -s tb_statistics -o tb_statistics.vvp ../rtl/stats/stats_mailboxes.sv ../rtl/stats/stats_bank.sv ../rtl/board/rx_diag_regs.sv $(TB_DIR)/tb_statistics.sv
 	vvp tb_statistics.vvp
 	iverilog -g2012 -s tb_statistics_axi -o tb_statistics_axi.vvp ../rtl/stats/stats_bank.sv ../rtl/stats/stats_axi.sv $(TB_DIR)/tb_statistics_axi.sv
 	vvp tb_statistics_axi.vvp

@@ -21,10 +21,13 @@ foreach port {pl0 pl1} {
 set f [open $out/custom_crossings.tsv w]
 puts $f "source\tdestination\tmax_datapath_ns\tslack_ns"
 foreach pair {
- {*management/inst/regs/stats_index_reg* *req_sync_reg*}
- {*management/inst/regs/stats_index_reg* *count_reg*}
+ {*mailboxes/source_select_reg* *count_reg*}
+ {*mailboxes/source_select_reg* *value_reg*}
+ {*mailboxes/source_request_reg* *req_sync_reg*}
  {*value_q_reg* *value_sync1_reg*}
- {*value_reg* *management/inst/regs/s_axi_rdata_reg*}
+ {*value_reg* *mailboxes/saved_reg*}
+ {*activity_reg* *mailboxes/activity_meta_reg*}
+ {*ack_reg* *mailboxes/ack_meta_reg*}
  {*gray*_reg* *gray_sync1_reg*}
 } {
  set from [get_cells -quiet -hier -filter "NAME =~ [lindex $pair 0]"]

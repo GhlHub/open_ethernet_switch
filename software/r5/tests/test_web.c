@@ -44,6 +44,7 @@ int main(void)
     snprintf(req,sizeof(req),"POST /api/config HTTP/1.1\r\nContent-Length: %u\r\nX-KR260-Request: 1\r\n\r\n%s%s",(unsigned)(strlen(cfg)+strlen(credentials)),cfg,credentials);
     assert(web_parse(req,strlen(req),&r)==1 && r.credentials && !strcmp(r.settings.username,"operator"));
     struct statistics_snapshot s={.available=true,.fabric_hz=125000000}; struct sensor_snapshot v={0};
+    s.bank[2]=(struct statistics_bank_snapshot){.state=2,.last_success=100,.clock_unavailable_events=3,.active_clock_timeouts=1,.hardware_status=257};
     s.port[0][0]=UINT64_MAX;
     for(unsigned b=0;b<13;b++)for(unsigned i=0;i<16;i++){
         s.release_timeout_by_index[b][i]=UINT32_MAX;s.response_timeout_by_index[b][i]=UINT32_MAX;
@@ -55,6 +56,7 @@ int main(void)
     assert(web_stats(output,sizeof(output),&s,&v,100,200,&ports,&st)>0);
     assert(strstr(output,"\"18446744073709551615\""));
     assert(strstr(output,"\"fabric_hz\":125000000"));
+    assert(strstr(output,"[2,1000,3,1,257]"));
     puts(output);
     return 0;
 }

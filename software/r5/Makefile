@@ -55,12 +55,11 @@ test: test-snmp test-web test-links test-pstate test-stp | out
 	./out/test_dma 1
 	./out/test_dma 2
 	./out/test_dma 3
-	cc -std=c11 -Wall -Wextra -Werror -DSTATS_DDR=1 -DSTATS_DEBUG=1 -Itests/stats_fakes -Iinclude src/statistics.c tests/test_statistics.c -o out/test_statistics
-	./out/test_statistics
-	./out/test_statistics 1
-	./out/test_statistics 2
-	./out/test_statistics 3
-	./out/test_statistics 4
+	@set -e; for ddr in 0 1; do for debug in 0 1; do \
+	  cc -std=c11 -Wall -Wextra -Werror -DSTATS_DDR=$$ddr -DSTATS_DEBUG=$$debug -Itests/stats_fakes -Iinclude src/statistics.c tests/test_statistics.c -o out/test_statistics; \
+	  for mode in 0 1 2 3 4 5; do ./out/test_statistics $$mode; done; \
+	done; done
+
 test-snmp: | out
 	@set -e; for ddr in 0 1; do for debug in 0 1; do \
 	  cc -shared -fPIC -std=c11 -Wall -Wextra -Werror -DSTATS_DDR=$$ddr -DSTATS_DEBUG=$$debug -Iinclude src/snmp_protocol.c src/snmp_mib.c tests/snmp_fixture.c -o out/test_snmp_$$ddr$$debug.so; \

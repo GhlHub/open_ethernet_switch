@@ -56,13 +56,12 @@ def fixture(bd, out):
                 internal.setdefault(net, []).append(value)
     for net, values in internal.items():
         assert len(values) == 2 and len(set(values)) == 1 and values[0], (net, values)
-    router_ports = ['stats_select', 'gem0_req', 'gem0_acks', 'gem0_values',
-                    'gem1_req', 'gem1_acks', 'gem1_values', 'pl0_req', 'pl0_acks',
-                    'pl0_values', 'pl1_req', 'pl1_acks', 'pl1_values', 'sfp_req',
-                    'sfp_acks', 'sfp_values', 'fabric_req', 'fabric_acks', 'fabric_values']
+    router_ports = [f'{c}_{suffix}' for c in CELLS for suffix in ('select','activity','req','acks','values')]
     router_connections = [f'.{p}({rename(actual["management"][p])})' for p in router_ports]
     for pin in ['stats_request', 'stats_index', 'stats_ack', 'stats_value']:
         router_connections.append(f'.{pin}({pin})')
+    instances.append('reg stats_request_q; always @(posedge axis_clk) if(!axis_rst_n) stats_request_q<=0; else stats_request_q<=stats_request;')
+    router_connections += ['.clk(axis_clk)', '.rst_n(axis_rst_n)', '.stats_take(stats_request_q && !stats_request)', '.stats_state()']
     instances.append('switch_stats_router stats_router (' + ', '.join(router_connections) + ');')
     # Check management-to-fabric controls against the previous board assembly.
     board_switch = connections(board, 'u_switch')

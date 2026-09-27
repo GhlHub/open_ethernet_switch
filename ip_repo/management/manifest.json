@@ -1,9 +1,10 @@
 {
   "name": "management",
-  "version": "1.2",
+  "version": "2.0",
   "description": "Switch AXI-Lite control and statistics mailbox",
   "top": "switch_management",
   "sources": [
+    "rtl/stats/stats_mailboxes.sv",
     "rtl/board/rx_diag_regs.sv",
     "ip_repo/management/hdl/switch_stats_router.sv",
     "ip_repo/management/hdl/switch_management.sv"

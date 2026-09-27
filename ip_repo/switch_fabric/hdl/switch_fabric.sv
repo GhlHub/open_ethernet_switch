@@ -158,7 +158,8 @@ module switch_fabric
   input wire  m03_axis_tready,
   input wire  m04_axis_tready,
   input wire [12:7] stats_req,
-  input wire [3:0] stats_select,
+  input wire [12:7][3:0] stats_select,
+  output wire [12:7][3:0] stats_activity,
   output wire [12:7] stats_acks,
   output wire [12:7][31:0] stats_values
 );
@@ -702,7 +703,7 @@ module switch_fabric
   stats_axis stats_cpu_m (.clk(clk),.rst_n(rst_n),.valid(cpu_m_axis_tvalid),.ready(cpu_m_axis_tready),
     .last(cpu_m_axis_tlast),.bad(1'b0),.keep(cpu_m_axis_tkeep),.increment(stats_cpu_inc[4 +: 4]));
   stats_bank stats_cpu_bank (.clk(clk),.rst_n(rst_n),.increment(stats_cpu_inc),
-    .request(stats_req[7]),.select(stats_select),.ack(stats_acks[7]),.value(stats_values[7]));
+    .request(stats_req[7]),.select(stats_select[7]),.activity(stats_activity[7]),.ack(stats_acks[7]),.value(stats_values[7]));
   generate if (STATS_DDR) begin : ddr_statistics
     stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b1)) monitor8 (.clk(clk),.rst_n(rst_n),
       .address_valid(m_axi_ing_awvalid),.address_ready(m_axi_ing_awready),
@@ -710,31 +711,32 @@ module switch_fabric
       .strobe(m_axi_ing_wstrb),
       .response_valid(m_axi_ing_bvalid),.response_ready(m_axi_ing_bready),
       .response_last(1'b1),.response(m_axi_ing_bresp),
-      .request(stats_req[8]),.select(stats_select),.ack(stats_acks[8]),.value(stats_values[8]));
+      .request(stats_req[8]),.select(stats_select[8]),.activity(stats_activity[8]),.ack(stats_acks[8]),.value(stats_values[8]));
     stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b0)) monitor9 (.clk(clk),.rst_n(rst_n),
       .address_valid(m_axi_egr_arvalid),.address_ready(m_axi_egr_arready),
       .data_valid(m_axi_egr_rvalid),.data_ready(m_axi_egr_rready),
       .strobe({AXI_STRB_W{1'b1}}),
       .response_valid(m_axi_egr_rvalid),.response_ready(m_axi_egr_rready),
       .response_last(m_axi_egr_rlast),.response(m_axi_egr_rresp),
-      .request(stats_req[9]),.select(stats_select),.ack(stats_acks[9]),.value(stats_values[9]));
+      .request(stats_req[9]),.select(stats_select[9]),.activity(stats_activity[9]),.ack(stats_acks[9]),.value(stats_values[9]));
     stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b1)) monitor10 (.clk(clk),.rst_n(rst_n),
       .address_valid(m_axi_cpu_awvalid),.address_ready(m_axi_cpu_awready),
       .data_valid(m_axi_cpu_wvalid),.data_ready(m_axi_cpu_wready),
       .strobe(m_axi_cpu_wstrb),
       .response_valid(m_axi_cpu_bvalid),.response_ready(m_axi_cpu_bready),
       .response_last(1'b1),.response(m_axi_cpu_bresp),
-      .request(stats_req[10]),.select(stats_select),.ack(stats_acks[10]),.value(stats_values[10]));
+      .request(stats_req[10]),.select(stats_select[10]),.activity(stats_activity[10]),.ack(stats_acks[10]),.value(stats_values[10]));
     stats_axi #(.BYTES(AXI_STRB_W),.WRITE(1'b0)) monitor11 (.clk(clk),.rst_n(rst_n),
       .address_valid(m_axi_cpu_arvalid),.address_ready(m_axi_cpu_arready),
       .data_valid(m_axi_cpu_rvalid),.data_ready(m_axi_cpu_rready),
       .strobe({AXI_STRB_W{1'b1}}),
       .response_valid(m_axi_cpu_rvalid),.response_ready(m_axi_cpu_rready),
       .response_last(m_axi_cpu_rlast),.response(m_axi_cpu_rresp),
-      .request(stats_req[11]),.select(stats_select),.ack(stats_acks[11]),.value(stats_values[11]));
+      .request(stats_req[11]),.select(stats_select[11]),.activity(stats_activity[11]),.ack(stats_acks[11]),.value(stats_values[11]));
   end else begin : no_ddr_statistics
     assign stats_acks[11:8] = stats_req[11:8];
     assign stats_values[11:8] = '0;
+    assign stats_activity[11:8] = '0;
   end endgenerate
   generate if (STATS_DEBUG) begin : debug_statistics
     wire [15:0][31:0] inc;
@@ -752,10 +754,11 @@ module switch_fabric
                      32'(m_axi_cpu_bvalid && m_axi_cpu_bready && m_axi_cpu_bresp[1]) +
                      32'(m_axi_cpu_rvalid && m_axi_cpu_rready && m_axi_cpu_rresp[1]);
     stats_bank #(.N(16),.WIDTH(28)) bank (.clk(clk),.rst_n(rst_n),.increment(inc),
-      .request(stats_req[12]),.select(stats_select),.ack(stats_acks[12]),.value(stats_values[12]));
+      .request(stats_req[12]),.select(stats_select[12]),.activity(stats_activity[12]),.ack(stats_acks[12]),.value(stats_values[12]));
   end else begin : no_debug_statistics
     assign stats_acks[12] = stats_req[12];
     assign stats_values[12] = 0;
+    assign stats_activity[12] = 0;
   end endgenerate
 
 endmodule

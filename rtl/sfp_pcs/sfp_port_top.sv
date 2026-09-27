@@ -51,6 +51,7 @@ module sfp_port_top #(
 ) (
   input wire stats_request,
   input wire [3:0] stats_select,
+  output wire [3:0] stats_activity,
   output wire stats_ack,
   output wire [31:0] stats_value,
   input  logic clk,          // fabric clock (62.5 MHz)
@@ -186,7 +187,7 @@ module sfp_port_top #(
 
   open_eth_mac_1g_switch u_mac (
     .stats_request(stats_request), .stats_select(stats_select),
-    .stats_ack(stats_ack), .stats_value(stats_value),
+    .stats_activity(stats_activity), .stats_ack(stats_ack), .stats_value(stats_value),
     .axis_clk          (axis_clk),
     .s_axi_lite_clk    (axis_clk),
     .gtx_clk           (gtx_clk),

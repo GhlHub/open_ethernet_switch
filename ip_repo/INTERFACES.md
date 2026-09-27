@@ -31,11 +31,11 @@ contracts are not physical CDC sign-off.
 
 | Catalog name | Version / public module | Clocks and reset inputs | Interfaces / ownership |
 | --- | --- | --- | --- |
-| `gem_port` | 1.0 / `switch_gem_port` | `clk/rst_n`; `gem_rx_clk/gem_rx_rst_n`; `gem_tx_clk/gem_tx_rst_n` | 16-bit packet streams, PS GEM external RX-write/TX-read FIFO signals, two local counter banks |
-| `pl_port` | 1.1 / `pl_gmii_mac_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk`, `clk_en` | Packet streams; 32-bit AXI-Lite MAC registers; 8-bit GMII; local counter bank |
-| `sfp_port` | 1.0 / `sfp_port_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk/gtx_rst_n`; `gth_clk/gth_rst_n` | Packet streams; 32-bit AXI-Lite MAC registers; decoded 16-bit GTH data/control; PCS status; local counter bank |
-| `switch_fabric` | 1.1 / `switch_fabric` | `clk/rst_n`; `axis_clk/axis_rst_n` | Five physical packet-stream pairs, CPU stream pair, three DDR AXI masters, shared packet buffers/queues, forwarding table, six counter banks |
-| `management` | 1.2 / `switch_management` | `clk/rst_n` (production control clock) | 32-bit AXI-Lite controls, link/forward/learn masks, CPU TX ABI identifier and RX tag, statistics mailbox and 13-bank decoder |
+| `gem_port` | 2.0 / `switch_gem_port` | `clk/rst_n`; `gem_rx_clk/gem_rx_rst_n`; `gem_tx_clk/gem_tx_rst_n` | 16-bit packet streams, PS GEM external RX-write/TX-read FIFO signals, two local counter banks |
+| `pl_port` | 1.2 / `pl_gmii_mac_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk`, `clk_en` | Packet streams; 32-bit AXI-Lite MAC registers; 8-bit GMII; local counter bank |
+| `sfp_port` | 1.1 / `sfp_port_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk/gtx_rst_n`; `gth_clk/gth_rst_n` | Packet streams; 32-bit AXI-Lite MAC registers; decoded 16-bit GTH data/control; PCS status; local counter bank |
+| `switch_fabric` | 2.0 / `switch_fabric` | `clk/rst_n`; `axis_clk/axis_rst_n` | Five physical packet-stream pairs, CPU stream pair, four DDR AXI masters, shared packet buffers/queues, forwarding table, six counter banks |
+| `management` | 2.0 / `switch_management` | `clk/rst_n` (production control clock) | 32-bit AXI-Lite controls, link/forward/learn masks, CPU TX ABI identifier and RX tag, statistics mailbox and 13-bank decoder |
 
 In production, the fabric runs at 125 MHz, control at approximately
 142.857 MHz, PL GMII at 125 MHz, and SFP PCS/GTH at 125/62.5 MHz. Packet
@@ -82,12 +82,13 @@ use the simulation defaults for a board image.
 
 ## Statistics mailbox
 
-Management owns the request selection and bank routing. `stats_select[3:0]`
-is shared; each bank has a level request, level acknowledgment and stable
-32-bit value. Bank implementations own the source-clock synchronization and
-clear-on-capture. The handshake is request high, acknowledgment high,
-request low, acknowledgment low. Software serializes destructive reads and
-accumulates intervals in memory; web/SNMP clients read those totals.
+Management owns independent request selection and result storage for each
+bank. Each bank has its own four-bit select, level request/acknowledgment,
+stable 32-bit value and four-bit registered Gray activity signal. Source
+logic owns clear-on-capture. Its handshake is request high, acknowledgment
+high, request low, acknowledgment low. A timed-out processor access leaves
+that bank's transaction intact while other banks progress. Software accumulates
+intervals in memory; web/SNMP clients read those totals and per-bank freshness.
 
 | Global banks | Management pins | Owner |
 | --- | --- | --- |
@@ -172,3 +173,18 @@ PL MAC 1.1 adds `rx_byte_ce_i`, `tx_byte_ce_i`, and `port_mode_o[2:0]`.
 Production sets `EXTERNAL_PACING=1`; the board RGMII shell owns rate conversion.
 Legacy native GMII fixtures retain shared `clk_en` through the default parameter.
 MAC register `0x41c` controls rate and physical enable; see the PL speed guide.
+
+## Independent statistics mailboxes (ABI 2)
+
+Management 2.0 owns one pending read/result per bank. Each endpoint now exports
+four Gray clock-progress bits per bank. GEM 2.0 has independent RX/TX selects
+(8 bits total); fabric 2.0 has six independent selects (24 bits). Management
+exports separate `<endpoint>_select` buses and accepts corresponding
+`<endpoint>_activity` buses. PL 1.2 and SFP 1.1 retain their four-bit select and
+add four activity bits. Repackage all changed IP together; these interfaces
+are not compatible with the former shared select. Source slots remain stable
+through ACK release. A timed-out CPU access does not cancel source ownership.
+See [statistics](../docs/statistics.md) for the CSR ABI and clock-progress CDC
+contract. The serialized native fixture models successful transaction consumption
+on request release; the production CSR uses an explicit take pulse, preserving
+results across timeouts.

@@ -88,6 +88,8 @@
 
 module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
                       parameter integer STATS_TIMEOUT=4095) (
+  output logic stats_take,
+  input wire [31:0] stats_state,
   output logic stats_request,
   output logic [7:0] stats_index,
   input wire stats_ack,
@@ -230,7 +232,7 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
   end
   assign s_axi_bresp = 2'b00;
 
-  (* ASYNC_REG = "TRUE" *) logic [1:0] stats_ack_sync;
+  wire [1:0] stats_ack_sync = {2{stats_ack}}; // management-domain mailbox result
   logic [31:0] stats_wait;
   logic [7:0] ar_hold;
   logic       ar_valid_q;
@@ -238,12 +240,12 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      stats_request <= 0; stats_index <= 0; stats_wait <= 0; stats_ack_sync <= 0;
+      stats_take <= 0; stats_request <= 0; stats_index <= 0; stats_wait <= 0;
       ar_valid_q   <= 1'b0;
       s_axi_rvalid <= 1'b0;
       s_axi_rdata  <= '0;
     end else begin
-      stats_ack_sync <= {stats_ack_sync[0], stats_ack};
+      stats_take <= 0;
       if (write_fire && aw_hold == 8'h28 && wstrb_hold[0] &&
           !stats_request && !stats_ack_sync[1] && !ar_valid_q && !s_axi_rvalid)
         stats_index <= w_hold[7:0];
@@ -253,12 +255,14 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
           stats_request <= 1;
           stats_wait <= 0;
         end else if (stats_request && stats_ack_sync[1]) begin
+          stats_take <= 1;
           s_axi_rdata <= stats_value;
           s_axi_rvalid <= 1;
           ar_valid_q <= 0;
           stats_request <= 0;
           stats_wait <= 0;
         end else if (stats_wait >= STATS_TIMEOUT) begin
+          stats_request <= 0; // source mailbox remains owned independently
           s_axi_rdata <= 32'hffffffff;
           s_axi_rvalid <= 1;
           ar_valid_q <= 0;
@@ -275,9 +279,10 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
           8'h14:   s_axi_rdata <= {20'd0, phy_link_i, 1'b0, flush_busy_s[1], 2'b00, link_up_o};
           8'h18:   s_axi_rdata <= {26'd0, event_q};
           8'h1C:   s_axi_rdata <= {26'd0, event_en_q};
-          8'h24:   s_axi_rdata <= 32'h53540101 | (32'(STATS_DDR)<<1) | (32'(STATS_DEBUG)<<2);
+          8'h24:   s_axi_rdata <= 32'h53540201 | (32'(STATS_DDR)<<1) | (32'(STATS_DEBUG)<<2);
           8'h28:   s_axi_rdata <= {24'd0,stats_index};
           8'h30:   s_axi_rdata <= {30'd0,stats_ack_sync[1],stats_request};
+          8'h38:   s_axi_rdata <= stats_state;
           8'h34:   s_axi_rdata <= 125000000;
           8'h20:   s_axi_rdata <= {28'd0, sfp_pcs_status_i};
           8'h48:   s_axi_rdata <= {18'd0, learn_en_o, fwd_en_o};

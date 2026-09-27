@@ -75,6 +75,12 @@ def collect(args, executable):
     bank_names = ('GEM0 RX', 'GEM0 TX', 'GEM1 RX', 'GEM1 TX', 'PL0', 'PL1',
                   'SFP', 'CPU', 'physical ingress write', 'physical egress read',
                   'CPU write', 'CPU read', 'debug')
+    banks = [{'bank': b, 'name': name, 'state': values.get((7,1,1,b+1)),
+              'age_ms': values.get((7,1,2,b+1)),
+              'clock_unavailable_events': values.get((7,1,3,b+1)),
+              'active_clock_timeouts': values.get((7,1,4,b+1)),
+              'hardware_status': values.get((7,1,5,b+1))}
+             for b,name in enumerate(bank_names) if (7,1,1,b+1) in values]
     timeouts = []
     for bank, source in enumerate(bank_names):
         slots = 4 if bank < 4 else 16 if bank == 12 else 8
@@ -91,7 +97,7 @@ def collect(args, executable):
                              'snapshot_response_timeouts': response})
     return {'time': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
             'host': args.host, 'health': health, 'ports': ports, 'ddr': ddr,
-            'debug': debug, 'sensors': sensors, 'timeouts': timeouts}
+            'debug': debug, 'sensors': sensors, 'timeouts': timeouts, 'banks': banks}
 
 
 def display(data):
@@ -105,6 +111,9 @@ def display(data):
     if h['read_timeouts']:
         print('NOTE: mailbox timeouts recorded; collection may have partial updates.')
     print('Link speeds (Mb/s): ' + ', '.join(f"{p['name']}={p['speed_mbps']}" for p in data['ports']))
+    for b in data.get('banks', []):
+        state={0:'not built',1:'current',2:'clock unavailable / stale',3:'active-clock fault / stale',4:'not sampled'}.get(b['state'],'unknown')
+        print(f"  {b['name']}: {state}, age_ms={b['age_ms']}, clock_unavailable={b['clock_unavailable_events']}, active_clock_timeouts={b['active_clock_timeouts']}")
     print('Timeout locations (bank and slot are zero-based):')
     for key in ('last_release_index', 'last_release_target_index', 'last_response_index'):
         index = h.get(key)

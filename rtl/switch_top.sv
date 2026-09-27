@@ -364,6 +364,9 @@ module switch_top
   logic [NUM_PHYS_PORTS-1:0]       phy_m_axis_tlast;
   logic [NUM_PHYS_PORTS-1:0]       phy_m_axis_tready;
   wire [12:0] stats_req, stats_acks;
+  wire [12:0][3:0] stats_selects,stats_activity;
+  reg stats_request_q;
+  always @(posedge axis_clk) if(!axis_rst_n) stats_request_q<=0; else stats_request_q<=stats_request;
   wire [12:0][31:0] stats_values;
   switch_fabric #(.STATS_DDR(STATS_DDR), .STATS_DEBUG(STATS_DEBUG),
     .AGE_TICK_DIVIDE_COUNT(AGE_TICK_DIVIDE_COUNT)) u_fabric (
@@ -539,13 +542,13 @@ module switch_top
     .m03_axis_tready(phy_m_axis_tready[3]),
     .m04_axis_tready(phy_m_axis_tready[4]),
     .stats_req(stats_req[12:7]),
-    .stats_select(stats_index[3:0]),
+    .stats_select(stats_selects[12:7]), .stats_activity(stats_activity[12:7]),
     .stats_acks(stats_acks[12:7]),
     .stats_values(stats_values[12:7])
   );
 
   switch_gem_port u_ps_gem0 (
-    .stats_req(stats_req[1:0]), .stats_select(stats_index[3:0]),
+    .stats_req(stats_req[1:0]), .stats_select(stats_selects[1:0]), .stats_activity(stats_activity[1:0]),
     .stats_acks(stats_acks[1:0]), .stats_values(stats_values[1:0]),
     .clk              (clk),
     .rst_n            (rst_n),
@@ -590,7 +593,7 @@ module switch_top
 
 
   switch_gem_port u_ps_gem1 (
-    .stats_req(stats_req[3:2]), .stats_select(stats_index[3:0]),
+    .stats_req(stats_req[3:2]), .stats_select(stats_selects[3:2]), .stats_activity(stats_activity[3:2]),
     .stats_acks(stats_acks[3:2]), .stats_values(stats_values[3:2]),
     .clk              (clk),
     .rst_n            (rst_n),
@@ -635,7 +638,7 @@ module switch_top
 
 
   pl_gmii_mac_top u_pl_gmii0 (
-    .stats_request(stats_req[4]), .stats_select(stats_index[3:0]),
+    .stats_request(stats_req[4]), .stats_select(stats_selects[4]), .stats_activity(stats_activity[4]),
     .stats_ack(stats_acks[4]), .stats_value(stats_values[4]),
     .clk               (clk),
     .rst_n             (rst_n),
@@ -683,7 +686,7 @@ module switch_top
 
 
   pl_gmii_mac_top u_pl_gmii1 (
-    .stats_request(stats_req[5]), .stats_select(stats_index[3:0]),
+    .stats_request(stats_req[5]), .stats_select(stats_selects[5]), .stats_activity(stats_activity[5]),
     .stats_ack(stats_acks[5]), .stats_value(stats_values[5]),
     .clk               (clk),
     .rst_n             (rst_n),
@@ -735,7 +738,7 @@ module switch_top
     .AN_LINK_TIMER_CYCLES(SFP_AN_LINK_TIMER_CYCLES),
     .AN_IDLE_DETECT_CYCLES(SFP_AN_IDLE_DETECT_CYCLES)
   ) u_sfp0 (
-    .stats_request(stats_req[6]), .stats_select(stats_index[3:0]),
+    .stats_request(stats_req[6]), .stats_select(stats_selects[6]), .stats_activity(stats_activity[6]),
     .stats_ack(stats_acks[6]), .stats_value(stats_values[6]),
     .clk              (clk),
     .rst_n            (rst_n),
@@ -791,10 +794,13 @@ module switch_top
 
   // Statistics mailbox selects one source bank. Select is held throughout
   // the four-phase CDC handshake by rx_diag_regs.
-  for (genvar k=0;k<13;k=k+1) begin : stats_decode
-    assign stats_req[k] = stats_request && stats_index[7:4] == k;
-  end
-  assign stats_ack = stats_index[7:4] < 13 ? stats_acks[stats_index[7:4]] : stats_request;
-  assign stats_value = stats_index[7:4] < 13 ? stats_values[stats_index[7:4]] : 0;
+  // Simulation/reference assembly uses request deassertion as consumption.
+  // Production management uses the explicit CSR take pulse, so timeouts do
+  // not consume results. Source ownership logic is shared between assemblies.
+  stats_mailboxes mailboxes (.clk(axis_clk),.rst_n(axis_rst_n),
+    .request(stats_request),.take(stats_request_q && !stats_request),
+    .index(stats_index),.ack(stats_ack),.value(stats_value),.status(),
+    .source_request(stats_req),.source_select(stats_selects),.source_ack(stats_acks),
+    .source_value(stats_values),.source_activity(stats_activity));
 
 endmodule

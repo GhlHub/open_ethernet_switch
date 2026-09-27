@@ -1,6 +1,6 @@
 {
   "name": "gem_port",
-  "version": "1.0",
+  "version": "2.0",
   "description": "PS GEM external FIFO bridge and port counters",
   "top": "switch_gem_port",
   "sources": [

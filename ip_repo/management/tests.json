@@ -17,6 +17,17 @@
       "support": [
         "rtl/stats/stats_bank.sv"
       ]
+    },
+    {
+      "name": "mailbox_2_5mhz",
+      "top": "tb_management",
+      "parameters": {
+        "SOURCE_HALF_PERIOD": 200,
+        "STATS_LIMIT": 4095
+      },
+      "support": [
+        "rtl/stats/stats_bank.sv"
+      ]
     }
   ]
 }

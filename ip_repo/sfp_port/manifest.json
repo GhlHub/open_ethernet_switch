@@ -1,6 +1,6 @@
 {
   "name": "sfp_port",
-  "version": "1.0",
+  "version": "1.1",
   "description": "1000BASE-X MAC and PCS (board GTH shell external)",
   "top": "sfp_port_top",
   "sources": [

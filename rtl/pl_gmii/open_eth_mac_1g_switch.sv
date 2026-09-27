@@ -44,6 +44,7 @@
 module open_eth_mac_1g_switch #(parameter bit EXTERNAL_PACING = 0) (
   input wire stats_request,
   input wire [3:0] stats_select,
+  output wire [3:0] stats_activity,
   output wire stats_ack,
   output wire [31:0] stats_value,
 
@@ -1018,5 +1019,5 @@ assign stats_inc[5] = 0; // Store/forward TX cannot underrun; rejects never reac
 assign stats_inc[6] = stats_inc[4] != 0 ? (tx_length_gmii < 60 ? 32'd60 : 32'(tx_length_gmii)) : 0;
 assign stats_inc[7] = 0;
 stats_bank port_statistics (.clk(gtx_clk),.rst_n(gtx_rx_resetn && gtx_tx_resetn),
- .increment(stats_inc),.request(stats_request),.select(stats_select),.ack(stats_ack),.value(stats_value));
+ .increment(stats_inc),.request(stats_request),.select(stats_select),.ack(stats_ack),.value(stats_value),.activity(stats_activity));
 endmodule

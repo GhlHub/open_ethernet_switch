@@ -40,7 +40,8 @@ module switch_gem_port (
   output wire  dma_tx_status_tog_o,
   input wire [3:0]  tx_r_status_i,
   input wire [1:0] stats_req,
-  input wire [3:0] stats_select,
+  input wire [1:0][3:0] stats_select,
+  output wire [1:0][3:0] stats_activity,
   output wire [1:0] stats_acks,
   output wire [1:0][31:0] stats_values
 );
@@ -89,10 +90,10 @@ module switch_gem_port (
   stats_gem_rx stats_rx (.clk(gem_rx_clk),.rst_n(gem_rx_rst_n),
     .wr(rx_w_wr_i),.sop(rx_w_sop_i),.eop(rx_w_eop_i),.error(rx_w_err_i),.flush(rx_w_flush_i),.overflow(rx_w_overflow_o),.increment(stats_rx_inc));
   stats_bank #(.N(4)) stats_bank0 (.clk(gem_rx_clk),.rst_n(gem_rx_rst_n),
-    .increment(stats_rx_inc),.request(stats_req[0]),.select(stats_select),.ack(stats_acks[0]),.value(stats_values[0]));
+    .increment(stats_rx_inc),.request(stats_req[0]),.select(stats_select[0]),.activity(stats_activity[0]),.ack(stats_acks[0]),.value(stats_values[0]));
   wire [3:0][31:0] stats_tx_inc;
   stats_gem_tx stats_tx (.clk(gem_tx_clk),.rst_n(gem_tx_rst_n),
     .valid(tx_r_valid_o),.sop(tx_r_sop_o),.error(tx_r_err_o),.underflow(tx_r_underflow_o),.complete_toggle(dma_tx_end_tog_i),.status(tx_r_status_i),.increment(stats_tx_inc));
   stats_bank #(.N(4)) stats_bank1 (.clk(gem_tx_clk),.rst_n(gem_tx_rst_n),
-    .increment(stats_tx_inc),.request(stats_req[1]),.select(stats_select),.ack(stats_acks[1]),.value(stats_values[1]));
+    .increment(stats_tx_inc),.request(stats_req[1]),.select(stats_select[1]),.activity(stats_activity[1]),.ack(stats_acks[1]),.value(stats_values[1]));
 endmodule

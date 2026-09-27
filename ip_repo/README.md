@@ -17,15 +17,18 @@ and the [future 128-bit SFP interface](../docs/inventory.md#125-mhz-fabric-and-t
 | `pl_port` | `pl_gmii_mac_top` | One GMII MAC, packet-stream adapters, local counters and AXI-Lite registers |
 | `sfp_port` | `sfp_port_top` | One 1000BASE-X MAC/PCS, negotiation, packet adapters and counters |
 | `pl_phy_mdio` (1.1) | `switch_pl_phy_mdio` | One PL PHY: AXI-Lite MDIO, DP83867 initialization, link polling and reset-release CDC |
-| `management` (1.2) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
+| `management` (2.0) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
 
 The current partition retains RGMII I/O, GTH/clock generation and SFP
 sideband handling in the board layer. These physical shells are **not yet
 inside the port IPs**. The production `system.bd` instantiates nine catalog cells
 through `production.tcl`. `rtl/switch_top.sv` remains the native simulation
-assembly. Management 1.1 owns the existing 13-bank mailbox router internally.
-Fabric 1.1 uses the mandatory CPU TX metadata header; management 1.2 reports
-that ABI. PL MAC and PHY management are 1.1 for independent byte pacing and software advertisement control. GEM/SFP remain at 1.0. See [migration and verification](../docs/ip-partitioning.md).
+assembly. Management 2.0 owns independent pending mailboxes for all 13 banks,
+with source-clock activity monitoring. Fabric and GEM 2.0 use per-bank select
+buses; PL MAC 1.2 and SFP 1.1 add clock-progress outputs. PL PHY management
+remains 1.1. These source versions require matching statistics ABI-2 firmware;
+the matching image and firmware were deployed and tested on 2026-09-26. See [interface contracts](INTERFACES.md).
+
 
 ## Generate and validate a catalog
 

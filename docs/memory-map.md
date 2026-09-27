@@ -195,7 +195,7 @@ inside an aperture are not allocatable memory.
 | `0x80100000–0x8010FFFF` | 64 KiB | Fabric diagnostics and link control | R5 link task controls port admission/flush; PL supplies status/events; also per-port forward/learn enable, a CPU TX destination override, and a CPU RX ingress-port tag for control-protocol hooks, owned by `software/r5/src/pstate.c`/`fabric_dma.c`; `stp_task.c` is the current consumer running real STP |
 | `0x80110000–0x8011FFFF` | 64 KiB | MAC-table dump control (fabric 1.2) | CPU supplies an exclusively owned 32 KiB aligned DDR destination; dump engine writes through HP0. See [DMA contract](mac-table-dump.md). |
 
-Statistics extend this aperture at offsets `0x24–0x34`; the R5 statistics
+Statistics extend this aperture at offsets `0x24–0x38`; the R5 statistics
 task exclusively owns read/clear DATA. Accumulated totals and sensor snapshots
 are normal cacheable R5 BSS, with no new fixed DDR reservation. See
 [statistics.md](statistics.md) for the protocol and software access rules.

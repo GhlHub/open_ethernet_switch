@@ -161,3 +161,16 @@ python3 scripts/check_mac_table.py 10.0.1.104 --source 10.0.1.24 --refresh
 ```
 Omit `--refresh` to read only the cached snapshot.
 See [hardware burst and ownership details](mac-table-dump.md).
+
+## Statistics bank availability
+
+The statistics page now includes each bank's state, last complete collection
+age, clock-unavailable episodes and active-clock timeout attempts. Totals remain
+visible when stale; a stopped port clock no longer prevents other banks from
+refreshing. `/api/statistics` adds `banks`, 13 rows of
+`[state, age_ms, clock_unavailable_events, active_clock_timeouts, hardware_status]`.
+The page retains its one-second refresh and public read access. State encodings
+are documented in [statistics.md](statistics.md). This requires matching ABI-2
+hardware/firmware; both were deployed on 2026-09-26. Live browser testing
+passes with 13 bank rows, advancing collection, one-second refresh and no
+JavaScript errors, including while GEM1 RX has no clock progress.

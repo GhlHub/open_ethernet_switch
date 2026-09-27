@@ -190,22 +190,43 @@ snapshot across ports, directions or packet/byte counters.
 R5 polls at 250 ms using `vTaskDelayUntil`, accumulating additive counters in
 64-bit values and maximum-latency counters by maximum. `late_polls` records
 poll starts more than 500 ms apart. There is no hard scheduling guarantee:
-saturation and timeout flags make missed intervals visible. If a source clock
-stops, the AXI read returns a timeout sentinel after approximately 27.3 µs,
-retaining the request. Firmware retries that same index on its next poll;
-a delayed snapshot is not discarded or attributed to another counter.
-Firmware separately counts `mailbox_release_timeouts` (the approximately
-100 us software BUSY-release deadline) and `snapshot_response_timeouts`
-(the hardware DATA timeout sentinel). `read_timeouts` remains their combined
-total. The software deadline includes task preemption; neither counter
-alone identifies the affected bank/index. Additional software arrays now
-count each timeout class by bank/slot. Last response index and last release
-active/target indices are retained (UINT32_MAX until the first event). Release
-attribution uses the active hardware INDEX register; the target records the
-counter firmware was about to select. These diagnostics are exposed through
-SNMP and do not change hardware or retry sequencing.
-While that request is pending, other counter reads are deferred. Forwarding
-and the link task continue; delayed statistics may saturate.
+saturation and timeout flags make missed intervals visible. Each bank now has an independent management-domain mailbox. If a source
+clock stops, the AXI DATA access returns a timeout sentinel after approximately
+28.7 us (4,095 control clocks). Only that CPU access ends: the source request,
+selected slot and any captured result remain owned by that bank. Other banks
+continue collecting. Firmware retries each unavailable bank on its next 250 ms
+poll without a software BUSY loop. A captured result is consumed exactly once,
+even if the source clock stops after asserting ACK; its slot cannot change until
+source ACK release. An R5-only restart discovers and drains the hardware's pending
+slot before beginning a new scan. Independent source resets during a read still
+require coordinated recovery and are not made lossless by this change.
+
+Every source bank exports a registered four-bit Gray progress counter, independent
+of packet traffic. Two management-domain synchronizer stages monitor progress.
+After 2,048 unchanged control samples (about 14.3 us), the clock is classified as
+unavailable. The implemented source clocks are at most 125 MHz, below the
+142.857 MHz monitor clock; existing 7 ns source-to-control CDC maximum-delay
+bounds limit Gray-bus skew to less than one source period. New rates require
+rechecking that bound and the monitor sampling rate. A clock gap while a read is
+pending is sticky until the next transaction. This helps classify a timeout even
+if clocking resumes before firmware reads status. A held source reset also stops the progress counter; unavailable therefore
+means no observed source progress, not a physical clock-stop measurement.
+Clock activity alone does not prove mailbox logic is healthy.
+
+`bank[13]` health reports distinguish absent (0), current (1), unavailable clock /
+stale totals (2), active-clock read fault / stale totals (3), and not sampled (4).
+Each bank exposes its last complete collection age, observed clock-unavailable
+episodes, active-clock timeout attempts and hardware status. Retained totals
+remain visible; a partial bank pass does not advance its completion timestamp.
+Clock-unavailable episodes count state transitions observed by the collector,
+not every physical clock stop. Legacy `read_timeouts` and per-index release /
+response diagnostics now count active-clock faults only. Optional banks absent
+from the matching build are marked absent. ABI mismatch disables all collection.
+
+The independent mailbox ABI is **0x53540200**, with capability bits 0=ports,
+1=DDR and 2=debug. It requires matching hardware and firmware; no compatibility
+with the former shared-mailbox ABI is provided. Source counter widths are
+unchanged; saturation remains visible if collection is delayed excessively.
 
 ## Register interface
 
@@ -213,11 +234,18 @@ The interface extends the existing diagnostic aperture at `0x80100000`:
 
 | Offset | Register | Semantics |
 | --- | --- | --- |
-| `0x24` | ABI/capabilities | `0x53540101` standard; bit 1 DDR, bit 2 debug; ABI version 1 in bits 15:8 |
+| `0x24` | ABI/capabilities | `0x53540201` standard; bit 1 DDR, bit 2 debug; ABI version 1 in bits 15:8 |
 | `0x28` | INDEX | Bits 7:4 bank, bits 3:0 slot; writable only when idle |
 | `0x2C` | DATA | Read/clear selected counter; `0xFFFFFFFF` means timeout, not a count |
-| `0x30` | BUSY | Bit 0 request held, bit 1 synchronized ack; wait for zero before changing INDEX |
+| `0x30` | BUSY | Bit 0 CPU access active, bit 1 result acknowledgment; not source-bank busy |
 | `0x34` | FABRIC_HZ | `125000000` |
+
+`0x38` is the selected bank's read-only status: bit 0 pending, bit 1 ready,
+bit 2 source ACK release busy, bit 3 clock progressing, bits 7:4 retained slot,
+bit 8 clock gap during the retained transaction. INDEX may select a different
+bank while another is pending; selecting a different slot within the pending
+bank cannot cancel or retarget its read. `0x30` describes the CPU-side access,
+not all source requests.
 
 Banks 0/1 are GEM0 RX/TX, banks 2/3 GEM1 RX/TX, each with four
 slots (good packets, bad packets, good bytes, bad bytes). Banks 4/5/6/7 are
@@ -225,8 +253,9 @@ PL0/PL1/SFP/CPU, each with all eight slots. Banks 8–12 are described above.
 Unimplemented slots/banks return zero. A disabled optional bank also returns
 zero; consult capabilities rather than inferring support from zero counts.
 
-After DATA times out, INDEX stays locked until the delayed read is completed.
-Retry DATA without changing INDEX; then wait for BUSY=0. A coordinated hardware
+After DATA times out, INDEX can select another bank. To retry the original
+bank, use the retained slot from BANK_STATUS (0x38); never substitute a
+different slot for a pending destructive read. A coordinated hardware
 reset discards counters and mailbox state; firmware totals must be treated as
 a new measurement epoch when restarting the whole design.
 

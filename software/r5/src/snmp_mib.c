@@ -17,7 +17,7 @@ static void add(struct snmp_mib *m, unsigned group, unsigned column,
     memcpy(o->oid.arc,root,sizeof(root));
     o->oid.length=sizeof(root)/sizeof(root[0]);
     o->oid.arc[o->oid.length++]=group;
-    if ((group>=2 && group<=4) || group==6) o->oid.arc[o->oid.length++]=1;
+    if ((group>=2 && group<=4) || group==6 || group==7) o->oid.arc[o->oid.length++]=1;
     o->oid.arc[o->oid.length++]=column;
     o->oid.arc[o->oid.length++]=row;
     o->instance_arcs=1; o->type=type; o->number=value; o->text=text;
@@ -114,4 +114,12 @@ void snmp_mib_build(struct snmp_mib *m,const struct statistics_snapshot *s,
             o->instance_arcs=2;
         }
     }
+    // Bank health is public, like the accumulated statistics. Row is bank+1.
+    for (unsigned col=1;col<=5;col++) for (unsigned b=0;b<13;b++) {
+        const struct statistics_bank_snapshot *h=&s->bank[b];
+        uint32_t n=col==1?h->state:col==2?age(now,h->last_success,hz):
+                   col==3?h->clock_unavailable_events:col==4?h->active_clock_timeouts:h->hardware_status;
+        add(m,7,col,b+1,col==3 || col==4?COUNTER:GAUGE,n,NULL);
+    }
+
 }

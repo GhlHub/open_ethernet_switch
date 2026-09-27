@@ -106,6 +106,15 @@ size_t web_stats(char *out,size_t size,const struct statistics_snapshot *s,
         s->available?"true":"false",s->capabilities,s->polls,s->late_polls,s->saturated_reads,s->read_timeouts,s->mailbox_release_timeouts,s->snapshot_response_timeouts,s->last_release_index,s->last_release_target_index,s->last_response_index,
         (unsigned long long)((hz && s->timestamp && now>=s->timestamp)?(now-s->timestamp)*1000/hz:UINT32_MAX));
     values(&w,&s->port[0][0],6,8);
+    put(&w,",\"banks\":[");
+    for (unsigned b=0;b<13;b++) {
+        const struct statistics_bank_snapshot *h=&s->bank[b];
+        uint64_t elapsed=(hz && h->last_success && now>=h->last_success)?now-h->last_success:UINT64_MAX;
+        uint32_t age=(elapsed==UINT64_MAX || elapsed/hz>UINT32_MAX/1000u)?UINT32_MAX:
+                     (elapsed*1000u/hz>UINT32_MAX?UINT32_MAX:(uint32_t)(elapsed*1000u/hz));
+        put(&w,"%s[%u,%u,%u,%u,%u]",b?",":"",h->state,age,h->clock_unavailable_events,h->active_clock_timeouts,h->hardware_status);
+    }
+    put(&w,"]");
     put(&w,",\"fabric_hz\":%u",s->fabric_hz);
     put(&w,",\"speed_mbps\":[%u,%u,%u,%u,%u,%u]",ports->speed_mbps[0],ports->speed_mbps[1],ports->speed_mbps[2],ports->speed_mbps[3],ports->speed_mbps[4],ports->speed_mbps[5]);
 #if STATS_DDR

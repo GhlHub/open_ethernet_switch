@@ -141,6 +141,11 @@ class SnmpTests(unittest.TestCase):
         self.assertEqual([v[1] for v in vals],[0x81,0x81,0x80])
         self.assertEqual(decode(respond(request([ROOT+(6,1,1)],op=0xa1)))[3][0][0],ROOT+(6,1,1,0,0))
 
+    def test_bank_health(self):
+        names=[ROOT+(7,1,c,3) for c in range(1,6)]
+        vals=decode(respond(request(names)))[3]
+        self.assertEqual([v[2] for v in vals],[2,200,3,1,0x101])
+
     def test_exceptions(self):
         names=[ROOT+(2,1,3,99),ROOT+(99,0),ROOT+(1,1)]
         vals=decode(respond(request(names)))[3]
@@ -150,14 +155,14 @@ class SnmpTests(unittest.TestCase):
     def test_walk_sorted_unique_complete(self):
         cursor=(0,0)
         walk=[]
-        for _ in range(400):
+        for _ in range(500):
             val=decode(respond(request([cursor],op=0xa1)))[3][0]
             if val[1]==0x82:
                 break
             self.assertGreater(val[0],cursor)
             cursor=val[0]
             walk.append(val)
-        expected=201+(100 if FLAGS&2 else 0)+(64 if FLAGS&4 else 0)
+        expected=266+(100 if FLAGS&2 else 0)+(64 if FLAGS&4 else 0)
         self.assertEqual(len(walk),expected)
         for group,bit in [(3,2),(4,4)]:
             self.assertEqual(any(v[0][:9]==ROOT+(group,) for v in walk), bool(FLAGS&bit))

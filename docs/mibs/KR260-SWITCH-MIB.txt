@@ -16,7 +16,7 @@ kr260Switch MODULE-IDENTITY
          clear them. A walk spans multiple collection intervals. Check
          collection health and sensor validity before interpreting values."
     REVISION "202609260000Z"
-    DESCRIPTION "Add hardware fabric frequency for DDR/debug cycle interpretation."
+    DESCRIPTION "Add independent-bank availability, age, clock-unavailable episodes and active-clock faults."
     REVISION "202609220000Z"
     DESCRIPTION "Separate timeout causes and add per-bank/slot counts and latest indices."
     REVISION "202609210000Z"
@@ -37,7 +37,7 @@ krStatsCapabilities OBJECT-TYPE
     SYNTAX Gauge32
     MAX-ACCESS read-only
     STATUS current
-    DESCRIPTION "Raw hardware ABI and capability word; expected ABI 0x53540100 with bits 0 port, 1 DDR, 2 debug."
+    DESCRIPTION "Raw hardware ABI and capability word; expected ABI 0x53540200 with bits 0 port, 1 DDR, 2 debug."
     ::= { krHealth 2 }
 
 krStatsPolls OBJECT-TYPE
@@ -93,17 +93,17 @@ krStatsMailboxReleaseTimeouts OBJECT-TYPE
     SYNTAX Counter32
     MAX-ACCESS read-only
     STATUS current
-    DESCRIPTION "R5 waits for BUSY to clear before selecting a counter.
-        Counts waits exceeding the approximately 100 microsecond software
-        deadline, which includes any task preemption. Included in krStatsReadTimeouts."
+    DESCRIPTION "Counts active-clock source ACK-release failures observed at the bounded
+        hardware DATA deadline. Firmware does not busy-wait. Included in
+        krStatsReadTimeouts; unavailable-clock episodes are separate."
     ::= { krHealth 10 }
 
 krStatsSnapshotResponseTimeouts OBJECT-TYPE
     SYNTAX Counter32
     MAX-ACCESS read-only
     STATUS current
-    DESCRIPTION "DATA reads returning the hardware timeout sentinel.
-        The snapshot acknowledgment deadline is approximately 27.3 microseconds.
+    DESCRIPTION "Active-clock DATA reads returning the hardware timeout sentinel.
+        The snapshot acknowledgment deadline is approximately 28.7 microseconds.
         The pending index is retried on the next poll. Included in krStatsReadTimeouts."
     ::= { krHealth 11 }
 
@@ -541,7 +541,7 @@ krTimeoutReleaseCount OBJECT-TYPE
     SYNTAX Counter32
     MAX-ACCESS read-only
     STATUS current
-    DESCRIPTION "Software BUSY-release deadline timeouts attributed to this
+    DESCRIPTION "Active-clock source ACK-release timeouts attributed to this
         active hardware counter index. See krStatsLastReleaseTargetIndex for
         the last counter that firmware was attempting to select."
     ::= { krTimeoutEntry 1 }
@@ -550,7 +550,7 @@ krTimeoutResponseCount OBJECT-TYPE
     SYNTAX Counter32
     MAX-ACCESS read-only
     STATUS current
-    DESCRIPTION "Hardware DATA snapshot-response timeouts for this index."
+    DESCRIPTION "Active-clock DATA snapshot-response timeouts for this index. Clock-unavailable events are reported separately in krBankTable."
     ::= { krTimeoutEntry 2 }
 
 krTimeoutBank OBJECT-TYPE
@@ -569,5 +569,80 @@ krTimeoutSlot OBJECT-TYPE
     DESCRIPTION "Slot within the hardware bank; see statistics.md for definitions.
         Banks 0-3 implement 0-3; banks 4-11 implement 0-7; bank 12 implements 0-15."
     ::= { krTimeoutEntry 4 }
+
+krBankTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF KrBankEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Independent statistics-bank health, including absent optional banks."
+    ::= { kr260Switch 7 }
+
+krBankEntry OBJECT-TYPE
+    SYNTAX KrBankEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Bank row 1-13 corresponds to hardware bank 0-12."
+    INDEX { krBankIndex }
+    ::= { krBankTable 1 }
+
+KrBankEntry ::= SEQUENCE {
+    krBankState Gauge32,
+    krBankAge Gauge32,
+    krBankClockUnavailable Counter32,
+    krBankActiveClockTimeouts Counter32,
+    krBankHardwareStatus Gauge32,
+    krBankIndex Integer32
+}
+
+krBankState OBJECT-TYPE
+    SYNTAX Gauge32 (0..4)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "0 absent, 1 current, 2 clock unavailable (totals stale),
+        3 active-clock read fault (totals stale), 4 not sampled."
+    ::= { krBankEntry 1 }
+
+krBankAge OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "milliseconds"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Time since last complete bank collection; saturates at
+        4294967295, also used when the bank has never completed collection."
+    ::= { krBankEntry 2 }
+
+krBankClockUnavailable OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Episodes observed by the collector when a source clock is
+        unavailable, including a clock gap retained during a pending read.
+        Repeated unavailable polls count once until bank recovery. Not a
+        count of every physical clock stop; brief unobserved gaps may be missed."
+    ::= { krBankEntry 3 }
+
+krBankActiveClockTimeouts OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Read attempts that time out while clock activity is present
+        and no clock gap was recorded for the pending transaction."
+    ::= { krBankEntry 4 }
+
+krBankHardwareStatus OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Last sampled bank status: bit 0 pending, bit 1 result ready,
+        bit 2 source ACK release busy, bit 3 clock progressing, bits 7:4
+        retained slot, bit 8 clock gap during the retained transaction."
+    ::= { krBankEntry 5 }
+
+krBankIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..13)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "One-based bank index."
+    ::= { krBankEntry 6 }
 
 END

@@ -57,6 +57,10 @@ async function refresh(){if(busy)return;busy=true;try{
  if(s.ddr)html+=table('Fabric ↔ DDR',['Direction',...ddrCols],s.ddr.map((v,i)=>[['Physical ingress write','Physical egress read','CPU write','CPU read'][i],...v]));
  if(s.debug)html+=table('Debug counters',['Counter','Total (cycles, except AXI errors)'],s.debug[0].map((v,i)=>[debugNames[i],v]));
  const health=['capabilities','polls','age_ms','late_polls','saturated_reads','read_timeouts','release_timeouts','response_timeouts','last_release_index','last_release_target_index','last_response_index'];
+ const bankNames=['GEM0 RX','GEM0 TX','GEM1 RX','GEM1 TX','PL0','PL1','SFP','CPU','Physical ingress write','Physical egress read','CPU write','CPU read','Debug'];
+ const bankStates=['Not built','Current','Clock unavailable — stale','Clock active, read fault — stale','Not sampled'];
+ html+=table('Statistics availability',['Bank','Status','Last complete collection (ms ago)','Clock-unavailable episodes','Active-clock timeouts'],(s.banks||[]).map((b,i)=>[bankNames[i],bankStates[b[0]]||'Unknown',b[1]===4294967295?'Never':b[1],b[2],b[3]]));
+ html+='<p>Unavailable banks retain their accumulated totals. Other banks continue updating. Clock-unavailable episodes are separate from collector faults.</p>';
  html+=table('Collector health',['Field','Value'],health.map(k=>[k,k.startsWith('last_')&&s[k]===4294967295?'None':s[k]]));
  html+=table('Timeout locations',['Bank','Slot','Release timeouts','Response timeouts'],s.timeouts);
  const v=s.sensors, valid=(bit,value,unit)=>v.valid_mask&bit?`${value} ${unit}`:'Unavailable';

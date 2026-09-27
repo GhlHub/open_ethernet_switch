@@ -57,6 +57,16 @@ def check(catalog):
             v = ports[port].find('s:wire/s:vector', NS)
             return 1 if v is None else abs(int(v.findtext('s:left', namespaces=NS)) - int(v.findtext('s:right', namespaces=NS))) + 1
 
+        bank_counts = {'gem_port': 2, 'pl_port': 1, 'sfp_port': 1, 'switch_fabric': 6}
+        if name in bank_counts:
+            for pin in ('stats_select', 'stats_activity'):
+                assert width(pin) == 4 * bank_counts[name], f'{name}/{pin}: wrong bank width'
+        if name == 'management':
+            for endpoint, count in {'gem0':2, 'gem1':2, 'pl0':1, 'pl1':1, 'sfp':1, 'fabric':6}.items():
+                for suffix in ('select', 'activity'):
+                    pin = endpoint + '_' + suffix
+                    assert width(pin) == 4 * count, f'{name}/{pin}: wrong bank width'
+
         for bus in associations:
             interface = buses[bus]
             kind = interface.find('s:busType', NS).get('{' + NS['s'] + '}name')

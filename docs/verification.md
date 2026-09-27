@@ -1,5 +1,128 @@
 # Design inventory verification
 
+## 2026-09-26 Independent statistics-bank mailboxes (deployed)
+
+Statistics ABI 2 (`0x53540200` plus capability bits) replaces the single
+outstanding read with thirteen independent source transactions. A stopped bank
+retains its slot, request and captured result while other banks continue. A
+registered Gray progress counter identifies lack of source progress, including
+a held source reset. R5 reports stale-bank age and clock-unavailable episodes
+separately from active-clock faults through SNMP table 7 and the public web page.
+Firmware has no software BUSY loop and retries unavailable banks every 250 ms.
+
+Focused management simulations pass at both the original test clock and a
+2.5 MHz source with the production 4,095-cycle deadline. They cover stopped
+clock before request, attempts to retarget the pending slot, healthy-bank
+collection while another is stopped, recovery without duplicate/lost counts,
+and a clock stopping after capture with ACK release still blocked. AXI response
+backpressure, saturation, simultaneous increment/clear, all 256 indices and
+optional-counter configurations remain covered.
+
+R5 tests pass in all four counter configurations, including startup with a
+captured hardware result, five consecutive unavailable polls, active-clock
+release/response fault attribution and exact accumulation through recovery.
+SNMP tests validate new health values and complete sorted walks. Net-SNMP parses
+the updated MIB. Browser tests pass with the new stale-bank status table and
+existing one-second refresh. The all-counter R5 firmware builds and passes ELF
+memory-region checks. Standalone management-IP synthesis passes (784 LUTs,
+981 registers for the entire management IP, not whole-board utilization).
+
+Fresh catalog and production BD generation, source/interface-width checks, and
+31 native plus 31 packaged IP tests pass. Whole-switch regressions pass in
+all four counter configurations. Generated production/native datapath comparison
+also passes (133 outputs and 257 statistics requests). All eleven acceptance
+gates pass. Artifacts are in
+`build/ip_refactor/mailboxes_final/`; firmware/browser/MIB and management-synthesis
+logs use the `build/ip_refactor/mailboxes_*` prefix.
+
+Full-board synthesis, place-and-route and bitstream generation pass. The
+all-counter R5 ELF was rebuilt and deployed with the matching image over JTAG
+using `10.0.1.107:3121`. The SD configuration loaded and DHCP reacquired
+`10.0.1.104`. Hardware and firmware both report ABI/capabilities `0x53540207`.
+GEM1 links at 100 Mb/s to the isolated endpoint; PL0 uplink and PL1 miner link
+at 1 Gb/s. This remains a volatile JTAG deployment.
+
+Routed results (`build/ip_refactor/mailboxes_final/reports/`):
+
+| Check | Result |
+| --- | --- |
+| Overall setup / hold | +0.018 / +0.010 ns; TNS and THS zero |
+| Fabric 125 MHz setup | +1.236 ns |
+| PL0 TX to forwarded TX clock | +0.018 ns (worst setup path family) |
+| PL1 TX to forwarded TX clock | +0.053 ns |
+| Bus skew | All 31 checks pass; minimum margin +5.802 ns |
+| Resources | 30,848 LUTs; 39,769 registers; 51.5 BRAM tiles |
+| Bitstream generation | Zero errors and critical warnings |
+
+CDC review is not a blanket clean report. Compared with the prior PL multirate
+image, CDC-10 falls from 13 to zero and CDC-12 from eight to zero. Existing
+2,632 CDC-1 held bundled-data classifications and two CDC-11 reset fan-out
+classifications remain. The 13 additional CDC-6 warnings correspond to the new
+registered four-bit Gray progress buses with two-stage ASYNC_REG synchronizers.
+Their worst routed datapath is 0.707 ns, within the 7 ns constraint and fastest
+8 ns source period. Select, request, snapshot-data and acknowledgement families
+all have positive constrained slack (minimum 3.386 ns). The select/result
+stability protocol was reviewed with the request/ACK sequencing. External
+MDIO/RGMII timing budgets and reset fan-out remain backlog items.
+`ip_repo/review_timing_cdc.tcl` now reports the independent-mailbox paths.
+
+The bitstream SHA-256 is
+`c31ffd3d17cbdc87a36d4360dfec56aefff5f0a69243cdd7a8dbcdc827b758f0`;
+the R5 ELF SHA-256 is
+`6495c808de155d77675dead3a2999e05df6dede51596963338f49372d66f89c3`.
+Both are recorded in `build/ip_refactor/mailboxes_final/artifacts.sha256`.
+
+Board qualification uses `scripts/check_statistics_banks.py`, a read-only
+HTTP monitor that checks bank freshness, unavailable states, collector progress,
+and fault/late-poll/saturation deltas. For example:
+
+```sh
+python3 scripts/check_statistics_banks.py 10.0.1.104 --source 10.0.1.24 \
+  --seconds 60 --unavailable-bank 2 --output /tmp/stopped-banks.jsonl
+```
+
+Omit `--unavailable-bank` when all implemented banks should be fresh. The
+checker does not change PHY state or read destructive hardware counters.
+
+Live board checks passed:
+
+- Linked baseline: 30 seconds / 120 collector polls; all 13 banks fresh.
+  100/100 full-size pings each to the R5 and forwarded miner.
+- Controlled GEM1 PHY power-down: PHY 9 BMCR changed from `0x1000` to
+  `0x1800`, with the R5 briefly stopped at the link task's MDIO entry to avoid
+  concurrent MDIO access, then resumed. This is volatile and leaves SD settings
+  unchanged. The [DP83867 datasheet](https://www.ti.com/lit/ds/symlink/dp83867cs.pdf)
+  documents BMCR power-down with MDIO access retained. Bank 2 reported no source
+  progress, state 2 and one unavailable episode; its stale age advanced from
+  20.449 to 80.448 seconds during the monitored window. All other banks stayed
+  fresh through 60 seconds / 240 polls, with no new active-clock faults,
+  saturation or late polls. R5 and miner each answered 250/250 full-size pings.
+- Restored original BMCR plus autonegotiation restart: register settled back
+  to `0x1000`, GEM1 recovered at 100 Mb/s and bank 2 returned to current state
+  without a reboot. The recovery monitor passed 30 seconds / 120 polls with all
+  13 banks fresh; unavailable episode count remains one and active-clock
+  timeout count remains zero. Both destinations answered
+  another 100/100 full-size pings after recovery.
+- Live SNMP walks showed the new bank-health rows in stopped and recovered
+  states. Chromium showed 13 bank rows with one-second refresh and no JavaScript
+  errors while GEM1 was unavailable. HTTP concurrency passed 120 mixed requests
+  from six clients, service alongside two idle clients, authentication rejection
+  isolation and overload recovery. Port configuration matched its pre-test state.
+
+Across the three traffic windows, both destinations answered 450/450 full-size
+pings (1,472-byte ICMP payload). Debugger halt/PHY transitions were excluded
+from these traffic windows. Each debugger pause caused one late-poll increment
+(two total); no late polls occurred during the steady-state observation windows.
+Snapshot-response and release timeout counters remain zero. Exact destructive
+counter retention around every request/ACK phase is simulation coverage, not
+proven by these live traffic measurements. The controlled power-down establishes
+stopped-clock isolation/recovery, not the cause of every historical cable-unplug
+timeout. Broader cable-flap, independent-reset and saturated-load testing remain.
+Logs and JSON captures are under `build/ip_refactor/mailboxes_final/`.
+
+Independent source resets during a destructive read still require coordinated
+recovery; this change specifically handles stopped/resumed clocks.
+
 ## 2026-09-26 PL 10/100/1000 implementation validation
 
 PL MAC and PHY-management packages are now version 1.1. The board rate

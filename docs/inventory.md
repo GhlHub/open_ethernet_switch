@@ -7,9 +7,9 @@ milestones and may describe issues subsequently fixed.
 
 | Priority | Work | Completion criteria |
 | --- | --- | --- |
-| 1 | Timing and CDC closure | Complete MDIO timing constraints and RGMII board/PHY budgets; review statistics mailbox crossings and SmartConnect reset fan-out. Current routed timing passes, but overall setup margin is 19 ps. |
+| 1 | Timing and CDC closure | Complete MDIO timing constraints and RGMII board/PHY budgets; complete review of bundled-data CDC classifications and SmartConnect reset fan-out. Independent mailbox and Gray-progress paths were reviewed; current routed timing passes, but overall setup margin is 18 ps. |
 | 2 | Sustained-load qualification | Exercise simultaneous ports, minimum-size frames, flooding and buffer exhaustion. Measure throughput, latency and loss, plus MAC-dump completion time and forwarding impact under contention. Dump starvation under continuous traffic is permitted by its priority policy. |
-| 3 | Recovery and fault injection | Test cable flaps, stopped/restarted clocks, independent resets, AXI errors, queue flushes and recovery without reboot. A timed-out dump must retain buffer ownership until hardware completion or coordinated reset. |
+| 3 | Recovery and fault injection | Extend the passing GEM1 stopped/resumed-clock test to cable flaps and other banks; test independent resets, AXI errors, queue flushes and recovery without reboot. A timed-out dump must retain buffer ownership until hardware completion or coordinated reset. |
 | 4 | Remaining physical IP partitioning | Package RGMII and SFP transceiver/clock/reset shells with owned constraints, reset contracts and reusable verification. |
 | 5 | Speed expansion | PL copper 10/100/1000 full-duplex functional qualification passes on both ports (see [speed support](pl-ethernet-speeds.md)). Widen the SFP packet interface to 128 bits before faster MAC/PCS/transceiver development for 1/2.5/5/10G. GEM0 remains board-limited to 1G. |
 | 6 | STP completion | Resolve remaining protocol/state and CPU RX-tag ownership issues, add web enable/disable and persistent settings, then verify loops and topology recovery. STP remains disabled. The old CPU TX override crossing has already been removed. |
@@ -21,9 +21,14 @@ Completed: CPU TX frame metadata/override CDC removal, pipelined CPU DDR writes,
 MAC-table web page, packaged PL PHY management, and full-duplex PL 10/100/1000.
 Both PL ports pass CPU/forwarded ping, HTTP and SNMP checks at every speed;
 long-duration, congested mixed-speed and simultaneous-all-port qualification
-remain open. Three snapshot-response timeouts were observed on unplugged GEM1
-RX bank 2 during the PL0 run; the cause needs investigation (see
-[verification](verification.md#2026-09-26-pl-101001000-implementation-validation)). Broader management
+remain open. Unplugged GEM1 RX timeouts are consistent with intermittent receive-clock
+pauses. Independent-bank mailboxes, Gray clock-progress monitoring, and R5 /
+SNMP / web availability reporting are deployed as ABI 2. Full-board
+implementation and routed timing review pass. Controlled GEM1 PHY power-down
+confirms that bank 2 becomes stale while the other twelve banks continue, then
+recovers without reboot. Both the CPU and forwarded miner passed 450/450
+full-size pings across linked, stopped-clock and recovered windows. See
+[statistics](statistics.md) and [deployment evidence](verification.md#2026-09-26-independent-statistics-bank-mailboxes-deployed). Broader management
 features such as LLDP/LACP and SNMPv3 are separate feature work.
 
 ## PL PHY-management catalog partition (2026-09-26 deployed)

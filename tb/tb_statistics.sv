@@ -8,7 +8,10 @@ module tb_statistics;
  reg [31:0] wdata=0;
  wire awready,wready,bvalid,arready,rvalid;
  wire [31:0] rdata;
- wire request,ack; wire [7:0] index; wire [31:0] value;
+ wire request,ack,take; wire [7:0] index; wire [31:0] value,state;
+ wire [12:0] requests,acks; wire [12:0][3:0] selects,activity; wire [12:0][31:0] vals;
+ assign acks[12:1]=0; assign activity[12:1]=0; assign vals[12:1]=0;
+ stats_mailboxes boxes(.clk(clk),.rst_n(rst_n),.request(request),.take(take),.index(index),.ack(ack),.value(value),.status(state),.source_request(requests),.source_select(selects),.source_ack(acks),.source_value(vals),.source_activity(activity));
  reg [1:0][31:0] inc=0;
  rx_diag_regs #(.STATS_DDR(1),.STATS_DEBUG(1),.STATS_TIMEOUT(30)) csr
  (.clk(clk),.rst_n(rst_n),.s_axi_awaddr(awaddr),.s_axi_awvalid(awvalid),.s_axi_awready(awready),
@@ -19,9 +22,9 @@ module tb_statistics;
   .flags_i(4'b0),.idelay_rdy_i(2'b0),.clear_o(),.sfp_status_i(16'b0),.sfp_pcs_status_i(4'b0),
   .sfp_force_disable_o(),.sfp_clr_fault_seen_o(),.sfp_clr_removed_seen_o(),.sfp_clr_lockout_o(),
   .link_up_o(),.link_flush_tog_o(),.link_flush_busy_i(1'b0),.phy_link_i(2'b0),.link_event_set_i(6'b0),.link_irq_o(),
-  .stats_request(request),.stats_index(index),.stats_ack(ack),.stats_value(value));
+  .stats_take(take),.stats_state(state),.stats_request(request),.stats_index(index),.stats_ack(ack),.stats_value(value));
  stats_bank #(.N(2),.WIDTH(8)) bank (.clk(source_clk),.rst_n(rst_n),.increment(inc),
-  .request(request),.select(index[3:0]),.ack(ack),.value(value));
+  .request(requests[0]),.select(selects[0]),.activity(activity[0]),.ack(acks[0]),.value(vals[0]));
  task automatic wr(input [7:0] a,input [31:0] d);
   @(negedge clk);awaddr=a;wdata=d;awvalid=1;wvalid=1;
   @(posedge clk);while(!awready || !wready) @(posedge clk);
@@ -41,7 +44,7 @@ module tb_statistics;
  endtask
  initial begin
   repeat(6) @(negedge source_clk);rst_n=1;
-  rd('h24,'h53540107);
+  rd('h24,'h53540207);
   @(negedge source_clk);inc[0]=3;inc[1]=2;
   repeat(10) @(negedge source_clk);inc=0;
   rd('h2c,30); rd('h2c,0);
@@ -51,7 +54,7 @@ module tb_statistics;
   fork
    rd('h2c,0);
    begin
-    wait(bank.req_sync==3 && !ack);
+    wait(bank.req_sync==3 && !acks[0]);
     @(negedge source_clk);inc[1]=7;
     @(negedge source_clk);inc[1]=0;
    end
@@ -64,7 +67,7 @@ module tb_statistics;
   @(negedge source_clk);inc[1]=19;
   @(negedge source_clk);inc=0;source_run=0;
   rd('h2c,32'hffffffff);
-  wr('h28,0);rd('h28,1);
+  wr('h28,0);rd('h28,0);rd('h2c,32'hffffffff);wr('h28,1);
   source_run=1;repeat(10) @(posedge source_clk);
   rd('h2c,19);rd('h2c,0);
   $display("PASS: statistics CDC, clear races, saturation, AXI backpressure, stopped-clock retry");$finish;

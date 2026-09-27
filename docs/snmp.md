@@ -231,7 +231,21 @@ Port-table column 12 reports supported physical link speed in Mb/s (0, 10,
 100, 1000); column 13 reports requested copper advertisement bits (1=10FD,
 2=100FD, 4=1000FD; other ports return zero). Column 11 remains the inaccessible
 index. See [PS speed selection](ps-ethernet-speeds.md). All-counter builds now
-expose 365 total objects, including four standard system objects.
+exposed 365 total objects before the ABI-2 bank-health table. ABI-2
+all-counter builds expose 430 objects, including four standard system objects.
 
 PL0/PL1 now report their requested 10/100/1000 full-duplex advertisement masks
 in column 13, alongside GEM0/GEM1. See [PL speed support](pl-ethernet-speeds.md).
+
+## Independent-bank health (statistics ABI 2)
+
+The example PEN remains 32473. Table `.1.3.6.1.4.1.32473.1.7.1` exposes
+columns 1 state, 2 complete-collection age in ms, 3 clock-unavailable episodes,
+4 active-clock timeout attempts, and 5 last hardware status. Rows 1–13 map to
+hardware banks 0–12. State 0=absent, 1=current, 2=clock unavailable/stale,
+3=active-clock fault/stale, 4=not sampled. Age UINT32_MAX means never collected
+or saturated age. Existing totals remain readable while stale. The Python
+reader displays these rows. Legacy timeout tables now describe active-clock
+faults; expected unavailable-clock episodes are separate. Use matching ABI-2
+hardware and firmware; both were deployed on 2026-09-26. Live SNMP walks
+confirm all 13 bank rows, including GEM1 RX clock-unavailable reporting.

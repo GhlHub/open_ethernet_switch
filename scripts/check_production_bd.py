@@ -40,7 +40,8 @@ def check(path, compare_physical=False):
         connected(f'{cell}/m_axis', f'fabric/s{i:02}_axis', bus=True)
         connected(f'{cell}/s_axis', f'fabric/m{i:02}_axis', bus=True)
     for cell in CELLS:
-        connected('management/stats_select', cell + '/stats_select')
+        connected(f'management/{cell}_select', cell + '/stats_select')
+        connected(f'management/{cell}_activity', cell + '/stats_activity')
         suffixes = ('stats_request', 'stats_ack', 'stats_value') if cell in ['pl0', 'pl1', 'sfp'] else ('stats_req', 'stats_acks', 'stats_values')
         for pin, suffix in zip(('req', 'acks', 'values'), suffixes):
             connected(f'management/{cell}_{pin}', f'{cell}/{suffix}')

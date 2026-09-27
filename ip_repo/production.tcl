@@ -86,7 +86,18 @@ digital_net cpu_rx_tag 0 {fabric/cpu_rx_ingress_port_o management/cpu_rx_tag_i}
 digital_net cpu_rx_tag_valid 0 {fabric/cpu_rx_ingress_valid_o management/cpu_rx_tag_valid_i}
 digital_net cpu_rx_tag_pop 0 {fabric/cpu_rx_ingress_pop_i management/cpu_rx_tag_pop_o}
 digital_net fabric_req 0 {fabric/stats_req management/fabric_req}
-digital_net stats_select 0 {fabric/stats_select gem0/stats_select gem1/stats_select pl0/stats_select pl1/stats_select sfp/stats_select management/stats_select}
+digital_net fabric_select 0 {fabric/stats_select management/fabric_select}
+digital_net fabric_activity 0 {fabric/stats_activity management/fabric_activity}
+digital_net gem0_select 0 {gem0/stats_select management/gem0_select}
+digital_net gem0_activity 0 {gem0/stats_activity management/gem0_activity}
+digital_net gem1_select 0 {gem1/stats_select management/gem1_select}
+digital_net gem1_activity 0 {gem1/stats_activity management/gem1_activity}
+digital_net pl0_select 0 {pl0/stats_select management/pl0_select}
+digital_net pl0_activity 0 {pl0/stats_activity management/pl0_activity}
+digital_net pl1_select 0 {pl1/stats_select management/pl1_select}
+digital_net pl1_activity 0 {pl1/stats_activity management/pl1_activity}
+digital_net sfp_select 0 {sfp/stats_select management/sfp_select}
+digital_net sfp_activity 0 {sfp/stats_activity management/sfp_activity}
 digital_net fabric_acks 0 {fabric/stats_acks management/fabric_acks}
 digital_net fabric_values 0 {fabric/stats_values management/fabric_values}
 digital_net gem0_req 0 {gem0/stats_req management/gem0_req}
