@@ -8,6 +8,7 @@
 struct port_snapshot {
     uint8_t admin, physical, forwarding;
     uint8_t advertise[4], applied[4];
+    uint16_t sfp_requested; /* host rate: 0, 1000 or 10000; unsupported requests disable */
     uint16_t speed_mbps[6]; /* 0 = no supported resolved link / CPU virtual */
 };
 void board_ports_snapshot(struct port_snapshot *out);

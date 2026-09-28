@@ -84,7 +84,8 @@ module mac_addr_resolver
   import buf_mgr_pkg::*;
   import mac_table_pkg::*;
 #(
-  parameter int PORT_ID = 0
+  parameter int PORT_ID = 0,
+  parameter int DATA_WIDTH = 16
 ) (
   input  logic clk,
   input  logic rst_n,
@@ -96,8 +97,8 @@ module mac_addr_resolver
   // uniformly as malformed/short via word_pos_q + tlast alone (see the
   // "malformed/short frame" handling below) -- there is no case where the
   // exact tkeep value on a partial final word changes that outcome.
-  input  logic [15:0] s_axis_tdata_i,
-  input  logic [1:0]  s_axis_tkeep_i,
+  input  logic [DATA_WIDTH-1:0] s_axis_tdata_i,
+  input  logic [DATA_WIDTH/8-1:0] s_axis_tkeep_i,
   input  logic         s_axis_tvalid_i,
   input  logic         s_axis_tlast_i,
   input  logic         s_axis_tready_i,
@@ -182,6 +183,19 @@ module mac_addr_resolver
       // no longer applies to this one
       if (word_pos_q == 3'd0) mask_ready_next = 1'b0;
 
+      if (DATA_WIDTH == 128) begin
+        if (word_pos_q == 0) begin
+          for (integer b=0;b<6;b=b+1) begin
+            dest_mac_next[47-8*b -: 8] = s_axis_tdata_i[8*b +: 8];
+            src_mac_next[47-8*b -: 8] = s_axis_tdata_i[48+8*b +: 8];
+          end
+          issue_req = (&s_axis_tkeep_i[11:0]);
+          if (!issue_req) begin
+            mask_ready_next=1; dest_mask_next=0; ctrl_frame_next=0;
+          end
+        end
+        word_pos_next = s_axis_tlast_i ? 0 : 6;
+      end else begin
       if (word_pos_q < 3'd6) begin
         // case on a constant lane index, not a variable/register-indexed
         // part-select write -- see rtl/dma/ingress_port_wr.sv's own
@@ -220,6 +234,7 @@ module mac_addr_resolver
         end
       end else if (word_pos_q < 3'd6) begin
         word_pos_next = word_pos_q + 1'b1;
+      end
       end
     end
 

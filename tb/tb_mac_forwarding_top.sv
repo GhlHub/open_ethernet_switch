@@ -28,7 +28,7 @@
 
 `timescale 1ns/1ps
 
-module tb_mac_forwarding_top;
+module tb_mac_forwarding_top #(parameter SFP_DATA_WIDTH=16);
   import buf_mgr_pkg::*;
   import mac_table_pkg::*;
 
@@ -39,8 +39,8 @@ module tb_mac_forwarding_top;
   logic age_tick_i = 1'b0;
   logic [AGE_W-1:0] default_age_i = 9'd300;
 
-  logic [NUM_PORTS-1:0][15:0] s_axis_tdata;
-  logic [NUM_PORTS-1:0][1:0]  s_axis_tkeep;
+  logic [NUM_PORTS-1:0][SFP_DATA_WIDTH-1:0] s_axis_tdata;
+  logic [NUM_PORTS-1:0][SFP_DATA_WIDTH/8-1:0]  s_axis_tkeep;
   logic [NUM_PORTS-1:0]       s_axis_tvalid;
   logic [NUM_PORTS-1:0]       s_axis_tlast;
   logic [NUM_PORTS-1:0]       s_axis_tready;
@@ -52,7 +52,7 @@ module tb_mac_forwarding_top;
 
   assign s_axis_tready = {NUM_PORTS{1'b1}}; // see header note
 
-  mac_forwarding_top dut (
+  mac_forwarding_top #(.SFP_DATA_WIDTH(SFP_DATA_WIDTH)) dut (
     .dump_req_i(1'b0),.dump_bank_i(2'd0),.dump_addr_i(9'd0),
     .dump_gnt_o(),.dump_valid_o(),.dump_data_o(),
     .clk                (clk),
@@ -88,8 +88,8 @@ module tb_mac_forwarding_top;
                              input logic [47:0] src_mac, input int payload_len);
     byte data[];
     int n, i;
-    logic [15:0] word;
-    logic [1:0]  keep;
+    logic [SFP_DATA_WIDTH-1:0] word;
+    logic [SFP_DATA_WIDTH/8-1:0] keep;
     bit          is_last;
     n = 12 + payload_len;
     data = new[n];
@@ -99,7 +99,11 @@ module tb_mac_forwarding_top;
 
     i = 0;
     while (i < n) begin
-      if (i + 1 < n) begin
+      if (port==4 && SFP_DATA_WIDTH==128) begin
+        word=0;keep=0;
+        for(integer b=0;b<16;b=b+1) if(i+b<n) begin word[b*8+:8]=data[i+b];keep[b]=1;end
+        is_last=i+16>=n;
+      end else if (i + 1 < n) begin
         word = {data[i+1], data[i]}; keep = 2'b11; is_last = (i+2 >= n);
       end else begin
         word = {8'h00, data[i]}; keep = 2'b01; is_last = 1'b1;
@@ -109,7 +113,7 @@ module tb_mac_forwarding_top;
       s_axis_tvalid[port] <= 1'b1;
       s_axis_tlast[port]  <= is_last;
       @(posedge clk);
-      i = i + ((keep == 2'b11) ? 2 : 1);
+      i = i + ((port==4 && SFP_DATA_WIDTH==128) ? 16 : ((keep == 2'b11) ? 2 : 1));
     end
     s_axis_tvalid[port] <= 1'b0;
     s_axis_tlast[port]  <= 1'b0;
@@ -120,14 +124,18 @@ module tb_mac_forwarding_top;
   task automatic send_short_frame(input int port, input int n);
     byte data[];
     int i;
-    logic [15:0] word;
-    logic [1:0]  keep;
+    logic [SFP_DATA_WIDTH-1:0] word;
+    logic [SFP_DATA_WIDTH/8-1:0] keep;
     bit          is_last;
     data = new[n];
     for (i = 0; i < n; i++) data[i] = byte'(8'hE0 + i);
     i = 0;
     while (i < n) begin
-      if (i + 1 < n) begin
+      if (port==4 && SFP_DATA_WIDTH==128) begin
+        word=0;keep=0;
+        for(integer b=0;b<16;b=b+1) if(i+b<n) begin word[b*8+:8]=data[i+b];keep[b]=1;end
+        is_last=i+16>=n;
+      end else if (i + 1 < n) begin
         word = {data[i+1], data[i]}; keep = 2'b11; is_last = (i+2 >= n);
       end else begin
         word = {8'h00, data[i]}; keep = 2'b01; is_last = 1'b1;
@@ -137,7 +145,7 @@ module tb_mac_forwarding_top;
       s_axis_tvalid[port] <= 1'b1;
       s_axis_tlast[port]  <= is_last;
       @(posedge clk);
-      i = i + ((keep == 2'b11) ? 2 : 1);
+      i = i + ((port==4 && SFP_DATA_WIDTH==128) ? 16 : ((keep == 2'b11) ? 2 : 1));
     end
     s_axis_tvalid[port] <= 1'b0;
     s_axis_tlast[port]  <= 1'b0;

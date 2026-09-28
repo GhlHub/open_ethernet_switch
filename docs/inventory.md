@@ -430,8 +430,17 @@ The following development and verification remain incomplete.
 | Constraints and CDC review | Current routed reports retain 2,632 CDC-1, 13 CDC-10 and eight CDC-12 findings, plus two vendor SmartConnect reset fan-out CDC-11 rows. Review residual timing/CDC findings and the new diagnostics/PHY-start/sideband paths; verify hardware margins and reset contracts. See CDC review and verification evidence. |
 | Full-system verification | Expand the GEM0-to-CPU smoke test to all port pairs, learned unicast, flood, contention, exhaustion, reset/error recovery and sustained load through a shared memory/interconnect model. Test independent GEM RX/TX clocks; current benches tie each pair together. |
 
-A 10G SFP path would be a separate extension: the current 1000BASE-X PCS, 1G
-MAC, stream widths/rates, buffering, and memory bandwidth would all need review.
+The [selectable 10G SFP path](sfp-10g.md) now has a separate MAC/PCS and GTH,
+128-bit SFP buffering/header parsing and firmware host-rate detection. It is
+not deployed. Exact module power compatibility, hardware interoperability,
+CDC/timing qualification, sustained DDR throughput and lower copper rates
+with flow control remain outstanding. The default build remains fixed 1G.
+The [dual-rate build](sfp-dual.md) is now running through volatile JTAG and has
+passed basic 1G forwarding and Auto recovery with the installed SFP-GE-T.
+A subsequent hot swap to XZSNET copper acquired a 10G host link and passed
+basic bidirectional forwarding through a 2.5G-capable switch. Packet loss
+(also observed on copper-only controls), actual copper-rate confirmation,
+sustained traffic and broader peer qualification remain outstanding.
 
 ## Known gaps in existing RTL
 

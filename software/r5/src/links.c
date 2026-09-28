@@ -4,6 +4,11 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "xil_printf.h"
+#define SFP_BASE 0x800c0000UL
+#define SFP_DUAL_ID 0x4455414cu
+static uint32_t sfp_probe_ms;
+static unsigned sfp_applied_request=UINT16_MAX, sfp_target=10000;
+static bool sfp_pending;
 #define GEM0 0xff0b0000UL
 #define GEM1 0xff0c0000UL
 static bool ps_ready[2], pl_ready[2];
@@ -135,6 +140,20 @@ static void mac_init(void)
         mmio_write(gem+0x4c,1); /* external FIFO: never start GEM DMA */
     }
 }
+unsigned board_sfp_capabilities(void)
+{
+    uint32_t id=mmio_read(SFP_BASE+0x4f8);
+    return id==SFP_DUAL_ID?3u:id==0x31304745u?2u:1u;
+}
+unsigned board_sfp_host_rate(void)
+{
+    unsigned caps=board_sfp_capabilities();
+    return caps==3?mmio_read(SFP_BASE+0x4f0):caps==2?10000u:1000u;
+}
+void board_sfp_configure(unsigned speed)
+{
+    taskENTER_CRITICAL();ports.sfp_requested=(uint16_t)speed;taskEXIT_CRITICAL();
+}
 bool board_phy_mask(uint8_t *mask)
 {
     uint8_t up=0;
@@ -159,8 +178,11 @@ bool board_phy_mask(uint8_t *mask)
         if (ports.speed_mbps[i+2]) up |= 1u<<(i+2);
     }
     uint32_t sb=mmio_read(DIAG_BASE+4), pcs=mmio_read(DIAG_BASE+PCS_STATUS);
-    if (!(sb&0x1fu) && (pcs&0xfu)==7u) up |= 0x10;
-    ports.speed_mbps[4]=(up&0x10)?1000:0;
+    bool sfp_ready=board_sfp_capabilities()!=3 || (mmio_read(SFP_BASE+0x4e4)&0x0cu)==8u;
+    if (sfp_ready && !(sb&0x1fu) && (pcs&0xfu)==7u) up |= 0x10;
+    /* The 10G core reports host rate; copper rate is module-specific. */
+    unsigned sfp_host_rate=board_sfp_host_rate();
+    ports.speed_mbps[4]=(up&0x10)?sfp_host_rate:0;
     *mask=up; return true;
 }
 /* Single owner of all MAC/PHY changes. Called at 250 ms intervals. */
@@ -171,6 +193,24 @@ static void link_poll(void)
     uint8_t desired=observed & request.admin;
     uint32_t now=(uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS);
     bool busy=(mmio_read(DIAG_BASE+LINK_STATUS)&0x100u)!=0;
+    if(board_sfp_capabilities()==3) {
+        if(sfp_applied_request!=request.sfp_requested) {
+            sfp_applied_request=request.sfp_requested;
+            if(request.sfp_requested==1000 || request.sfp_requested==10000)
+                sfp_target=request.sfp_requested;
+            else sfp_target=10000;
+            sfp_pending=true;sfp_probe_ms=now;
+        }
+        if(observed&0x10u) sfp_probe_ms=now;
+        /* Probe only an enabled, present module; keep a working rate until
+         * link has been absent for four seconds. No EEPROM rate guess. */
+        if(!request.sfp_requested && (request.admin&0x10u) &&
+           !(mmio_read(DIAG_BASE+4)&1u) && !(observed&0x10u) &&
+           !sfp_pending && (uint32_t)(now-sfp_probe_ms)>=4000u) {
+            sfp_target=sfp_target==10000?1000:10000;sfp_pending=true;
+        }
+        if(sfp_pending) desired&=(uint8_t)~0x10u;
+    }
     for (unsigned i=0;i<2;i++) {
         bool change=!ps_ready[i] || ports.applied[i]!=request.advertise[i] ||
                     configured_speed[i]!=ports.speed_mbps[i];
@@ -230,6 +270,13 @@ static void link_poll(void)
                 if (speed) xil_printf("PL%u: %u Mb/s full duplex\r\n",i,speed);
             }
         }
+    }
+    if(sfp_pending && !(link_state.enabled&0x10u) && !busy &&
+       (uint32_t)(now-link_state.last_clear_ms)>=250u) {
+        mmio_write(SFP_BASE+0x4e0,sfp_target==10000?1u:0u);
+        sfp_pending=false;sfp_probe_ms=now;observed&=(uint8_t)~0x10u;
+        ports.speed_mbps[4]=0;
+        xil_printf("SFP host: switching to %u Mb/s\r\n",sfp_target);
     }
     ports.physical=observed; ports.forwarding=link_state.enabled;
     network_link_changed(link_state.enabled!=0);

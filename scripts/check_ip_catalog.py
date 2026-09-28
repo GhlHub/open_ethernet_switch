@@ -32,7 +32,7 @@ def check(catalog):
         for node in tree.findall('s:fileSets/s:fileSet/s:file/s:name', NS):
             path = directory / node.text
             assert not Path(node.text).is_absolute() and path.resolve().is_relative_to(directory.resolve()), f'{name}: nonrelocatable file {path}'
-            if path.suffix == '.sv':
+            if path.suffix in ('.sv', '.v'):
                 assert path.name in expected, f'{name}: unexpected RTL {path}'
                 assert digest(path) == digest(expected[path.name]), f'{name}: stale RTL {path}'
                 seen.add(path.name)
@@ -57,7 +57,7 @@ def check(catalog):
             v = ports[port].find('s:wire/s:vector', NS)
             return 1 if v is None else abs(int(v.findtext('s:left', namespaces=NS)) - int(v.findtext('s:right', namespaces=NS))) + 1
 
-        bank_counts = {'gem_port': 2, 'pl_port': 1, 'sfp_port': 1, 'switch_fabric': 6}
+        bank_counts = {'gem_port': 2, 'pl_port': 1, 'sfp_port': 1, 'sfp_10g_port': 1, 'sfp_dual_port': 1, 'switch_fabric': 6}
         if name in bank_counts:
             for pin in ('stats_select', 'stats_activity'):
                 assert width(pin) == 4 * bank_counts[name], f'{name}/{pin}: wrong bank width'
@@ -82,20 +82,20 @@ def check(catalog):
             if kind == 'axis':
                 assert {'TDATA', 'TKEEP', 'TVALID', 'TREADY', 'TLAST'} <= mapping.keys(), f'{name}/{bus}: incomplete stream'
                 for signal, port in mapping.items():
-                    assert width(port) == {'TDATA': 16, 'TKEEP': 2}.get(signal, 1), f'{name}/{port}: wrong width'
+                    assert width(port) == {'TDATA': config.get('stream_data_width',16), 'TKEEP': config.get('stream_data_width',16)//8}.get(signal, 1), f'{name}/{port}: wrong width'
                     output = master != (signal == 'TREADY')
                     direction = ports[port].findtext('s:wire/s:direction', namespaces=NS)
                     assert direction == ('out' if output else 'in'), f'{name}/{port}: wrong direction'
 
         for port in ports:
             if port.endswith('_axis_tdata'):
-                assert width(port) == 16, f'{name}/{port}: expected 16-bit packet stream'
+                assert width(port) == config.get('stream_data_width',16), f'{name}/{port}: expected 16-bit packet stream'
             if port.endswith('_axis_tkeep'):
-                assert width(port) == 2, f'{name}/{port}: expected two byte enables'
+                assert width(port) == config.get('stream_data_width',16)//8, f'{name}/{port}: expected two byte enables'
         if name == 'switch_fabric':
             parameters = {p.findtext('s:name', namespaces=NS)
                           for p in tree.findall('s:model/s:modelParameters/s:modelParameter', NS)}
-            assert parameters == {'STATS_DDR', 'STATS_DEBUG', 'AGE_TICK_DIVIDE_COUNT'}, f'{name}: invalid HDL parameters {parameters}'
+            assert parameters == {'STATS_DDR', 'STATS_DEBUG', 'AGE_TICK_DIVIDE_COUNT', 'SFP_DATA_WIDTH'}, f'{name}: invalid HDL parameters {parameters}'
             for port, bits in {'m_axi_ing_wdata': 128, 'm_axi_cpu_rdata': 128,
                                'm_axi_ing_awaddr': 32, 'm_axi_dump_wdata': 128,
                                'm_axi_dump_awaddr': 32, 's_axi_dump_awaddr': 8,

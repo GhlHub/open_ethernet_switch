@@ -95,7 +95,7 @@ static void serve(Socket_t socket,struct http_buffers *buffer)
                 settings_get(&cfg,&saved,&writable);
             }
             if (ok) {
-                size=config_json(response,sizeof(buffer->response),&cfg,saved,writable);
+                size=config_json(response,sizeof(buffer->response),&cfg,saved,writable,board_sfp_capabilities());
                 body=response;type="application/json";status=size?"200 OK":"500 Internal Server Error";
             } else {body="Settings were not saved; microSD storage unavailable, write failed, or STP hardware upgrade required\n";size=strlen(body);status="503 Service Unavailable";}
         } else if ((!strcmp(r.method,"GET") || !strcmp(r.method,"POST")) && !strcmp(r.path,"/api/ports")) {

@@ -18,12 +18,27 @@ def check(path, compare_physical=False):
         assert any(set(pins) <= net for net in (interfaces if bus else scalar)), pins
 
     kinds = dict(zip(CELLS, ['switch_fabric', 'gem_port', 'gem_port', 'pl_port', 'pl_port', 'sfp_port']))
+    dual = ':sfp_dual_port:' in design['components']['sfp']['vlnv']
+    ten_g = dual or ':sfp_10g_port:' in design['components']['sfp']['vlnv']
+    if ten_g:
+        kinds['sfp'] = 'sfp_dual_port' if dual else 'sfp_10g_port'
+        assert design['components']['fabric']['parameters']['SFP_DATA_WIDTH']['value'] == '128'
+        for signal in ['rx_bitslip', 'rx_reset_req']:
+            connected('sfp/' + signal + '_o', 'sfp_' + signal)
+    if dual:
+        for name,pin in [('gmii_clk','gmii_clk'),('gmii_rst_n','gmii_rst_n'),('pcs1g_clk','pcs1g_clk'),('pcs1g_rst_n','pcs1g_rst_n'),('gt_mode','gt_mode_10g_i'),('gt_ready','gt_ready_i'),('gt_error','gt_error_i'),('gt_request','gt_request_10g_o'),('gt_retry','gt_retry_o')]:
+            connected('sfp/'+pin,'sfp_'+name)
+    for name in ['sfp_txdata', 'sfp_rxdata']:
+        assert int(design['ports'][name]['left']) + 1 == (64 if ten_g else 16), name
+    for name, hz in [('gtx_clk_sfp', 156250000 if ten_g else 125000000),
+                     ('gth_clk_sfp', 156250000 if ten_g else 62500000)]:
+        assert int(design['ports'][name]['parameters']['FREQ_HZ']['value']) == hz, name
     kinds['management'] = 'management'
     kinds.update(mdio0='pl_phy_mdio', mdio1='pl_phy_mdio')
     assert 'stats_router' not in design['components'], 'statistics router must be inside management'
     for cell, kind in kinds.items():
         assert design['components'][cell]['vlnv'] == f'ghlhub.org:ethernet:{kind}:{manifest(kind)["version"]}'
-    for option in ['AN_BREAK_LINK_CYCLES', 'AN_LINK_TIMER_CYCLES', 'AN_IDLE_DETECT_CYCLES']:
+    for option in ([] if ten_g else ['AN_BREAK_LINK_CYCLES', 'AN_LINK_TIMER_CYCLES', 'AN_IDLE_DETECT_CYCLES']):
         assert design['components']['sfp']['parameters'][option]['value'] == '1250000', option
     for cell, width, value in [('default_age', '9', '300'), ('mac_enable', '1', '1')]:
         params = design['components'][cell]['parameters']

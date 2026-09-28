@@ -64,12 +64,27 @@ module kr260_pl_top (
   output wire  gtx_rst_n_sfp,
   output wire  gth_clk_sfp,
   output wire  gth_rst_n_sfp,
+`ifdef KR260_SFP_10G
+  input wire [63:0] sfp_txdata,
+`else
   input wire [15:0] sfp_txdata,
+`endif
   input wire [1:0] sfp_txcharisk,
+`ifdef KR260_SFP_10G
+  output wire [63:0] sfp_rxdata,
+`else
   output wire [15:0] sfp_rxdata,
+`endif
   output wire [1:0] sfp_rxcharisk,
   output wire [1:0] sfp_rxdisperr,
   output wire [1:0] sfp_rxnotintable,
+`ifdef KR260_SFP_10G
+  input wire sfp_rx_bitslip,sfp_rx_reset_req,
+`endif
+`ifdef KR260_SFP_DUAL
+  output wire sfp_gmii_clk,sfp_gmii_rst_n,sfp_pcs1g_clk,sfp_pcs1g_rst_n,sfp_gt_mode,sfp_gt_ready,sfp_gt_error,
+  input wire sfp_gt_request,sfp_gt_retry,
+`endif
   input wire  sfp_sync_ok,
   input wire  sfp_an_link_up,
   input wire  sfp_an_duplex_full,
@@ -164,6 +179,32 @@ module kr260_pl_top (
   logic sfp_mmcm_locked;
   logic sfp_gt_powergood, sfp_tx_resetdone, sfp_rx_resetdone;
 
+`ifdef KR260_SFP_DUAL
+  gth_sfp_dual_wrapper u_gthdual (
+    .freerun_clk_i(freerun_clk),.rst_n(ps_rst_n),
+    .gtrefclk_p_i(sfp_refclk_p),.gtrefclk_n_i(sfp_refclk_n),
+    .txp_o(sfp_txp),.txn_o(sfp_txn),.rxp_i(sfp_rxp),.rxn_i(sfp_rxn),
+    .request_10g_i(sfp_gt_request),.retry_toggle_i(sfp_gt_retry),
+    .mode_10g_o(sfp_gt_mode),.ready_o(sfp_gt_ready),.error_o(sfp_gt_error),
+    .txdata_i(sfp_txdata),.txcharisk_i(sfp_txcharisk),.rxdata_o(sfp_rxdata),.rxcharisk_o(sfp_rxcharisk),
+    .rxdisperr_o(sfp_rxdisperr),.rxnotintable_o(sfp_rxnotintable),
+    .rx_bitslip_i(sfp_rx_bitslip),.rx_reset_req_i(sfp_rx_reset_req),
+    .tx_clk_o(gtx_clk_sfp),.tx_rst_n_o(gtx_rst_n_sfp),.rx_clk_o(gth_clk_sfp),.rx_rst_n_o(gth_rst_n_sfp),
+    .gmii_clk_o(sfp_gmii_clk),.gmii_rst_n_o(sfp_gmii_rst_n),.pcs1g_clk_o(sfp_pcs1g_clk),.pcs1g_rst_n_o(sfp_pcs1g_rst_n),
+    .gtpowergood_o(sfp_gt_powergood),.tx_resetdone_o(sfp_tx_resetdone),.rx_resetdone_o(sfp_rx_resetdone),.locked_o(sfp_mmcm_locked));
+`elsif KR260_SFP_10G
+  gth_sfp_10g_wrapper u_gth10g (
+    .freerun_clk_i(freerun_clk),.rst_n(ps_rst_n),
+    .gtrefclk_p_i(sfp_refclk_p),.gtrefclk_n_i(sfp_refclk_n),
+    .txp_o(sfp_txp),.txn_o(sfp_txn),.rxp_i(sfp_rxp),.rxn_i(sfp_rxn),
+    .txdata_i(sfp_txdata),.txheader_i(sfp_txcharisk),.rxdata_o(sfp_rxdata),.rxheader_o(sfp_rxcharisk),
+    .rx_bitslip_i(sfp_rx_bitslip),.rx_reset_req_i(sfp_rx_reset_req),
+    .tx_clk_o(gtx_clk_sfp),.tx_rst_n_o(gtx_rst_n_sfp),.rx_clk_o(gth_clk_sfp),.rx_rst_n_o(gth_rst_n_sfp),
+    .gtpowergood_o(sfp_gt_powergood),.tx_resetdone_o(sfp_tx_resetdone),.rx_resetdone_o(sfp_rx_resetdone),
+    .locked_o(sfp_mmcm_locked));
+  assign sfp_rxdisperr=0;
+  assign sfp_rxnotintable=0;
+`else
   gth_sfp_wrapper u_gth (
     .freerun_clk_i (freerun_clk), .rst_n (ps_rst_n),
     .gtrefclk_p_i (sfp_refclk_p), .gtrefclk_n_i (sfp_refclk_n),
@@ -182,13 +223,25 @@ module kr260_pl_top (
     .locked_o (sfp_mmcm_locked)
   );
 
+`endif
   // TX_DISABLE is pulled up on the carrier (module off unless driven low);
   // sfp_sideband.sv drives it low only for a present, settled, fault-free module.
+`ifdef KR260_SFP_DUAL
+  (* ASYNC_REG="TRUE" *) reg [1:0] sfp_dual_ready_sync;
+  always @(posedge axis_clk) begin
+    if(!axis_rst_n) sfp_dual_ready_sync<=0;
+    else sfp_dual_ready_sync<={sfp_dual_ready_sync[0],sfp_gt_ready};
+  end
+`endif
   sfp_sideband u_sfp_sideband (
     .clk (axis_clk), .rst_n (axis_rst_n),
     .mod_abs_i (sfp_mod_abs), .tx_fault_i (sfp_tx_fault), .los_i (sfp_los),
     .tx_disable_o (sfp_tx_disable),
-    .force_disable_i (sfp_sb_force),
+    .force_disable_i (sfp_sb_force
+`ifdef KR260_SFP_DUAL
+      || !sfp_dual_ready_sync[1]
+`endif
+    ),
     .clr_fault_seen_i (sfp_sb_clr_fault), .clr_removed_seen_i (sfp_sb_clr_removed),
     .clr_lockout_i (sfp_sb_clr_lockout),
     .status_o (sfp_sb_status)

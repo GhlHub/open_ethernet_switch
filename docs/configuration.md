@@ -26,15 +26,20 @@ password `admin`. Spanning tree defaults disabled, with RSTP selected. All coppe
 | GEM0 | 1000 only | 1000 only, PS SGMII limitation |
 | GEM1 | Any nonempty subset of 10/100/1000 | Selected advertisement applied by link task |
 | PL0, PL1 | Any nonempty subset of 10/100/1000 | Selected 10/100/1000 advertisement applied by link task |
-| SFP | Auto, 1G, 2.5G, 5G, 10G | Auto and 1G run the existing 1G PCS; other rates remain pending |
+| SFP | Auto, 1G, 2.5G, 5G, 10G | Auto uses the installed FPGA host rate; forced 1G/10G requires the matching build; 2.5G/5G remain unsupported |
 | IPv4 mode | DHCP or static | Read at network startup |
 | Static IPv4 | Address, netmask, default gateway | Read at network startup; DHCP retry disabled in static mode |
 
 A port requesting **only unsupported speeds is de-admitted**: a saved preference
 is not evidence of active speed support. PL ports now apply the selected
 full-duplex abilities; see [PL speed support](pl-ethernet-speeds.md).
-The SFP higher-rate choices reserve configuration values; they do not add a
-multirate PCS, transceiver reconfiguration, or module compatibility guarantees.
+SFP selection is a saved admission preference, not a runtime SerDes rate switch.
+The default FPGA image supports 1G; the selectable [10G image](sfp-10g.md)
+supports a 10GBASE-R host. Auto admits either build. A forced rate mismatching
+the installed core disables the port. The API/page report the installed
+capability independently of link state. Host rate is not the copper rate
+negotiated inside a rate-matching RJ45 module.
+
 `GET /api/ports` reports effective admission and physical speed;
 `GET /api/config` reports saved preferences and current implementation capability.
 The **Current IPv4** panel at the top of Configuration reads `/api/network` and
@@ -170,3 +175,10 @@ notes rather than treating these checks as a sustained-network reliability test.
 
 See [spanning-tree configuration](spanning-tree.md) for the enable/version controls,
 v1 migration, hardware requirements and convergence behavior.
+
+With `KR260_SFP_MODE=dual`, SFP Auto probes 10G and 1G and retains a working
+link. Forced 1G/10G selections apply after saving without an FPGA reload. A
+mode change briefly interrupts the SFP port and can drop queued packets. The
+API reports `sfp_supported:[0,1000,10000]`; 2.5G/5G remain unsupported host
+protocols. These settings describe the module host interface, not its copper
+link rate. See [dual-rate operation](sfp-dual.md).

@@ -13,13 +13,14 @@
 module egress_top
   import buf_mgr_pkg::*;
   import axi_dma_pkg::*;
+#(parameter int SFP_DATA_WIDTH=16)
 (
   input  logic clk,
   input  logic rst_n,
 
   // AXI4-Stream TX to the 5 MACs (16-bit, 62.5 MHz)
-  output logic [NUM_PHYS_PORTS-1:0][15:0] m_axis_tdata,
-  output logic [NUM_PHYS_PORTS-1:0][1:0]  m_axis_tkeep,
+  output logic [NUM_PHYS_PORTS-1:0][SFP_DATA_WIDTH-1:0] m_axis_tdata,
+  output logic [NUM_PHYS_PORTS-1:0][SFP_DATA_WIDTH/8-1:0]  m_axis_tkeep,
   output logic [NUM_PHYS_PORTS-1:0]       m_axis_tvalid,
   output logic [NUM_PHYS_PORTS-1:0]       m_axis_tlast,
   input  logic [NUM_PHYS_PORTS-1:0]       m_axis_tready,
@@ -85,7 +86,8 @@ module egress_top
 
   generate
     for (gi = 0; gi < NUM_PHYS_PORTS; gi++) begin : g_egress_ports
-      egress_port_rd #(.PORT_ID(gi)) u_port (
+      if (gi == 4 && SFP_DATA_WIDTH == 128) begin : wide
+      egress_port_rd_wide #(.PORT_ID(gi)) u_port (
         .clk               (clk),
         .rst_n             (rst_n),
         .m_axis_tdata      (m_axis_tdata[gi]),
@@ -109,6 +111,36 @@ module egress_top
         .frame_wr_data_i   (frame_wr_data),
         .frame_dma_done_i  (frame_dma_done[gi])
       );
+      end else begin : narrow
+      egress_port_rd #(.PORT_ID(gi)) u_port (
+        .clk               (clk),
+        .rst_n             (rst_n),
+        .m_axis_tdata      (m_axis_tdata[gi][15:0]),
+        .m_axis_tkeep      (m_axis_tkeep[gi][1:0]),
+        .m_axis_tvalid     (m_axis_tvalid[gi]),
+        .m_axis_tlast      (m_axis_tlast[gi]),
+        .m_axis_tready     (m_axis_tready[gi]),
+        .dequeue_req_o     (dequeue_req_o_passthru[gi]),
+        .dequeue_valid_i   (dequeue_valid_i_passthru[gi]),
+        .dequeue_bufid_i   (dequeue_bufid_i_passthru[gi]),
+        .dequeue_length_i  (dequeue_length_i_passthru[gi]),
+        .release_req_o     (release_req_o_passthru[gi]),
+        .release_bufid_o   (release_bufid_o_passthru[gi]),
+        .release_gnt_i     (release_gnt_i_passthru[gi]),
+        .frame_req_o       (frame_req[gi]),
+        .frame_bufid_o     (frame_bufid[gi]),
+        .frame_length_o    (frame_length[gi]),
+        .frame_gnt_i       (frame_gnt[gi]),
+        .frame_wr_en_i     (frame_wr_en[gi]),
+        .frame_wr_addr_i   (frame_wr_addr),
+        .frame_wr_data_i   (frame_wr_data),
+        .frame_dma_done_i  (frame_dma_done[gi])
+      );
+        if (SFP_DATA_WIDTH>16) begin
+          assign m_axis_tdata[gi][SFP_DATA_WIDTH-1:16]=0;
+          assign m_axis_tkeep[gi][SFP_DATA_WIDTH/8-1:2]=0;
+        end
+      end
     end
   endgenerate
 

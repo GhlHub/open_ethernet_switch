@@ -13,16 +13,28 @@ set root  [file dirname $here]
 set proj  $here/vivado_kr260
 if {[info exists ::env(KR260_PROJECT_DIR)]} {set proj [file normalize $::env(KR260_PROJECT_DIR)]}
 set part  xck26-sfvc784-2LV-c
+set sfp_mode 1g
+if {[info exists ::env(KR260_SFP_MODE)]} {set sfp_mode $::env(KR260_SFP_MODE)}
+if {$sfp_mode ni {1g 10g dual}} {error "KR260_SFP_MODE must be 1g, 10g or dual"}
+puts "SFP build mode: $sfp_mode"
 
 file delete -force $proj
 create_project kr260_switch $proj -part $part
 # ---- vendor IP: copy the checked-in .xci files so generated products stay out of rtl/ ----
 file mkdir $proj/ip
-foreach x [split [exec python3 $root/scripts/ip_sources.py --kind vendor_ip] "\n"] {
+foreach x [split [exec python3 $root/scripts/ip_sources.py --kind vendor_ip --sfp-mode $sfp_mode] "\n"] {
   file copy -force $x $proj/ip/
   import_ip $proj/ip/[file tail $x]
 }
 
+if {$sfp_mode eq "10g"} {
+  source $root/rtl/sfp_10g/ip/create_gth_10g.tcl
+  set_property verilog_define KR260_SFP_10G [current_fileset]
+}
+if {$sfp_mode eq "dual"} {
+ source $root/rtl/sfp_dual/ip/create_gth_dual.tcl
+ set_property verilog_define {KR260_SFP_10G KR260_SFP_DUAL} [current_fileset]
+}
 set_property board_part xilinx.com:kr260_som:part0:2.0 [current_project]
 set_property target_language Verilog [current_project]
 # Optional instrumentation. Standard packet counters are always present.
@@ -42,7 +54,7 @@ foreach setting $stats_generics {
 set_property XPM_LIBRARIES {XPM_MEMORY XPM_CDC} [current_project]
 
 # ---- RTL: the same explicit IP manifests used by simulation and packaging ----
-set rtl [split [exec python3 $root/scripts/ip_sources.py --board-only] "\n"]
+set rtl [split [exec python3 $root/scripts/ip_sources.py --board-only --sfp-mode $sfp_mode] "\n"]
 add_files -norecurse $rtl
 set catalog $root/build/ip_catalog
 if {[info exists ::env(KR260_IP_CATALOG)]} {set catalog [file normalize $::env(KR260_IP_CATALOG)]}
@@ -54,12 +66,21 @@ set_property file_type SystemVerilog [get_files -filter {NAME =~ *.sv}]
 update_compile_order -fileset sources_1
 
 # ---- constraints ----
-add_files -fileset constrs_1 -norecurse [split [exec python3 $root/scripts/ip_sources.py --kind constraints] "\n"]
+add_files -fileset constrs_1 -norecurse [split [exec python3 $root/scripts/ip_sources.py --kind constraints --sfp-mode $sfp_mode] "\n"]
 # the crossing constraints reference IP-generated clocks: implementation only
 set_property USED_IN {implementation} [get_files $root/constraints/kr260_clocks.xdc]
 # Clock-pair bounds must follow vendor clocks and the board primary clocks.
 set_property PROCESSING_ORDER LATE [get_files $root/constraints/kr260_clocks.xdc]
 set_property USED_IN {implementation} [get_files $root/constraints/kr260_rgmii_io.xdc]
+if {$sfp_mode eq "1g"} {
+  set_property USED_IN {implementation} [get_files $root/constraints/kr260_sfp_1g_cdc.xdc]
+  set_property PROCESSING_ORDER LATE [get_files $root/constraints/kr260_sfp_1g_cdc.xdc]
+} else {
+  # Vendor FIFO constraint scripts require full Tcl (loops/conditionals),
+  # which the XDC command subset does not support. Apply after link_design.
+  set_property STEPS.OPT_DESIGN.TCL.PRE $root/constraints/kr260_sfp_${sfp_mode}_cdc.tcl [get_runs impl_1]
+}
+
 
 # ---- block design ----
 create_bd_design system

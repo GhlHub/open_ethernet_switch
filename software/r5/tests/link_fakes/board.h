@@ -29,6 +29,10 @@ uint32_t board_timestamp_hz(void);
 void board_assert(const char *, unsigned);
 bool board_phy_mask(uint8_t *mask);
 void board_link_task(void *unused);
+unsigned board_sfp_host_rate(void);
+unsigned board_sfp_capabilities(void); /* bit 0=1G, bit 1=10G */
+void board_sfp_configure(unsigned speed); /* 0=automatic */
+void network_ipv4_snapshot(uint32_t addresses[3],bool *up,bool *dhcp);
 void board_ports_set(uint8_t mask);
 void board_ports_get(uint8_t *admin, uint8_t *physical, uint8_t *forwarding);
 void network_start(void);

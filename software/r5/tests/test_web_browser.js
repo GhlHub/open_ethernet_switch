@@ -125,6 +125,18 @@ const fs=require('fs'),path=require('path');
   if(macPosts!==1 || macGets!==gets)throw Error('MAC page automatically refreshes');
   await page.reload();await page.waitForTimeout(1000);
   if(macPosts!==1 || !await page.getByRole('cell',{name:'00:0a:35:0f:37:45',exact:true}).count())throw Error('Cached snapshot not restored');
+  settings.sfp_supported=[0,10000];ports.speed_mbps[4]=0;
+  await page.getByRole('link',{name:'Configuration',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#sfp option[value="10000"]')?.textContent==='10G');
+  if(!(await page.locator('#sfp option[value="1000"]').innerText()).includes('unsupported'))throw Error('10G build advertises 1G');
+  if(!(await page.locator('body').innerText()).includes('10000 Mb/s'))throw Error('Missing 10G host rate while link down');
+  settings.sfp_supported=[0,1000];await page.getByRole('button',{name:'Reload status'}).click();
+  await page.waitForFunction(()=>document.querySelector('#sfp option[value="1000"]')?.textContent==='1G');
+  if(!(await page.locator('#sfp option[value="10000"]').innerText()).includes('unsupported'))throw Error('1G build advertises 10G');
+  settings.sfp_supported=[0,1000,10000];await page.getByRole('button',{name:'Reload status'}).click();
+  await page.waitForFunction(()=>document.querySelector('#sfp option[value="0"]')?.textContent==='Auto (1G / 10G)');
+  if((await page.locator('#sfp option[value="1000"]').innerText())!=='1G' || (await page.locator('#sfp option[value="10000"]').innerText())!=='10G')throw Error('Dual build missing rates');
+  if(!(await page.locator('body').innerText()).includes('without reloading the FPGA'))throw Error('Missing runtime switching guidance');
   if(errors.length)throw Error(errors.join('\n'));
   console.log('PASS: browser navigation, active IPv4 refresh, polling, 64-bit values, fixed sensor precision, speeds, persistent port/IP/STP/RSTP settings, MAC allocation, storage availability and manual-only MAC table refresh');
  }finally{await browser.close();}

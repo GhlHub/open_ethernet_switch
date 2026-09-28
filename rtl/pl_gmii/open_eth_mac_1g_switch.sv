@@ -41,7 +41,7 @@
 // Xilinx AXI Ethernet.  The AXI stream/control contract and the software-visible
 // register subset are intentionally compatible with the no-checksum-offload
 // configuration of AMD AXI Ethernet.
-module open_eth_mac_1g_switch #(parameter bit EXTERNAL_PACING = 0) (
+module open_eth_mac_1g_switch #(parameter bit EXTERNAL_PACING = 0, parameter bit DEFAULT_ENABLE = 0) (
   input wire stats_request,
   input wire [3:0] stats_select,
   output wire [3:0] stats_activity,
@@ -327,9 +327,9 @@ endtask
 
 always @(posedge s_axi_lite_clk) begin
     if (!lite_resetn) begin
-        reg_raf <= 0; reg_ie <= 0; reg_rcw0 <= 0; reg_rcw1 <= 32'h02000000;
+        reg_raf <= 0; reg_ie <= 0; reg_rcw0 <= 0; reg_rcw1 <= DEFAULT_ENABLE ? 32'h12000000 : 32'h02000000;
         reg_port_mode <= 3'b010; // disabled, gigabit mode
-        reg_tc <= 0; reg_fcc <= 0; reg_emmc <= 32'h80000000;
+        reg_tc <= DEFAULT_ENABLE ? 32'h10000000 : 0; reg_fcc <= 0; reg_emmc <= 32'h80000000;
         reg_rxfc <= 32'd16384; reg_txfc <= 32'd4096;
         reg_uaw0 <= 0; reg_uaw1 <= 0; reg_fmi <= 0; irq_status <= 32'hc0;
         aw_hold_valid <= 0; w_hold_valid <= 0; s_axi_bvalid <= 0;

@@ -1,0 +1,17 @@
+{
+  "tests": [
+    {
+      "top": "tb_sfp_dual_reconfigure",
+      "support": [
+        "rtl/sfp_dual/sfp_dual_drp_rom.sv",
+        "rtl/sfp_dual/sfp_dual_reconfigure.sv"
+      ]
+    },
+    {
+      "top": "tb_sfp_dual_stream_gate"
+    },
+    {
+      "top": "tb_sfp_dual_port"
+    }
+  ]
+}

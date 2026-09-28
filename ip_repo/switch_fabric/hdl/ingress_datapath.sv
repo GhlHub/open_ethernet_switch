@@ -2,11 +2,12 @@
 module ingress_datapath
   import buf_mgr_pkg::*;
   import axi_dma_pkg::*;
+#(parameter int SFP_DATA_WIDTH=16)
 (
   input wire  clk,
   input wire  rst_n,
-  input wire [NUM_PHYS_PORTS-1:0][15:0]  s_axis_tdata,
-  input wire [NUM_PHYS_PORTS-1:0][1:0]   s_axis_tkeep,
+  input wire [NUM_PHYS_PORTS-1:0][SFP_DATA_WIDTH-1:0]  s_axis_tdata,
+  input wire [NUM_PHYS_PORTS-1:0][SFP_DATA_WIDTH/8-1:0]   s_axis_tkeep,
   input wire [NUM_PHYS_PORTS-1:0]        s_axis_tvalid,
   input wire [NUM_PHYS_PORTS-1:0]        s_axis_tlast,
   input wire [NUM_PHYS_PORTS-1:0]        s_axis_tuser,
@@ -51,11 +52,11 @@ module ingress_datapath
 
   generate
     for (gi = 0; gi < NUM_PHYS_PORTS; gi++) begin : g_ingress_ports
-      ingress_port_wr #(.PORT_ID(gi)) u_port (
+      ingress_port_wr #(.PORT_ID(gi),.DATA_WIDTH(gi==4 ? SFP_DATA_WIDTH : 16)) u_port (
         .clk                 (clk),
         .rst_n               (rst_n),
-        .s_axis_tdata        (s_axis_tdata[gi]),
-        .s_axis_tkeep        (s_axis_tkeep[gi]),
+        .s_axis_tdata        (s_axis_tdata[gi][(gi==4 ? SFP_DATA_WIDTH : 16)-1:0]),
+        .s_axis_tkeep        (s_axis_tkeep[gi][(gi==4 ? SFP_DATA_WIDTH/8 : 2)-1:0]),
         .s_axis_tvalid       (s_axis_tvalid[gi]),
         .s_axis_tlast        (s_axis_tlast[gi]),
         .s_axis_tuser        (s_axis_tuser[gi]),

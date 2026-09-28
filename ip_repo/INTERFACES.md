@@ -195,3 +195,27 @@ No external port widths change. Fabric gates ordinary enqueue destinations by
 forwarding state, while explicit directed CPU packets bypass it. CPU dequeue
 requests pause at ingress-tag FIFO full. Management adds `STP_ABI` +0x58,
 `0x53545002`, for firmware compatibility checking. See [protocol integration](../docs/spanning-tree.md).
+
+## 10G SFP MAC/PCS (`sfp_10g_port` 1.0)
+
+Selected by `KR260_SFP_MODE=10g`; the existing `sfp_port` stays the default.
+The 10G core exposes 128-bit packet streams with 16 byte enables in the
+125 MHz fabric domain, a compatible RX/TX-enable AXI-Lite window in the
+management domain, and independent 64-bit/2-bit data/header interfaces in
+the 156.25 MHz TX and recovered RX domains. Legacy `charisk` port names carry
+sync headers; they are not 8b/10b controls. `rx_bitslip_o` and
+`rx_reset_req_o` drive the external GTH shell. See the full
+[clock, register, statistics and qualification contract](../docs/sfp-10g.md).
+
+`switch_fabric` adds `SFP_DATA_WIDTH` (16 by default; select 128 with this IP).
+Only `s04_axis` and `m04_axis` widths change; other packet ports and the DDR
+ABI remain unchanged. Standalone consumers must apply the included upstream
+FIFO timing constraints and constrain all status/control CDC paths; merely
+packaging the core does not establish timing closure.
+
+## Dual-rate SFP
+
+`sfp_dual_port` preserves the 128-bit stream and AXI-Lite management interfaces
+of `sfp_10g_port`. Additional 125/62.5 MHz clocks serve the 1G PCS. Stable mode
+request plus a retry toggle cross to the always-on GTH controller; active mode,
+ready and error return through synchronizers. See [the complete contract](../docs/sfp-dual.md).

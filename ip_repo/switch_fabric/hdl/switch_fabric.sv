@@ -4,6 +4,7 @@ module switch_fabric
   import axi_dma_pkg::*;
   import mac_table_pkg::*;
 #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
+  parameter int SFP_DATA_WIDTH=16,
   parameter int AGE_TICK_DIVIDE_COUNT=125_000_000/4) (
   input wire [7:0] s_axi_dump_awaddr,
   input wire s_axi_dump_awvalid, output wire s_axi_dump_awready,
@@ -106,12 +107,12 @@ module switch_fabric
   input wire [15:0] s01_axis_tdata,
   input wire [15:0] s02_axis_tdata,
   input wire [15:0] s03_axis_tdata,
-  input wire [15:0] s04_axis_tdata,
+  input wire [SFP_DATA_WIDTH-1:0] s04_axis_tdata,
   input wire [1:0] s00_axis_tkeep,
   input wire [1:0] s01_axis_tkeep,
   input wire [1:0] s02_axis_tkeep,
   input wire [1:0] s03_axis_tkeep,
-  input wire [1:0] s04_axis_tkeep,
+  input wire [SFP_DATA_WIDTH/8-1:0] s04_axis_tkeep,
   input wire  s00_axis_tvalid,
   input wire  s01_axis_tvalid,
   input wire  s02_axis_tvalid,
@@ -136,12 +137,12 @@ module switch_fabric
   output wire [15:0] m01_axis_tdata,
   output wire [15:0] m02_axis_tdata,
   output wire [15:0] m03_axis_tdata,
-  output wire [15:0] m04_axis_tdata,
+  output wire [SFP_DATA_WIDTH-1:0] m04_axis_tdata,
   output wire [1:0] m00_axis_tkeep,
   output wire [1:0] m01_axis_tkeep,
   output wire [1:0] m02_axis_tkeep,
   output wire [1:0] m03_axis_tkeep,
-  output wire [1:0] m04_axis_tkeep,
+  output wire [SFP_DATA_WIDTH/8-1:0] m04_axis_tkeep,
   output wire  m00_axis_tvalid,
   output wire  m01_axis_tvalid,
   output wire  m02_axis_tvalid,
@@ -163,14 +164,14 @@ module switch_fabric
   output wire [12:7] stats_acks,
   output wire [12:7][31:0] stats_values
 );
-  wire [NUM_PHYS_PORTS-1:0][15:0] phy_s_axis_tdata;
-  wire [NUM_PHYS_PORTS-1:0][1:0] phy_s_axis_tkeep;
+  wire [NUM_PHYS_PORTS-1:0][SFP_DATA_WIDTH-1:0] phy_s_axis_tdata;
+  wire [NUM_PHYS_PORTS-1:0][SFP_DATA_WIDTH/8-1:0] phy_s_axis_tkeep;
   wire [NUM_PHYS_PORTS-1:0] phy_s_axis_tvalid;
   wire [NUM_PHYS_PORTS-1:0] phy_s_axis_tlast;
   wire [NUM_PHYS_PORTS-1:0] phy_s_axis_tuser;
   wire [NUM_PHYS_PORTS-1:0] phy_s_axis_tready;
-  wire [NUM_PHYS_PORTS-1:0][15:0] phy_m_axis_tdata;
-  wire [NUM_PHYS_PORTS-1:0][1:0] phy_m_axis_tkeep;
+  wire [NUM_PHYS_PORTS-1:0][SFP_DATA_WIDTH-1:0] phy_m_axis_tdata;
+  wire [NUM_PHYS_PORTS-1:0][SFP_DATA_WIDTH/8-1:0] phy_m_axis_tkeep;
   wire [NUM_PHYS_PORTS-1:0] phy_m_axis_tvalid;
   wire [NUM_PHYS_PORTS-1:0] phy_m_axis_tlast;
   wire [NUM_PHYS_PORTS-1:0] phy_m_axis_tready;
@@ -366,8 +367,8 @@ module switch_fabric
 
   // mac_forwarding_top's snoop inputs mirror the same s_axis_* wires
   // feeding ingress_top.sv (ports 0-4) and cpu_port_top.sv (port 5)
-  logic [NUM_PORTS-1:0][15:0] fwd_s_axis_tdata;
-  logic [NUM_PORTS-1:0][1:0]  fwd_s_axis_tkeep;
+  logic [NUM_PORTS-1:0][SFP_DATA_WIDTH-1:0] fwd_s_axis_tdata;
+  logic [NUM_PORTS-1:0][SFP_DATA_WIDTH/8-1:0] fwd_s_axis_tkeep;
   logic [NUM_PORTS-1:0]       fwd_s_axis_tvalid;
   logic [NUM_PORTS-1:0]       fwd_s_axis_tlast;
   logic [NUM_PORTS-1:0]       fwd_s_axis_tready;
@@ -530,7 +531,7 @@ module switch_fabric
   for (genvar p=0; p<NUM_PHYS_PORTS; p++) begin : tags
     assign enqueue_meta[p] = PORT_ID_W'(p);
   end
-  ingress_datapath u_ingress (
+  ingress_datapath #(.SFP_DATA_WIDTH(SFP_DATA_WIDTH)) u_ingress (
     .clk(clk),
     .rst_n(rst_n),
     .s_axis_tdata(phy_s_axis_tdata),
@@ -570,7 +571,7 @@ module switch_fabric
   // =========================================================================
   // egress_top.sv
   // =========================================================================
-  egress_top u_egress_top (
+  egress_top #(.SFP_DATA_WIDTH(SFP_DATA_WIDTH)) u_egress_top (
     .clk                       (clk),
     .rst_n                     (rst_n),
     .m_axis_tdata              (phy_m_axis_tdata),
@@ -675,7 +676,7 @@ module switch_fabric
   // =========================================================================
   // mac_forwarding_top.sv
   // =========================================================================
-  mac_forwarding_top u_mac_forwarding_top (
+  mac_forwarding_top #(.SFP_DATA_WIDTH(SFP_DATA_WIDTH)) u_mac_forwarding_top (
     .dump_req_i(dump_req),.dump_bank_i(dump_bank),.dump_addr_i(dump_addr),
     .dump_gnt_o(dump_gnt),.dump_valid_o(dump_valid),.dump_data_o(dump_data),
     .clk               (clk),

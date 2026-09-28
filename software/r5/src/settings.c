@@ -11,7 +11,8 @@ static const struct config_io io={settings_media_read,settings_media_truncate,se
 static uint8_t effective_mask(const struct switch_config *c)
 {
     uint8_t mask=c->admin;
-    if (c->sfp_speed && c->sfp_speed!=1000) mask&=(uint8_t)~0x10u;
+    unsigned capability=c->sfp_speed==1000?1u:c->sfp_speed==10000?2u:0u;
+    if (c->sfp_speed && !(board_sfp_capabilities()&capability)) mask&=(uint8_t)~0x10u;
     return mask;
 }
 void settings_init(void)
@@ -30,6 +31,7 @@ void settings_init(void)
     xil_printf("Settings: %s; SD storage %s\r\n",store.saved?"loaded":"factory defaults",
                store.writable?"available":settings_media_status());
     stp_prepare(store.value.stp_enabled);
+    board_sfp_configure(store.value.sfp_speed);
     (void)board_ports_configure(effective_mask(&store.value),store.value.advertise);
 }
 void settings_get(struct switch_config *out,bool *saved,bool *writable)
@@ -56,5 +58,6 @@ bool settings_save(const struct switch_config *value)
     config_load(&next,&io);
     if (!config_save(&next,&io,value)) return false;
     taskENTER_CRITICAL();store=next;taskEXIT_CRITICAL();
+    board_sfp_configure(value->sfp_speed);
     return board_ports_configure(effective_mask(value),value->advertise);
 }

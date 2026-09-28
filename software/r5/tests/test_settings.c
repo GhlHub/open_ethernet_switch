@@ -5,6 +5,9 @@
 static uint8_t files[2][CONFIG_RECORD_SIZE];
 static bool present,write_fail;
 static unsigned writes;
+static unsigned host_rate=1000;
+unsigned board_sfp_capabilities(void){return host_rate==0?3:host_rate==10000?2:1;}
+void board_sfp_configure(unsigned speed){(void)speed;}
 static uint8_t admitted;
 bool pstate_stp_supported(void){return true;}
 void stp_prepare(bool enabled){(void)enabled;}
@@ -20,6 +23,14 @@ bool settings_media_write(unsigned slot,unsigned offset,const void *data,size_t 
 {assert(slot<2&&offset+size<=256);if(!present||write_fail)return false;memcpy(files[slot]+offset,data,size);writes++;return true;}
 int main(void)
 {
+    struct switch_config rate_test={.admin=31,.sfp_speed=10000};
+    assert(effective_mask(&rate_test)==15);host_rate=10000;
+    assert(effective_mask(&rate_test)==31);rate_test.sfp_speed=1000;
+    assert(effective_mask(&rate_test)==15);rate_test.sfp_speed=0;
+    assert(effective_mask(&rate_test)==31);host_rate=1000;
+    host_rate=0;rate_test.sfp_speed=1000;assert(effective_mask(&rate_test)==31);
+    rate_test.sfp_speed=10000;assert(effective_mask(&rate_test)==31);
+    rate_test.sfp_speed=2500;assert(effective_mask(&rate_test)==15);host_rate=1000;
     memset(files,255,sizeof(files));struct switch_config c;bool saved,writable;
     settings_init();settings_get(&c,&saved,&writable);assert(!saved&&!writable&&admitted==31&&writes==0);
     assert(!settings_save(&c));present=true;settings_init();settings_get(&c,&saved,&writable);

@@ -45,6 +45,7 @@
 // the caller.
 
 module sfp_port_top #(
+  parameter bit DEFAULT_ENABLE = 0,
   parameter int AN_BREAK_LINK_CYCLES = 8,
   parameter int AN_LINK_TIMER_CYCLES = 8,
   parameter int AN_IDLE_DETECT_CYCLES = 8
@@ -185,7 +186,7 @@ module sfp_port_top #(
   logic        mac_rxs_tvalid;
   wire         mac_rxs_tready = 1'b1;
 
-  open_eth_mac_1g_switch u_mac (
+  open_eth_mac_1g_switch #(.DEFAULT_ENABLE(DEFAULT_ENABLE)) u_mac (
     .stats_request(stats_request), .stats_select(stats_select),
     .stats_activity(stats_activity), .stats_ack(stats_ack), .stats_value(stats_value),
     .axis_clk          (axis_clk),

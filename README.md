@@ -43,7 +43,16 @@ print-ready STLs, assembly STEP, source and a measured carrier-fit report.
 Its CAD checks pass; physical print fit and enclosed cooling remain untested.
 
 The intended port map is two PS GEM ports, two PL Ethernet ports, one SFP port,
-and one virtual CPU port. **The current SFP design is 1G 1000BASE-X, not 10GbE.**
+and one virtual CPU port. The default SFP build is 1G 1000BASE-X.
+A [selectable 10GBASE-R MAC/PCS and 128-bit SFP datapath](docs/sfp-10g.md)
+is available with `KR260_SFP_MODE=10g`. A [runtime dual-rate build](docs/sfp-dual.md)
+uses `KR260_SFP_MODE=dual` for 1G/10G selection without reloading the FPGA.
+The dual-rate image is currently running through volatile JTAG. Hardware tests
+verified 1G forwarding, Auto recovery, and a hot swap to an XZSNET copper
+module with a 10G host link through a 2.5G-capable switch. Small packet losses
+also appeared on copper-only controls; loss-free operation, sustained rate
+conversion and actual copper-rate confirmation remain open. See the
+[verification record](docs/verification.md). Boot flash was not changed.
 
 The board top includes automatic PL PHY initialization and link polling,
 RGMII receive clock adaptation, calibration gating, link-event interrupts,

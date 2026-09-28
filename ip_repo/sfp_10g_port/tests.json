@@ -1,0 +1,10 @@
+{
+  "tests": [
+    {
+      "top": "tb_sfp_10g_port"
+    },
+    {
+      "top": "tb_sfp_10g_fault"
+    }
+  ]
+}

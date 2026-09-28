@@ -1,13 +1,18 @@
 # Production digital IP assembly. Connections preserve the native switch ABI.
 # Sourced after PS, DMA and board-facing ports exist, before address assignment.
 foreach {cell type} {fabric switch_fabric gem0 gem_port gem1 gem_port pl0 pl_port pl1 pl_port sfp sfp_port management management mdio0 pl_phy_mdio mdio1 pl_phy_mdio} {
+    if {$cell eq "sfp" && $sfp_mode eq "10g"} {set type sfp_10g_port}
+    if {$cell eq "sfp" && $sfp_mode eq "dual"} {set type sfp_dual_port}
     set version [exec python3 -c {import json,sys; print(json.load(open(sys.argv[1]))["version"])} $root/ip_repo/$type/manifest.json]
     create_bd_cell -type ip -vlnv ghlhub.org:ethernet:$type:$version $cell
 }
 foreach cell {fabric management} {
     set_property -dict [list CONFIG.STATS_DDR $stats_ddr CONFIG.STATS_DEBUG $stats_debug] [get_bd_cells $cell]
 }
-set_property -dict {CONFIG.AN_BREAK_LINK_CYCLES 1250000 CONFIG.AN_LINK_TIMER_CYCLES 1250000 CONFIG.AN_IDLE_DETECT_CYCLES 1250000} [get_bd_cells sfp]
+if {$sfp_mode in {10g dual}} {set_property CONFIG.SFP_DATA_WIDTH 128 [get_bd_cells fabric]}
+if {$sfp_mode eq "1g"} {
+  set_property -dict {CONFIG.AN_BREAK_LINK_CYCLES 1250000 CONFIG.AN_LINK_TIMER_CYCLES 1250000 CONFIG.AN_IDLE_DETECT_CYCLES 1250000} [get_bd_cells sfp]
+}
 # Replace former RTL-facing interfaces with catalog IP connections.
 proc replace_external_interface {name pin} {
     set port [get_bd_intf_ports $name]
@@ -61,6 +66,7 @@ proc digital_net {name retain pins} {
         if {[get_property TYPE $pin] eq "clk"} {
             set hz 125000000
             if {[string match gth_clk* $name]} {set hz 62500000}
+            if {$::sfp_mode in {10g dual} && $name in {gtx_clk_sfp gth_clk_sfp}} {set hz 156250000}
             set_property CONFIG.FREQ_HZ $hz $port
         }
     } else {
@@ -200,6 +206,10 @@ digital_net gtx_clk_sfp 1 {sfp/gtx_clk}
 digital_net gtx_rst_n_sfp 1 {sfp/gtx_rst_n}
 digital_net gth_clk_sfp 1 {sfp/gth_clk}
 digital_net gth_rst_n_sfp 1 {sfp/gth_rst_n}
+if {$sfp_mode in {10g dual}} {
+  digital_net sfp_rx_bitslip 1 {sfp/rx_bitslip_o}
+  digital_net sfp_rx_reset_req 1 {sfp/rx_reset_req_o}
+}
 digital_net sfp_txdata 1 {sfp/txdata_o}
 digital_net sfp_txcharisk 1 {sfp/txcharisk_o}
 digital_net sfp_rxdata 1 {sfp/rxdata_i}
@@ -247,4 +257,11 @@ foreach g {0 1} {
     foreach d {rx tx} {
         set_property CONFIG.ASSOCIATED_RESET gem${g}_${d}_rst_n [get_bd_ports gem${g}_${d}_clk]
     }
+}
+
+if {$sfp_mode eq "dual"} {
+ foreach {name pin} {sfp_gmii_clk gmii_clk sfp_gmii_rst_n gmii_rst_n sfp_pcs1g_clk pcs1g_clk sfp_pcs1g_rst_n pcs1g_rst_n sfp_gt_mode gt_mode_10g_i sfp_gt_ready gt_ready_i sfp_gt_error gt_error_i sfp_gt_request gt_request_10g_o sfp_gt_retry gt_retry_o} {
+  digital_net $name 1 [list sfp/$pin]
+ }
+ set_property CONFIG.FREQ_HZ 62500000 [get_bd_ports sfp_pcs1g_clk]
 }

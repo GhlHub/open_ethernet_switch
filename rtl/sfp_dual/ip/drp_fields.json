@@ -1,0 +1,741 @@
+{
+  "source": "AMD UG576 v1.7.1 Appendix C, GTHE4_CHANNEL; Vivado 2026.1 K26 profiles",
+  "ports": {
+    "RX8B10BEN_VAL": [
+      "1'b1",
+      "1'b0"
+    ],
+    "RXCOMMADETEN_VAL": [
+      "1'b1",
+      "1'b0"
+    ],
+    "RXLPMEN_VAL": [
+      "1'b1",
+      "1'b0"
+    ],
+    "RXMCOMMAALIGNEN_VAL": [
+      "1'b1",
+      "1'b0"
+    ],
+    "RXOUTCLKSEL_VAL": [
+      "3'b010",
+      "3'b101"
+    ],
+    "RXPCOMMAALIGNEN_VAL": [
+      "1'b1",
+      "1'b0"
+    ],
+    "RXPLLCLKSEL_VAL": [
+      "2'b10",
+      "2'b11"
+    ],
+    "RXSYSCLKSEL_VAL": [
+      "2'b11",
+      "2'b10"
+    ],
+    "TX8B10BEN_VAL": [
+      "1'b1",
+      "1'b0"
+    ],
+    "TXOUTCLKSEL_VAL": [
+      "3'b010",
+      "3'b101"
+    ],
+    "TXPLLCLKSEL_VAL": [
+      "2'b10",
+      "2'b11"
+    ],
+    "TXSYSCLKSEL_VAL": [
+      "2'b11",
+      "2'b10"
+    ]
+  },
+  "fields": [
+    {
+      "attribute": "ALIGN_COMMA_ENABLE",
+      "address": 39,
+      "lsb": 0,
+      "width": 10,
+      "values": [
+        1023,
+        0
+      ],
+      "wizard_values": [
+        "10'b1111111111",
+        "10'b0000000000"
+      ]
+    },
+    {
+      "attribute": "ALIGN_MCOMMA_DET",
+      "address": 85,
+      "lsb": 10,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "ALIGN_PCOMMA_DET",
+      "address": 86,
+      "lsb": 10,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "CBCC_DATA_SOURCE_SEL",
+      "address": 99,
+      "lsb": 15,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"DECODED\"",
+        "\"ENCODED\""
+      ]
+    },
+    {
+      "attribute": "CLK_CORRECT_USE",
+      "address": 36,
+      "lsb": 10,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "CLK_COR_KEEP_IDLE",
+      "address": 28,
+      "lsb": 6,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "CLK_COR_MAX_LAT",
+      "address": 29,
+      "lsb": 10,
+      "width": 6,
+      "values": [
+        14,
+        20
+      ],
+      "wizard_values": [
+        "14",
+        "20"
+      ]
+    },
+    {
+      "attribute": "CLK_COR_MIN_LAT",
+      "address": 28,
+      "lsb": 0,
+      "width": 6,
+      "values": [
+        11,
+        18
+      ],
+      "wizard_values": [
+        "11",
+        "18"
+      ]
+    },
+    {
+      "attribute": "CLK_COR_SEQ_1_1",
+      "address": 30,
+      "lsb": 0,
+      "width": 10,
+      "values": [
+        444,
+        0
+      ],
+      "wizard_values": [
+        "10'b0110111100",
+        "10'b0000000000"
+      ]
+    },
+    {
+      "attribute": "CLK_COR_SEQ_1_2",
+      "address": 31,
+      "lsb": 0,
+      "width": 10,
+      "values": [
+        80,
+        0
+      ],
+      "wizard_values": [
+        "10'b0001010000",
+        "10'b0000000000"
+      ]
+    },
+    {
+      "attribute": "CLK_COR_SEQ_2_1",
+      "address": 34,
+      "lsb": 0,
+      "width": 10,
+      "values": [
+        444,
+        0
+      ],
+      "wizard_values": [
+        "10'b0110111100",
+        "10'b0000000000"
+      ]
+    },
+    {
+      "attribute": "CLK_COR_SEQ_2_2",
+      "address": 35,
+      "lsb": 0,
+      "width": 10,
+      "values": [
+        181,
+        0
+      ],
+      "wizard_values": [
+        "10'b0010110101",
+        "10'b0000000000"
+      ]
+    },
+    {
+      "attribute": "CLK_COR_SEQ_2_USE",
+      "address": 36,
+      "lsb": 11,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "CLK_COR_SEQ_LEN",
+      "address": 29,
+      "lsb": 2,
+      "width": 2,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "2",
+        "1"
+      ]
+    },
+    {
+      "attribute": "DEC_MCOMMA_DETECT",
+      "address": 205,
+      "lsb": 0,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "DEC_PCOMMA_DETECT",
+      "address": 44,
+      "lsb": 15,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "GEARBOX_MODE",
+      "address": 153,
+      "lsb": 11,
+      "width": 5,
+      "values": [
+        0,
+        17
+      ],
+      "wizard_values": [
+        "5'b00000",
+        "5'b10001"
+      ]
+    },
+    {
+      "attribute": "PCIE_BUFG_DIV_CTRL",
+      "address": 195,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        4096,
+        13568
+      ],
+      "wizard_values": [
+        "16'b0001000000000000",
+        "16'b0011010100000000"
+      ]
+    },
+    {
+      "attribute": "PCIE_PLL_SEL_MODE_GEN12",
+      "address": 173,
+      "lsb": 9,
+      "width": 2,
+      "values": [
+        0,
+        2
+      ],
+      "wizard_values": [
+        "2'b00",
+        "2'b10"
+      ]
+    },
+    {
+      "attribute": "PCIE_PLL_SEL_MODE_GEN3",
+      "address": 173,
+      "lsb": 11,
+      "width": 2,
+      "values": [
+        3,
+        2
+      ],
+      "wizard_values": [
+        "2'b11",
+        "2'b10"
+      ]
+    },
+    {
+      "attribute": "PCIE_TXPCS_CFG_GEN3",
+      "address": 170,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        9380,
+        11428
+      ],
+      "wizard_values": [
+        "16'b0010010010100100",
+        "16'b0010110010100100"
+      ]
+    },
+    {
+      "attribute": "RXBUF_ADDR_MODE",
+      "address": 103,
+      "lsb": 0,
+      "width": 1,
+      "values": [
+        0,
+        1
+      ],
+      "wizard_values": [
+        "\"FULL\"",
+        "\"FAST\""
+      ]
+    },
+    {
+      "attribute": "RXBUF_EN",
+      "address": 100,
+      "lsb": 3,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "RXBUF_RESET_ON_COMMAALIGN",
+      "address": 102,
+      "lsb": 14,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "RXCDR_CFG2",
+      "address": 16,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        569,
+        617
+      ],
+      "wizard_values": [
+        "16'b0000001000111001",
+        "16'b0000001001101001"
+      ]
+    },
+    {
+      "attribute": "RXCDR_CFG2_GEN2",
+      "address": 175,
+      "lsb": 0,
+      "width": 10,
+      "values": [
+        569,
+        617
+      ],
+      "wizard_values": [
+        "10'b1000111001",
+        "10'b1001101001"
+      ]
+    },
+    {
+      "attribute": "RXCDR_CFG2_GEN3",
+      "address": 164,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        569,
+        617
+      ],
+      "wizard_values": [
+        "16'b0000001000111001",
+        "16'b0000001001101001"
+      ]
+    },
+    {
+      "attribute": "RXCDR_CFG3",
+      "address": 17,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        18,
+        16
+      ],
+      "wizard_values": [
+        "16'b0000000000010010",
+        "16'b0000000000010000"
+      ]
+    },
+    {
+      "attribute": "RXCDR_CFG3_GEN2",
+      "address": 175,
+      "lsb": 10,
+      "width": 6,
+      "values": [
+        18,
+        16
+      ],
+      "wizard_values": [
+        "6'b010010",
+        "6'b010000"
+      ]
+    },
+    {
+      "attribute": "RXCDR_CFG3_GEN3",
+      "address": 165,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        18,
+        16
+      ],
+      "wizard_values": [
+        "16'b0000000000010010",
+        "16'b0000000000010000"
+      ]
+    },
+    {
+      "attribute": "RXGEARBOX_EN",
+      "address": 100,
+      "lsb": 0,
+      "width": 1,
+      "values": [
+        0,
+        1
+      ],
+      "wizard_values": [
+        "\"FALSE\"",
+        "\"TRUE\""
+      ]
+    },
+    {
+      "attribute": "RXOUT_DIV",
+      "address": 99,
+      "lsb": 0,
+      "width": 3,
+      "values": [
+        3,
+        0
+      ],
+      "wizard_values": [
+        "8",
+        "1"
+      ]
+    },
+    {
+      "attribute": "RXPI_CFG0",
+      "address": 157,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        258,
+        2
+      ],
+      "wizard_values": [
+        "16'b0000000100000010",
+        "16'b0000000000000010"
+      ]
+    },
+    {
+      "attribute": "RXSYNC_SKIP_DA",
+      "address": 138,
+      "lsb": 8,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "1'b1",
+        "1'b0"
+      ]
+    },
+    {
+      "attribute": "RX_DATA_WIDTH",
+      "address": 3,
+      "lsb": 5,
+      "width": 4,
+      "values": [
+        3,
+        6
+      ],
+      "wizard_values": [
+        "20",
+        "64"
+      ]
+    },
+    {
+      "attribute": "RX_INT_DATAWIDTH",
+      "address": 102,
+      "lsb": 0,
+      "width": 2,
+      "values": [
+        0,
+        1
+      ],
+      "wizard_values": [
+        "0",
+        "1"
+      ]
+    },
+    {
+      "attribute": "RX_PROGDIV_CFG",
+      "address": 198,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        32768,
+        57880
+      ],
+      "wizard_values": [
+        "0.0",
+        "16.5"
+      ]
+    },
+    {
+      "attribute": "RX_SUM_IREF_TUNE",
+      "address": 98,
+      "lsb": 9,
+      "width": 4,
+      "values": [
+        4,
+        9
+      ],
+      "wizard_values": [
+        "4'b0100",
+        "4'b1001"
+      ]
+    },
+    {
+      "attribute": "RX_SUM_VCMTUNE",
+      "address": 98,
+      "lsb": 3,
+      "width": 4,
+      "values": [
+        6,
+        10
+      ],
+      "wizard_values": [
+        "4'b0110",
+        "4'b1010"
+      ]
+    },
+    {
+      "attribute": "RX_WIDEMODE_CDR",
+      "address": 102,
+      "lsb": 2,
+      "width": 2,
+      "values": [
+        0,
+        1
+      ],
+      "wizard_values": [
+        "2'b00",
+        "2'b01"
+      ]
+    },
+    {
+      "attribute": "TXBUF_EN",
+      "address": 124,
+      "lsb": 7,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "\"TRUE\"",
+        "\"FALSE\""
+      ]
+    },
+    {
+      "attribute": "TXGEARBOX_EN",
+      "address": 124,
+      "lsb": 13,
+      "width": 1,
+      "values": [
+        0,
+        1
+      ],
+      "wizard_values": [
+        "\"FALSE\"",
+        "\"TRUE\""
+      ]
+    },
+    {
+      "attribute": "TXOUT_DIV",
+      "address": 124,
+      "lsb": 8,
+      "width": 3,
+      "values": [
+        3,
+        0
+      ],
+      "wizard_values": [
+        "8",
+        "1"
+      ]
+    },
+    {
+      "attribute": "TXPHDLY_CFG1",
+      "address": 111,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        15,
+        14
+      ],
+      "wizard_values": [
+        "16'b0000000000001111",
+        "16'b0000000000001110"
+      ]
+    },
+    {
+      "attribute": "TXPH_CFG",
+      "address": 115,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        1827,
+        803
+      ],
+      "wizard_values": [
+        "16'b0000011100100011",
+        "16'b0000001100100011"
+      ]
+    },
+    {
+      "attribute": "TXPI_CFG4",
+      "address": 156,
+      "lsb": 5,
+      "width": 1,
+      "values": [
+        1,
+        0
+      ],
+      "wizard_values": [
+        "1'b1",
+        "1'b0"
+      ]
+    },
+    {
+      "attribute": "TX_DATA_WIDTH",
+      "address": 122,
+      "lsb": 0,
+      "width": 4,
+      "values": [
+        3,
+        6
+      ],
+      "wizard_values": [
+        "20",
+        "64"
+      ]
+    },
+    {
+      "attribute": "TX_INT_DATAWIDTH",
+      "address": 133,
+      "lsb": 10,
+      "width": 2,
+      "values": [
+        0,
+        1
+      ],
+      "wizard_values": [
+        "0",
+        "1"
+      ]
+    },
+    {
+      "attribute": "TX_PROGDIV_CFG",
+      "address": 62,
+      "lsb": 0,
+      "width": 16,
+      "values": [
+        32768,
+        57880
+      ],
+      "wizard_values": [
+        "0.0",
+        "16.5"
+      ]
+    }
+  ]
+}

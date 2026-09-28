@@ -1,6 +1,6 @@
 # Open Ethernet Switch IP repository
 
-The six `manifest.json` files are the source of truth for the reusable
+The eight `manifest.json` files are the source of truth for the reusable
 digital blocks and PHY management. `board.json` lists the KR260 physical shell, vendor IP and
 constraints. Paths are relative to the repository root. Existing leaf RTL
 stays in `rtl/`; each dependency has one editable source copy.
@@ -8,14 +8,18 @@ stays in `rtl/`; each dependency has one editable source copy.
 The production fabric clock is 125 MHz. The production BD audit checks its
 frequency metadata, and the routed audit checks the actual 8 ns period.
 MAC aging remains 4 Hz. See [deployed validation](../docs/verification.md#2026-09-26-125-mhz-fabric-board-deployment)
-and the [future 128-bit SFP interface](../docs/inventory.md#125-mhz-fabric-and-trunk-preparation-2026-09-26-deployed).
+the [selectable 128-bit 10G SFP interface](../docs/sfp-10g.md),
+and the [runtime dual-rate SFP port](../docs/sfp-dual.md).
 
 | Catalog IP (`ghlhub.org:ethernet:<name>:<version>`) | Top module | Responsibility |
 | --- | --- | --- |
 | `switch_fabric` (2.1) | `switch_fabric` | Five physical packet streams, CPU virtual port, forwarding, shared buffers, DDR masters, fabric counters |
 | `gem_port` | `switch_gem_port` | One PS external-FIFO bridge, RX/TX CDC and local packet counters |
 | `pl_port` | `pl_gmii_mac_top` | One GMII MAC, packet-stream adapters, local counters and AXI-Lite registers |
-| `sfp_port` | `sfp_port_top` | One 1000BASE-X MAC/PCS, negotiation, packet adapters and counters |
+| `sfp_port` | `sfp_port_top` | Default 1000BASE-X MAC/PCS, negotiation, packet adapters and counters |
+| `sfp_dual_port` (1.0) | `sfp_dual_port` | Runtime 1G/10G MAC/PCS selection, 128-bit streams, mode control and persistent counters; external shared GTH |
+| `sfp_10g_port` (1.0) | `sfp_dual_port` (1.0) | `sfp_dual_port` | Runtime 1G/10G MAC/PCS selection, 128-bit streams, mode control and persistent counters; external shared GTH |
+| `sfp_10g_port` | Optional 10GBASE-R MAC/PCS, 128-bit packet streams and counters; external GTH |
 | `pl_phy_mdio` (1.1) | `switch_pl_phy_mdio` | One PL PHY: AXI-Lite MDIO, DP83867 initialization, link polling and reset-release CDC |
 | `management` (2.1) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
 

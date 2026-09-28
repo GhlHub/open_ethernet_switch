@@ -26,6 +26,16 @@
     },
     {
       "top": "tb_mac_table_dump"
+    },
+    {
+      "top": "tb_sfp_wide_buffer"
+    },
+    {
+      "top": "tb_mac_forwarding_top",
+      "name": "wide_mac_forwarding",
+      "parameters": {
+        "SFP_DATA_WIDTH": 128
+      }
     }
   ]
 }

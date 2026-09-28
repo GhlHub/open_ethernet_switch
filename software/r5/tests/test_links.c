@@ -57,6 +57,12 @@ int main(void)
     phy[4][2]=phy[9][2]=0x2000;phy[4][3]=phy[9][3]=0xa231;
     mmio_write(0xff5e0050,0x06010800);mmio_write(0xff5e0054,0x06010800);
     mmio_write(DIAG_BASE+PCS_STATUS,7);mac_init();poll();
+    assert(ports.speed_mbps[4]==1000);
+    set_reg(0x800c04f8UL,0x31304745u);poll();
+    assert(ports.speed_mbps[4]==10000);
+    set_reg(DIAG_BASE+PCS_STATUS,0);poll();assert(ports.speed_mbps[4]==0);
+    set_reg(DIAG_BASE+PCS_STATUS,7);poll();assert(ports.speed_mbps[4]==10000);
+    set_reg(0x800c04f8UL,0);poll();assert(ports.speed_mbps[4]==1000);
     assert(phy[4][4]==1 && phy[9][4]==0x141 && phy[4][9]==0x200);
     phy[4][17]=phy[9][17]=0xac00;poll();poll();
     assert(ports.forwarding==19 && configured_speed[0]==1000);
@@ -113,6 +119,26 @@ int main(void)
     adv[2]=7;pl_command_error=true;assert(board_ports_configure(31,adv));poll();poll();
     assert(!pl_ready[0] && mmio_read(0x80010018)==0 && !(ports.forwarding&4));
     pl_command_error=false;poll();assert(pl_ready[0]);
+    /* Dual mode is requested only after SFP forwarding is removed and flush
+     * completes; Auto does not disturb a working link. */
+    set_reg(SFP_BASE+0x4f8,SFP_DUAL_ID);set_reg(SFP_BASE+0x4f0,10000);
+    set_reg(SFP_BASE+0x4e4,11);set_reg(DIAG_BASE+PCS_STATUS,7);
+    set_reg(DIAG_BASE+4,0);board_sfp_configure(1000);
+    set_reg(DIAG_BASE+LINK_STATUS,0x100);poll();
+    assert(sfp_pending && !(ports.forwarding&16));
+    set_reg(SFP_BASE+0x4e0,99);poll();assert(mmio_read(SFP_BASE+0x4e0)==99);
+    set_reg(DIAG_BASE+LINK_STATUS,0);poll();
+    assert(!sfp_pending && mmio_read(SFP_BASE+0x4e0)==0);
+    set_reg(SFP_BASE+0x4f0,1000);set_reg(SFP_BASE+0x4e4,10);poll();poll();
+    assert(ports.speed_mbps[4]==1000);
+    board_sfp_configure(0);poll();poll();assert(sfp_target==10000);
+    set_reg(SFP_BASE+0x4f0,10000);set_reg(SFP_BASE+0x4e4,11);
+    for(unsigned i=0;i<24;i++){poll();}assert(sfp_target==10000);
+    set_reg(DIAG_BASE+PCS_STATUS,0);for(unsigned i=0;i<17;i++){poll();}
+    assert(sfp_target==1000 && mmio_read(SFP_BASE+0x4e0)==0);
+    set_reg(DIAG_BASE+4,1);for(unsigned i=0;i<24;i++){poll();}assert(sfp_target==1000);
+    assert(board_sfp_capabilities()==3);
+    puts("PASS: dual SFP forced rate, flush ordering, stable-link Auto, missing-link probing and absent-module hold");
     puts("PASS: PL full-duplex speeds, MDIO ownership/error recovery, advertisements and quiesce/flush");
     puts("PASS: PS full-duplex negotiation, advertised subsets, quiesce/flush, clock/speed changes, half-duplex rejection and admin state");
 }

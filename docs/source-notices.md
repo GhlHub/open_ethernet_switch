@@ -90,3 +90,11 @@ the administrator password verifier.
 IP packaging copies project RTL and its existing notices into generated
 catalogs. The new `ip_repo` boundaries do not change source licensing;
 generated catalogs and vendor output products are excluded from Git.
+
+## 10G Ethernet dependency
+
+The [verilog-ethernet subset](../third_party/verilog-ethernet/README.md) is
+MIT-licensed and pinned to `77320a9471d19c7dd383914bc049e02d9f4f1ffb`.
+Its COPYING file and individual source notices remain intact; the import
+manifest records per-file SHA-256 hashes. Upstream RTL is unmodified.
+The local 10G wrapper, fault handling and board integration are separate.

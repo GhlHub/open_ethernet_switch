@@ -27,6 +27,7 @@
 module mac_forwarding_top
   import buf_mgr_pkg::*;
   import mac_table_pkg::*;
+#(parameter int SFP_DATA_WIDTH=16)
 (
   input wire dump_req_i,
   input wire [1:0] dump_bank_i,
@@ -47,8 +48,8 @@ module mac_forwarding_top
   // snooped ingress AXI4-Stream, one set per switch port (same wires
   // feeding ingress_port_wr.sv's s_axis_* for ports 0-4, and
   // cpu_port_top.sv's s_axis_* for port 5); not driven here
-  input  logic [NUM_PORTS-1:0][15:0] s_axis_tdata_i,
-  input  logic [NUM_PORTS-1:0][1:0]  s_axis_tkeep_i,
+  input  logic [NUM_PORTS-1:0][SFP_DATA_WIDTH-1:0] s_axis_tdata_i,
+  input  logic [NUM_PORTS-1:0][SFP_DATA_WIDTH/8-1:0]  s_axis_tkeep_i,
   input  logic [NUM_PORTS-1:0]       s_axis_tvalid_i,
   input  logic [NUM_PORTS-1:0]       s_axis_tlast_i,
   input  logic [NUM_PORTS-1:0]       s_axis_tready_i,
@@ -111,11 +112,11 @@ module mac_forwarding_top
 
   generate
     for (gi = 0; gi < NUM_PORTS; gi++) begin : g_resolver
-      mac_addr_resolver #(.PORT_ID(gi)) u_resolver (
+      mac_addr_resolver #(.PORT_ID(gi), .DATA_WIDTH(gi==4 ? SFP_DATA_WIDTH : 16)) u_resolver (
         .clk                       (clk),
         .rst_n                     (rst_n),
-        .s_axis_tdata_i            (s_axis_tdata_i[gi]),
-        .s_axis_tkeep_i            (s_axis_tkeep_i[gi]),
+        .s_axis_tdata_i            (s_axis_tdata_i[gi][(gi==4 ? SFP_DATA_WIDTH : 16)-1:0]),
+        .s_axis_tkeep_i            (s_axis_tkeep_i[gi][(gi==4 ? SFP_DATA_WIDTH/8 : 2)-1:0]),
         .s_axis_tvalid_i           (s_axis_tvalid_i[gi]),
         .s_axis_tlast_i            (s_axis_tlast_i[gi]),
         .s_axis_tready_i           (s_axis_tready_i[gi]),

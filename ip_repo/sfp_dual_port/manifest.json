@@ -1,0 +1,58 @@
+{
+  "name": "sfp_dual_port",
+  "version": "1.0",
+  "description": "Runtime selectable 1000BASE-X / 10GBASE-R MAC/PCS with 128-bit fabric streams",
+  "top": "sfp_dual_port",
+  "sources": [
+    "rtl/sfp_10g/sfp_10g_fault.sv",
+    "rtl/stats/stats_bank.sv",
+    "rtl/stats/stats_axis.sv",
+    "rtl/sfp_10g/sfp_10g_port.sv",
+    "third_party/verilog-ethernet/lib/axis/rtl/axis_adapter.v",
+    "third_party/verilog-ethernet/lib/axis/rtl/axis_async_fifo.v",
+    "third_party/verilog-ethernet/lib/axis/rtl/axis_async_fifo_adapter.v",
+    "third_party/verilog-ethernet/rtl/axis_xgmii_rx_64.v",
+    "third_party/verilog-ethernet/rtl/axis_xgmii_tx_64.v",
+    "third_party/verilog-ethernet/rtl/eth_mac_10g.v",
+    "third_party/verilog-ethernet/rtl/eth_mac_10g_fifo.v",
+    "third_party/verilog-ethernet/rtl/eth_phy_10g.v",
+    "third_party/verilog-ethernet/rtl/eth_phy_10g_rx.v",
+    "third_party/verilog-ethernet/rtl/eth_phy_10g_rx_ber_mon.v",
+    "third_party/verilog-ethernet/rtl/eth_phy_10g_rx_frame_sync.v",
+    "third_party/verilog-ethernet/rtl/eth_phy_10g_rx_if.v",
+    "third_party/verilog-ethernet/rtl/eth_phy_10g_rx_watchdog.v",
+    "third_party/verilog-ethernet/rtl/eth_phy_10g_tx.v",
+    "third_party/verilog-ethernet/rtl/eth_phy_10g_tx_if.v",
+    "third_party/verilog-ethernet/rtl/lfsr.v",
+    "third_party/verilog-ethernet/rtl/xgmii_baser_dec_64.v",
+    "third_party/verilog-ethernet/rtl/xgmii_baser_enc_64.v",
+    "rtl/sfp_pcs/sfp_pcs_pkg.sv",
+    "rtl/common/async_fifo.sv",
+    "rtl/pl_gmii/open_eth_mac_1g_switch.sv",
+    "rtl/pl_gmii/mac_rxd_to_switch_ingress.sv",
+    "rtl/pl_gmii/switch_egress_to_mac_txd.sv",
+    "rtl/sfp_pcs/gmii_1000base_x_tx.sv",
+    "rtl/sfp_pcs/sync_1000base_x.sv",
+    "rtl/sfp_pcs/gmii_1000base_x_rx.sv",
+    "rtl/sfp_pcs/autoneg_1000base_x.sv",
+    "rtl/sfp_pcs/sfp_1000base_x_pcs.sv",
+    "rtl/sfp_pcs/sfp_port_top.sv",
+    "rtl/common/rst_sync.sv",
+    "rtl/sfp_dual/sfp_dual_stream_gate.sv",
+    "rtl/sfp_dual/sfp_dual_port.sv"
+  ],
+  "clocks": {
+    "clk": [
+      "s_axis",
+      "m_axis"
+    ],
+    "axis_clk": [
+      "s_axi"
+    ],
+    "gtx_clk": [],
+    "gth_clk": [],
+    "gmii_clk": [],
+    "pcs1g_clk": []
+  },
+  "stream_data_width": 128
+}

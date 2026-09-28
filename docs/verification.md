@@ -2509,3 +2509,142 @@ The current non-cacheable DMA region is the initial functional baseline.
 These passing tests do not select an optimal policy; compare CPU cost and
 throughput before considering cached payloads or descriptors, and validate
 cache maintenance at every DMA ownership transition.
+
+## 2026-09-28 selectable 10G SFP build (not deployed)
+
+The default 1G build and new 10GBASE-R MAC/PCS/GTH option now share the same
+firmware. Port 4 can use a 128-bit packet path through the fabric. The final
+10G bitstream builds with +0.018 ns setup and +0.010 ns hold under current
+constraints; FIFO bus-skew checks pass. Registered fault status removes the
+four newly identified combinational-before-synchronizer CDC findings.
+
+Default 1G assembly equivalence, native/packaged IP regressions, firmware tests,
+ELF verification and browser capability tests pass. See the
+[10G build contract and exact local verification artifacts](sfp-10g.md).
+The final run is `build/ip_refactor/sfp10g_final/results.json`; earlier full
+regressions are recorded in `sfp1g_compatibility` and `sfp10g_acceptance`.
+No hardware was programmed. Existing external-timing/reset/CDC issues and
+module power, interoperability and sustained-throughput qualification remain open.
+
+## 2026-09-28 runtime dual-rate SFP build (not deployed)
+
+`KR260_SFP_MODE=dual` packages both MAC/PCS paths in `sfp_dual_port:1.0` and
+reconfigures one GTH channel between 1000BASE-X and 10GBASE-R. Firmware and
+the configuration page support Auto, 1G and 10G. Forced changes remove
+forwarding and wait for queue flush; Auto retains a working link.
+
+Digital loopback, backpressure, frame-loss handling, split AXI writes, GT
+failure/retry, warm digital reset, negotiated duplex and fault admission tests
+pass. The generated Wizard profiles match all 37 DRP registers/49 fields.
+Actual GTHE4 serial-loopback simulation passes 10G → 1G → 10G, including clock
+frequency and protocol-data checks. Firmware host tests, ELF verification,
+and browser capability tests pass.
+
+The final routed image has +0.018 ns setup and +0.010 ns hold, with no
+pulse-width violations. RX user-clock skew at 10G has +0.329 ns margin.
+The physical hook matches the user-clock trees, places both RX clock muxes
+beside the transceiver, and programs PL0 receive-data delay to 900 ps for this
+image. I/O timing requirements were not relaxed. The acceptance gate now also
+checks pulse width, including GT user-clock skew.
+
+Final artifacts and detailed evidence are described in [sfp-dual.md](sfp-dual.md).
+The report retains mode-controlled mux/reset CDC findings and the existing
+FIFO/mailbox/board findings; no blanket CDC or external RGMII timing sign-off
+is claimed. No hardware has been programmed. Module power, hot-plug behavior,
+independent link partners, clock correction and sustained traffic remain
+hardware qualification work.
+
+## 2026-09-28 dual-rate image with installed 1G SFP: link, traffic and recovery
+
+Loaded the accepted `sfpdual_release3/impl_dual_timing2` bitstream and matching
+R5 ELF through `10.0.1.109:3121` using the existing volatile JTAG boot flow.
+Boot flash and saved configuration were not changed. DHCP assigned
+`10.0.1.104`; PL0 and PL1 were already connected.
+
+The installed module identifies as OEM `SFP-GE-T` with valid EEPROM checksums.
+Initially its cable was disconnected: Auto repeatedly entered both host modes,
+1G PCS status reached `0x7`, but module LOS remained asserted and copper PHY
+status showed no link. After the user connected the cable, Auto retained 1G:
+
+- Core ID `0x4455414c`, capabilities `3`, requested mode `0`, rate `1000`.
+- GT/digital status `0x1a`: ready, running, link, no GT error.
+- PCS status `0x7`, sideband status `0`, physical/forwarding masks `0x1c`.
+- Module PHY register 17 `0xbc40`, reporting resolved 1G full duplex.
+
+These checks establish runtime switching and 1G link negotiation. They do
+**not** establish SFP packet forwarding: the host was learned on PL0 (mask 4),
+and endpoint `10.0.1.140` on PL1 (mask 8). Full-MTU pings returned 299/300 from
+R5 and 99/100 from that endpoint, but neither result is an SFP traffic test.
+The SFP TX counter advanced while RX remained zero. The user confirmed the
+unmanaged switch initially had only the SFP connected.
+
+After another device was connected to that switch, its MAC
+`88:a9:a7:99:8e:fd` was learned on SFP (mask `0x10`). Local ARP discovery
+identified it as `10.0.1.135`. The following tests therefore exercise the path
+from host `10.0.1.24` through PL0, the switch fabric, SFP, the unmanaged switch,
+and that endpoint, including return traffic:
+
+- Concurrent 57-byte-payload pings: 1000/1000 replies.
+- Concurrent 1472-byte-payload pings, A55A pattern: 999/1000 replies; sequence
+  108 was missing. This isolated loss is unexplained and is retained as a
+  qualification observation.
+- SFP counters increased by 2,005 received frames and 2,436 transmitted
+  handoffs during the first test interval, including background traffic.
+- A volatile write to the dual core requested 10G while the 1G module remained
+  installed. No 10G link appeared. Firmware Auto recovered 1G after roughly
+  eight seconds, with status `0x1a`, PCS `0x7`, and sideband `0`.
+- After recovery, another 1000 full-MTU pings with 5AA5 payload returned
+  1000/1000 replies. The final SFP counters were 3,067 RX frames and 10,550 TX
+  handoffs. Exposed wrapper error/drop slots and statistics timeouts were zero;
+  wrapper counters do not cover all internal MAC drops or wire completion.
+
+This verifies basic bidirectional 1G forwarding and return from an incompatible
+10G selection. It is not sustained line-rate, long-duration, hot-plug, or
+physical 10G-module qualification.
+
+Evidence is under `build/sfp_dual_reference/hardware_1g/`, including boot/UART
+logs, register snapshots, module PHY reads, MAC-table pages and statistics.
+The board is left running the dual-mode image in Auto, with a stable 1G SFP
+link and working bidirectional traffic to `10.0.1.135`.
+
+## 2026-09-28 hot swap to XZSNET copper SFP+: 10G host link and forwarding
+
+With the same dual-mode FPGA image and firmware running, the user replaced
+the 1G module with the purchased 10G copper module. The user confirmed sufficient
+power; this test did not independently measure cage current. The EEPROM reports
+vendor `XZSNET`, part `XZS-SFP10G-T`, revision `A`, serial `202607171954`, with
+both checksums valid. The board was not rebooted or reprogrammed for this swap.
+
+Auto recovered a 10G host link: requested mode `1`, GT/digital status `0x1b`,
+reported host rate `10000`, PCS `0x7`, and sideband `0x60`. The latter contains
+sticky removal/fault history from the swap, with no current LOS, TX fault,
+disable or lockout. Physical and forwarding masks returned to `0x1c`.
+
+The user reports a 2.5G switch port on the unmanaged switch. This demonstrates
+a 10GBASE-R host communicating through the module to that switch; the module's
+actual negotiated copper rate was not independently read. It is not a physical
+10GBASE-T line test or a throughput measurement.
+
+Traffic to the same SFP-side device, `10.0.1.135`, returned:
+
+| Test | Replies | Loss |
+|---|---:|---:|
+| Concurrent full-MTU, A55A payload | 999/1000 | 0.1% |
+| Concurrent short, 57-byte payload | 999/1000 | 0.1% |
+| Separate full-MTU, 5AA5 payload | 997/1000 | 0.3% |
+| Copper-only control to R5 `10.0.1.104` | 999/1000 | 0.1% |
+| Copper-only control to PL1 endpoint `10.0.1.140` | 999/1000 | 0.1% |
+
+During the initial paired tests, SFP counters advanced by 2,003 received frames
+and 2,304 TX handoffs, including background traffic. Exposed wrapper error/drop
+slots and statistics timeouts remained zero; these do not cover all internal
+MAC drops or wire completion. The losses also occur without traversing SFP,
+so the cause is not isolated to the new module. Investigate the common path,
+endpoints and SFP path before claiming loss-free operation.
+
+Basic hot swap, 10G host-link acquisition, and bidirectional forwarding are
+verified. Sustained 10G-to-lower-rate traffic, flow control, actual copper
+negotiation, power/thermal qualification, and the packet losses remain open.
+Evidence is under `build/sfp_dual_reference/hardware_10g/`, including
+`results.json`, EEPROM/register reads, port monitoring, counters, and ping logs.
+The board is left running Auto with the XZSNET module at a 10G host rate.

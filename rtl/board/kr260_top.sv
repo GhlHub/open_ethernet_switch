@@ -70,12 +70,26 @@ module kr260_top (
   wire  gtx_rst_n_sfp;
   wire  gth_clk_sfp;
   wire  gth_rst_n_sfp;
+`ifdef KR260_SFP_10G
+  wire [63:0] sfp_txdata;
+`else
   wire [15:0] sfp_txdata;
+`endif
   wire [1:0] sfp_txcharisk;
+`ifdef KR260_SFP_10G
+  wire [63:0] sfp_rxdata;
+`else
   wire [15:0] sfp_rxdata;
+`endif
   wire [1:0] sfp_rxcharisk;
   wire [1:0] sfp_rxdisperr;
   wire [1:0] sfp_rxnotintable;
+`ifdef KR260_SFP_10G
+  wire sfp_rx_bitslip,sfp_rx_reset_req;
+`endif
+`ifdef KR260_SFP_DUAL
+  wire sfp_gmii_clk,sfp_gmii_rst_n,sfp_pcs1g_clk,sfp_pcs1g_rst_n,sfp_gt_mode,sfp_gt_ready,sfp_gt_error,sfp_gt_request,sfp_gt_retry;
+`endif
   wire  sfp_sync_ok;
   wire  sfp_an_link_up;
   wire  sfp_an_duplex_full;
@@ -134,6 +148,20 @@ module kr260_top (
     .gtx_rst_n_sfp(gtx_rst_n_sfp),
     .gth_clk_sfp(gth_clk_sfp),
     .gth_rst_n_sfp(gth_rst_n_sfp),
+`ifdef KR260_SFP_10G
+    .sfp_rx_bitslip(sfp_rx_bitslip),.sfp_rx_reset_req(sfp_rx_reset_req),
+`ifdef KR260_SFP_DUAL
+    .sfp_gmii_clk(sfp_gmii_clk),
+    .sfp_gmii_rst_n(sfp_gmii_rst_n),
+    .sfp_pcs1g_clk(sfp_pcs1g_clk),
+    .sfp_pcs1g_rst_n(sfp_pcs1g_rst_n),
+    .sfp_gt_mode(sfp_gt_mode),
+    .sfp_gt_ready(sfp_gt_ready),
+    .sfp_gt_error(sfp_gt_error),
+    .sfp_gt_request(sfp_gt_request),
+    .sfp_gt_retry(sfp_gt_retry),
+`endif
+`endif
     .sfp_txdata(sfp_txdata),
     .sfp_txcharisk(sfp_txcharisk),
     .sfp_rxdata(sfp_rxdata),
@@ -223,6 +251,20 @@ module kr260_top (
     .gtx_rst_n_sfp(gtx_rst_n_sfp),
     .gth_clk_sfp(gth_clk_sfp),
     .gth_rst_n_sfp(gth_rst_n_sfp),
+`ifdef KR260_SFP_10G
+    .sfp_rx_bitslip(sfp_rx_bitslip),.sfp_rx_reset_req(sfp_rx_reset_req),
+`ifdef KR260_SFP_DUAL
+    .sfp_gmii_clk(sfp_gmii_clk),
+    .sfp_gmii_rst_n(sfp_gmii_rst_n),
+    .sfp_pcs1g_clk(sfp_pcs1g_clk),
+    .sfp_pcs1g_rst_n(sfp_pcs1g_rst_n),
+    .sfp_gt_mode(sfp_gt_mode),
+    .sfp_gt_ready(sfp_gt_ready),
+    .sfp_gt_error(sfp_gt_error),
+    .sfp_gt_request(sfp_gt_request),
+    .sfp_gt_retry(sfp_gt_retry),
+`endif
+`endif
     .sfp_txdata(sfp_txdata),
     .sfp_txcharisk(sfp_txcharisk),
     .sfp_rxdata(sfp_rxdata),

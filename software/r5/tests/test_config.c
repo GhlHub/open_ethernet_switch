@@ -68,8 +68,11 @@ int main(void)
 snprintf(text,sizeof(text),"%s&mask=31",good);assert(!form(text));
     snprintf(text,sizeof(text),"%s&username=admin",good);assert(!form(text));
     assert(!form("mask=31"));
-    char json[1024];assert(config_json(json,sizeof(json),&c,true,true));assert(!strstr(json,"password")&&!strstr(json,"salt")&&!strstr(json,"hash"));
+    char json[1024];assert(config_json(json,sizeof(json),&c,true,true,1));assert(!strstr(json,"password")&&!strstr(json,"salt")&&!strstr(json,"hash"));
     assert(strstr(json,"\"copper_supported\":[4,7,7,7]"));
-    assert(!config_json(json,10,&c,true,true));
+    assert(config_json(json,sizeof(json),&c,true,true,2));
+    assert(strstr(json,"\"sfp_supported\":[0,10000]"));
+    assert(config_json(json,sizeof(json),&c,true,true,3));assert(strstr(json,"\"sfp_supported\":[0,1000,10000]"));
+    assert(!config_json(json,10,&c,true,true,1));
     puts("PASS: defaults, all-byte CRC corruption, interrupted saves, redundant recovery, foreign-region protection, sequence wrap, port/IP validation and public JSON");
 }

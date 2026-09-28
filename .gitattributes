@@ -5,3 +5,4 @@
 
 # Preserve the pinned upstream source byte-for-byte, including whitespace.
 third_party/mstp-lib/** -whitespace
+third_party/verilog-ethernet/** -whitespace

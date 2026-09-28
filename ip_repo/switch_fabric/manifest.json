@@ -38,7 +38,8 @@
     "rtl/mac_table/mac_forwarding_top.sv",
     "rtl/mac_table/mac_table_dump.sv",
     "ip_repo/switch_fabric/hdl/ingress_datapath.sv",
-    "ip_repo/switch_fabric/hdl/switch_fabric.sv"
+    "ip_repo/switch_fabric/hdl/switch_fabric.sv",
+    "rtl/dma/egress_port_rd_wide.sv"
   ],
   "clocks": {
     "clk": [

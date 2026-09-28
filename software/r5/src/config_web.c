@@ -56,7 +56,7 @@ bool config_form(char *body,struct switch_config *out,bool *credentials,bool *st
     if (!config_valid(&c)) return false;
     *out=c;*credentials=base==0x1fff;*stp_supplied=spanning!=0;return true;
 }
-size_t config_json(char *out,size_t size,const struct switch_config *c,bool saved,bool writable)
+size_t config_json(char *out,size_t size,const struct switch_config *c,bool saved,bool writable,unsigned sfp_capabilities)
 {
     char macs[128];size_t used=0;
     for (unsigned i=0;i<5;i++) {
@@ -66,9 +66,9 @@ size_t config_json(char *out,size_t size,const struct switch_config *c,bool save
         used+=(size_t)n;
     }
     /* Username has a restricted alphabet; verifier and salt are never returned. */
-    int n=snprintf(out,size,"{\"stp\":%s,\"stp_version\":%u,\"saved\":%s,\"writable\":%s,\"macs\":[%s],\"username\":\"%s\",\"admin\":%u,\"advertise\":[%u,%u,%u,%u],\"sfp\":%u,\"dhcp\":%s,\"ip\":\"%u.%u.%u.%u\",\"netmask\":\"%u.%u.%u.%u\",\"gateway\":\"%u.%u.%u.%u\",\"requires_restart_for_ip\":true,\"copper_supported\":[4,7,7,7],\"sfp_supported\":[0,1000]}",
+    int n=snprintf(out,size,"{\"stp\":%s,\"stp_version\":%u,\"saved\":%s,\"writable\":%s,\"macs\":[%s],\"username\":\"%s\",\"admin\":%u,\"advertise\":[%u,%u,%u,%u],\"sfp\":%u,\"dhcp\":%s,\"ip\":\"%u.%u.%u.%u\",\"netmask\":\"%u.%u.%u.%u\",\"gateway\":\"%u.%u.%u.%u\",\"requires_restart_for_ip\":true,\"copper_supported\":[4,7,7,7],\"sfp_supported\":[0,%s]}",
         c->stp_enabled?"true":"false",c->stp_version,saved?"true":"false",writable?"true":"false",macs,c->username,c->admin,
         c->advertise[0],c->advertise[1],c->advertise[2],c->advertise[3],c->sfp_speed,c->dhcp?"true":"false",
-        c->ip[0],c->ip[1],c->ip[2],c->ip[3],c->netmask[0],c->netmask[1],c->netmask[2],c->netmask[3],c->gateway[0],c->gateway[1],c->gateway[2],c->gateway[3]);
+        c->ip[0],c->ip[1],c->ip[2],c->ip[3],c->netmask[0],c->netmask[1],c->netmask[2],c->netmask[3],c->gateway[0],c->gateway[1],c->gateway[2],c->gateway[3],sfp_capabilities==3?"1000,10000":sfp_capabilities==2?"10000":"1000");
     return n>0 && (size_t)n<size?(size_t)n:0;
 }

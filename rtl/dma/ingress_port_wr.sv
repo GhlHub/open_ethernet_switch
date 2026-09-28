@@ -36,14 +36,15 @@ module ingress_port_wr
   import buf_mgr_pkg::*;
   import axi_dma_pkg::*;
 #(
-  parameter int PORT_ID = 0
+  parameter int PORT_ID = 0,
+  parameter int DATA_WIDTH = 16
 ) (
   input  logic clk,
   input  logic rst_n,
 
   // AXI4-Stream RX from the MAC (16-bit; tuser = frame error, drop)
-  input  logic [15:0] s_axis_tdata,
-  input  logic [1:0]  s_axis_tkeep,
+  input  logic [DATA_WIDTH-1:0] s_axis_tdata,
+  input  logic [DATA_WIDTH/8-1:0] s_axis_tkeep,
   input  logic         s_axis_tvalid,
   input  logic         s_axis_tlast,
   input  logic         s_axis_tuser,
@@ -105,12 +106,25 @@ module ingress_port_wr
   state_t state_q, state_d;
 
   wire word_accept = (state_q == S_RECV) && s_axis_tvalid && s_axis_tready;
-  wire beat_full    = (word_pos_q == 3'd7);
+  wire beat_full = DATA_WIDTH == 128 || (word_pos_q == 3'd7);
   wire commit_beat  = word_accept && (beat_full || s_axis_tlast);
 
   // bytes contributed by this transfer: 2 normally, 1 if tkeep marks the
   // upper byte invalid (only legal on the tlast transfer, odd length)
-  wire [1:0] word_bytes = s_axis_tkeep[1] ? 2'd2 : 2'd1;
+  logic [4:0] word_bytes;
+  always_comb begin
+    word_bytes = 0;
+    for (integer b=0; b<DATA_WIDTH/8; b=b+1) word_bytes = word_bytes + 5'(s_axis_tkeep[b]);
+  end
+  logic wide_error;
+  wire wide_bad = s_axis_tuser || s_axis_tkeep == 0 ||
+    ((s_axis_tkeep & (s_axis_tkeep + 1'b1)) != 0) ||
+    (!s_axis_tlast && !(&s_axis_tkeep)) ||
+    ({1'b0,byte_cnt_q} + word_bytes > BUFFER_BYTES);
+  always_ff @(posedge clk) begin
+    if (!rst_n) wide_error <= 0;
+    else if (word_accept) wide_error <= !s_axis_tlast && (wide_error || wide_bad);
+  end
 
   // combinational "merge this cycle's word into the accumulator", using a
   // case on a constant lane index (0-7) rather than a variable/register-
@@ -120,7 +134,8 @@ module ingress_port_wr
   always_comb begin
     acc_next = acc_q;
     if (word_accept) begin
-      unique case (word_pos_q)
+      if (DATA_WIDTH == 128) acc_next = s_axis_tdata;
+      else unique case (word_pos_q)
         3'd0:    acc_next[15:0]    = s_axis_tdata;
         3'd1:    acc_next[31:16]   = s_axis_tdata;
         3'd2:    acc_next[47:32]   = s_axis_tdata;
@@ -264,7 +279,7 @@ module ingress_port_wr
     fram_addr  = '0;
     fram_wdata = acc_next;
 
-    if (recv_win && commit_beat) begin
+    if (recv_win && commit_beat && (DATA_WIDTH == 16 || (!wide_error && !wide_bad))) begin
       fram_en   = 1'b1;
       fram_we   = 1'b1;
       fram_addr = wr_beat_q;
@@ -281,7 +296,7 @@ module ingress_port_wr
     unique case (state_q)
       S_RECV: begin
         if (word_accept && s_axis_tlast) begin
-          if (s_axis_tuser) state_d = S_RECV; // error: drop, no alloc needed
+          if (s_axis_tuser || (DATA_WIDTH == 128 && (wide_error || wide_bad))) state_d = S_RECV; // error: drop, no alloc needed
           else               state_d = S_ALLOC_WAIT;
         end
       end

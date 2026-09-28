@@ -4,6 +4,9 @@
 #include <string.h>
 #include "../src/web_task.c"
 static struct switch_config current;
+unsigned board_sfp_capabilities(void){return 2;}
+void network_ipv4_snapshot(uint32_t a[3],bool *up,bool *dhcp){memset(a,0,3*sizeof(*a));*up=false;*dhcp=true;}
+char *FreeRTOS_inet_ntoa(uint32_t address,char *out){(void)address;strcpy(out,"0.0.0.0");return out;}
 static unsigned saves, mac_refreshes;
 int web_mac_table(char *out,size_t cap,const char *path,bool refresh,size_t *len)
 { (void)path;assert(cap>16);if(refresh)mac_refreshes++;strcpy(out,"{}");*len=2;return refresh?202:200;}
@@ -68,6 +71,7 @@ int main(void)
     assert(mac_refreshes==1 && saves==0);
     query("GET","/statistics","","",200);query("GET","/configuration","","",200);
     query("GET","/api/statistics","","",200);query("GET","/api/config","","",200);
+    assert(strstr(outgoing,"\"sfp_supported\":[0,10000]"));
     assert(!strstr(outgoing,"password_hash")&&!strstr(outgoing,"password_salt"));
     query("POST","/api/ports","","mask=30",401);assert(!saves&&current.admin==31);
     query("POST","/api/ports","Authorization: Basic YWRtaW46YmFk\r\n","mask=30",401);assert(!saves);

@@ -355,3 +355,12 @@ Management 2.1 adds read-only `STP_ABI` at `0x80100058`, value `0x53545002`.
 It identifies matching fabric destination-state gating and CPU RX-tag FIFO
 backpressure. Spanning-tree firmware requires this value before enabling.
 The packet pool and DMA memory reservations are unchanged. See [STP/RSTP](spanning-tree.md).
+
+The optional `sfp_10g_port` build reuses `0x800C0000` for RX/TX enables and
+adds the host-rate/core-ID registers at `+0x4F0` through `+0x4FC`.
+See the [10G register contract](sfp-10g.md#firmware-and-registers); unsupported
+legacy 1G configuration registers read as zero and ignore writes.
+
+The `sfp_dual_port` image also uses `0x800C0000`; its ID is `0x4455414c`.
+Mode request/status/capabilities occupy offsets `0x4e0`, `0x4e4`, and `0x4ec`.
+See [the dual-mode register contract](sfp-dual.md#register-interface).
