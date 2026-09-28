@@ -7,6 +7,10 @@
  * (board.h's LINK_SET/CLR, owned by links.c): a hook for 802.1D STP/RSTP
  * port states, or similar future protocols. stp_task.c drives these when
  * STP is enabled; STP defaults disabled. FWD_EN/LEARN_EN reset enabled. */
+bool pstate_stp_supported(void);
+void pstate_latch_fault(void);
+bool pstate_failed(void);
+void pstate_link_clear(uint8_t mask);
 void pstate_fwd_set(uint8_t mask);
 void pstate_fwd_clear(uint8_t mask);
 void pstate_learn_set(uint8_t mask);

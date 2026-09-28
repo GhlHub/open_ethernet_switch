@@ -1,162 +1,91 @@
-/* Host test for the pure STP engine (stp.c has no board.h dependency, so
- * this compiles and runs with plain cc, like test_policy.c). The strongest
- * proof this protocol actually works is the classic three-switch triangle:
- * three bridges each with two ports, wired A-B, B-C, C-A. Real STP must
- * elect one root and block exactly one port around the loop, or the
- * network would melt down under a real broadcast storm the moment three
- * switches were cabled this way. */
-#include "../src/stp.c"
+/* Packet-level multi-bridge test using the same adapter/library as the R5. */
+#include "stp.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-
-static void deliver(struct stp_bridge *dst, unsigned dst_port, const struct stp_actions *act,
-                     unsigned src_port_matching, uint32_t now_ms, struct stp_actions *dst_out)
+struct node { struct stp_bridge *b; bool fwd[5],learn[5];unsigned flushes,tx0,tx2; };
+static struct node nodes[3];
+struct endpoint { int node,port; };
+static struct endpoint peer[3][5];
+struct packet {int src,port;size_t n;uint8_t frame[1514];};
+static struct packet queue[4096];static unsigned rd,wr;static uint32_t now;
+static void no_loop(void)
 {
-    for (unsigned i = 0; i < act->count; i++) {
-        if (act->tx[i].port != src_port_matching) continue;
-        stp_rx_bpdu(dst, dst_port, act->tx[i].frame, act->tx[i].len, now_ms, dst_out);
+    int parent[3]={0,1,2};
+    for(int i=0;i<3;i++)for(int p=0;p<5;p++) {
+        struct endpoint e=peer[i][p];if(e.node<=i || !nodes[i].fwd[p] || !nodes[e.node].fwd[e.port])continue;
+        int a=i,b=e.node;while(parent[a]!=a)a=parent[a];while(parent[b]!=b)b=parent[b];
+        assert(a!=b && "forwarding loop during state transition");parent[a]=b;
     }
 }
-
-static void test_triangle(void)
+static void state(void *ctx,unsigned p,bool l,bool f)
+{struct node *n=ctx;n->learn[p]=l;n->fwd[p]=f;no_loop();}
+static void flush(void *ctx,unsigned p,bool rapid){(void)p;(void)rapid;((struct node*)ctx)->flushes++;}
+static bool tx(void *ctx,unsigned p,const uint8_t *f,size_t n)
 {
-    struct stp_bridge A, B, C;
-    struct stp_actions a, b, c, tmp;
-    const uint8_t mac_a[6] = {0x02,0,0,0,0,0x01};
-    const uint8_t mac_b[6] = {0x02,0,0,0,0,0x02};
-    const uint8_t mac_c[6] = {0x02,0,0,0,0,0x03};
-    stp_init(&A, mac_a, 32768);
-    stp_init(&B, mac_b, 32768);
-    stp_init(&C, mac_c, 32768);
-    /* A.port0<->B.port0, B.port1<->C.port0, C.port1<->A.port1 */
-    stp_port_link_change(&A, 0, true, 4, &tmp);
-    stp_port_link_change(&A, 1, true, 4, &tmp);
-    stp_port_link_change(&B, 0, true, 4, &tmp);
-    stp_port_link_change(&B, 1, true, 4, &tmp);
-    stp_port_link_change(&C, 0, true, 4, &tmp);
-    stp_port_link_change(&C, 1, true, 4, &tmp);
-
-    uint32_t now = 0;
-    for (int round = 0; round < 40; round++) {
-        now += 1000;
-        stp_tick(&A, now, &a);
-        stp_tick(&B, now, &b);
-        stp_tick(&C, now, &c);
-        deliver(&B, 0, &a, 0, now, &tmp);
-        deliver(&C, 1, &a, 1, now, &tmp);
-        deliver(&A, 0, &b, 0, now, &tmp);
-        deliver(&C, 0, &b, 1, now, &tmp);
-        deliver(&B, 1, &c, 0, now, &tmp);
-        deliver(&A, 1, &c, 1, now, &tmp);
+    struct node *node=ctx;int i=node-nodes;
+    assert(n<=1514 && n>=21);if(f[19]==2)node->tx2++;else node->tx0++;
+    assert(wr-rd<4096);struct packet *q=&queue[(wr++)%4096];q->src=i;q->port=p;q->n=n;memcpy(q->frame,f,n);return true;
+}
+static const struct stp_ops ops={state,flush,tx};
+static void drain(void)
+{
+    unsigned count=0;
+    while(rd!=wr) {
+        assert(++count<10000);struct packet p=queue[(rd++)%4096];struct endpoint e=peer[p.src][p.port];
+        if(e.node>=0)stp_rx_bpdu(nodes[e.node].b,e.port,p.frame,p.n,now);
+        no_loop();
     }
-
-    struct stp_status sa, sb, sc;
-    stp_get_status(&A, &sa); stp_get_status(&B, &sb); stp_get_status(&C, &sc);
-
-    assert(sa.is_root && "A (lowest MAC) must become root");
-    assert(!sb.is_root && !sc.is_root);
-    assert(memcmp(sb.root_id.mac, mac_a, 6) == 0);
-    assert(memcmp(sc.root_id.mac, mac_a, 6) == 0);
-
-    assert(sa.port[0].role == STP_ROLE_DESIGNATED && sa.port[0].state == STP_STATE_FORWARDING);
-    assert(sa.port[1].role == STP_ROLE_DESIGNATED && sa.port[1].state == STP_STATE_FORWARDING);
-    assert(sb.port[0].role == STP_ROLE_ROOT && sb.port[0].state == STP_STATE_FORWARDING);
-    assert(sc.port[1].role == STP_ROLE_ROOT && sc.port[1].state == STP_STATE_FORWARDING);
-    /* the B-C segment: equal cost via the root on both sides, so the lower
-     * bridge ID (B) wins designated and C's end blocks -- the one blocked
-     * port that keeps this triangle loop-free */
-    assert(sb.port[1].role == STP_ROLE_DESIGNATED && sb.port[1].state == STP_STATE_FORWARDING);
-    assert(sc.port[0].role == STP_ROLE_BLOCKING && sc.port[0].state == STP_STATE_BLOCKING);
-
-    unsigned forwarding = 0, blocking = 0;
-    struct stp_status *all[3] = {&sa, &sb, &sc};
-    for (int i = 0; i < 3; i++) for (int p = 0; p < 2; p++) {
-        if (all[i]->port[p].state == STP_STATE_FORWARDING) forwarding++;
-        if (all[i]->port[p].state == STP_STATE_BLOCKING) blocking++;
+}
+static void run(unsigned seconds)
+{for(unsigned t=0;t<seconds;t++){now+=1000;for(unsigned i=0;i<3;i++)stp_tick(nodes[i].b,now);drain();}}
+static void wire(int a,int ap,int b,int bp)
+{
+    peer[a][ap]=(struct endpoint){b,bp};peer[b][bp]=(struct endpoint){a,ap};
+    stp_port_link_change(nodes[a].b,ap,true,1000,now);stp_port_link_change(nodes[b].b,bp,true,1000,now);
+}
+static void unwire(int a,int ap)
+{
+    struct endpoint e=peer[a][ap];peer[a][ap].node=-1;peer[e.node][e.port].node=-1;
+    stp_port_link_change(nodes[a].b,ap,false,0,now);stp_port_link_change(nodes[e.node].b,e.port,false,0,now);
+}
+static void init(unsigned va,unsigned vb,unsigned vc)
+{
+    memset(nodes,0,sizeof nodes);rd=wr=now=0;
+    for(unsigned i=0;i<3;i++)for(unsigned p=0;p<5;p++)peer[i][p].node=-1;
+    unsigned versions[]={va,vb,vc};
+    for(unsigned i=0;i<3;i++){uint8_t mac[]={2,0,0,0,0,i+1};nodes[i].b=stp_create(mac,versions[i],&ops,&nodes[i]);assert(nodes[i].b);}
+    wire(0,0,1,0);wire(1,1,2,0);wire(2,1,0,1);drain();
+}
+static void check_tree(void)
+{
+    struct stp_status s;unsigned forwarding=0;
+    for(unsigned i=0;i<3;i++){
+        stp_get_status(nodes[i].b,&s);assert(s.is_root==(i==0));assert(s.root_id.mac[5]==1);
+        if(i)assert(s.root_port<2 && s.root_path_cost==20000);
+        for(unsigned p=0;p<2;p++)forwarding+=nodes[i].fwd[p];
     }
-    assert(forwarding == 5 && blocking == 1 && "exactly one port blocked around the loop");
-
-    assert(sa.port[0].bpdu_tx > 0 && sa.port[1].bpdu_tx > 0 && "root periodically sends Hello BPDUs");
-    assert(sb.port[0].bpdu_rx > 0 && "B actually received A's BPDUs, not just computed in a vacuum");
-
-    printf("PASS: three-switch triangle elects A as root and blocks exactly one port (C's link to B), no active loop\n");
+    assert(forwarding==5);no_loop();
 }
-
-static void test_bpdu_wire_format(void)
-{
-    struct stp_bridge A;
-    struct stp_actions a, tmp;
-    const uint8_t mac[6] = {0x02,0x4b,0x52,0x32,0x36,0x01};
-    stp_init(&A, mac, 32768);
-    stp_port_link_change(&A, 0, true, 4, &tmp);
-
-    uint32_t now = 0;
-    /* first tick's hello_timer already >= use_hello_ms (starts at 0 with
-     * use_hello_ms=2000 and dt from an unset last tick is 0) -- tick twice
-     * at the 2s hello period to guarantee at least one transmission */
-    stp_tick(&A, now, &a);
-    now += 2000;
-    stp_tick(&A, now, &a);
-    assert(a.count >= 1);
-    const uint8_t *f = a.tx[0].frame;
-    assert(f[0]==0x01 && f[1]==0x80 && f[2]==0xc2 && f[3]==0 && f[4]==0 && f[5]==0);
-    assert(memcmp(f+6, mac, 6) == 0);
-    assert(f[14]==0x42 && f[15]==0x42 && f[16]==0x03);
-    assert(f[17]==0 && f[18]==0 && f[19]==0 && f[20]==0); /* proto id 0, version 0, config */
-    assert(memcmp(f+22, f+34, 8) == 0); /* alone, A is its own root: root id == bridge id */
-    assert(f[42]==0x80 && f[43]==0x01); /* port id: priority 128, port number 1 (port 0 = STP port 1) */
-    printf("PASS: transmitted Config BPDU has the correct dest MAC/LLC/protocol framing and root==self when alone\n");
-}
-
-static void test_aging_reclaims_designated(void)
-{
-    struct stp_bridge A, B;
-    struct stp_actions a, b, tmp;
-    const uint8_t mac_a[6] = {0x02,0,0,0,0,0x01}, mac_b[6] = {0x02,0,0,0,0,0x02};
-    stp_init(&A, mac_a, 32768); stp_init(&B, mac_b, 4096); /* B has better (lower) priority: B is root */
-    stp_port_link_change(&A, 0, true, 4, &tmp);
-    stp_port_link_change(&B, 0, true, 4, &tmp);
-
-    uint32_t now = 0;
-    for (int i = 0; i < 5; i++) { now += 1000; stp_tick(&A, now, &a); stp_tick(&B, now, &b); deliver(&A, 0, &b, 0, now, &tmp); }
-    struct stp_status s; stp_get_status(&A, &s);
-    assert(!s.is_root && s.port[0].role == STP_ROLE_ROOT);
-
-    /* B stops sending (simulated link partner disappears without a clean
-     * down event, e.g. cable pulled) -- A must age its info out after
-     * max_age (20s) and reclaim the port as its own designated */
-    for (int i = 0; i < 22; i++) { now += 1000; stp_tick(&A, now, &a); }
-    stp_get_status(&A, &s);
-    assert(s.is_root && "A reclaims root once B's info ages out");
-    assert(s.port[0].role == STP_ROLE_DESIGNATED);
-    printf("PASS: a port whose neighbor stops advertising ages out after Max Age and is reclaimed\n");
-}
-
-static void test_malformed_frames_ignored(void)
-{
-    struct stp_bridge A;
-    struct stp_actions a, tmp;
-    const uint8_t mac[6] = {0x02,0,0,0,0,0x09};
-    stp_init(&A, mac, 32768);
-    stp_port_link_change(&A, 0, true, 4, &tmp);
-
-    uint8_t garbage[60]; memset(garbage, 0xAA, sizeof garbage);
-    stp_rx_bpdu(&A, 0, garbage, sizeof garbage, 1000, &a); /* wrong protocol id/version */
-    uint8_t truncated[10] = {0};
-    stp_rx_bpdu(&A, 0, truncated, sizeof truncated, 1000, &a); /* too short even for the header check */
-    stp_rx_bpdu(&A, 99, garbage, sizeof garbage, 1000, &a);    /* out-of-range port */
-
-    struct stp_status s; stp_get_status(&A, &s);
-    assert(s.port[0].bpdu_rx == 0 && "malformed/short frames are ignored, not miscounted as real BPDUs");
-    printf("PASS: malformed and out-of-range-port BPDU calls are safely ignored\n");
-}
-
+static void finish(void)
+{for(unsigned i=0;i<3;i++)for(unsigned p=0;p<5;p++)peer[i][p].node=-1;for(unsigned i=0;i<3;i++)stp_destroy(nodes[i].b);}
 int main(void)
 {
-    test_bpdu_wire_format();
-    test_aging_reclaims_designated();
-    test_malformed_frames_ignored();
-    test_triangle();
-    return 0;
+    init(2,2,2);run(3);check_tree();
+    assert(nodes[0].tx2 && nodes[1].tx2 && nodes[2].tx2);
+    unsigned flushes=nodes[0].flushes+nodes[1].flushes+nodes[2].flushes;
+    unwire(0,0);drain();run(3);
+    assert(nodes[0].fwd[1] && nodes[2].fwd[1] && nodes[2].fwd[0] && nodes[1].fwd[1]);
+    assert(nodes[0].flushes+nodes[1].flushes+nodes[2].flushes>flushes);
+    wire(0,0,1,0);drain();run(3);check_tree();
+    /* Truncated/foreign LLC/invalid declared length must not enter engine. */
+    uint8_t bad[60]={0};struct stp_status before,after;stp_get_status(nodes[0].b,&before);
+    for(unsigned n=0;n<60;n++)assert(!stp_rx_bpdu(nodes[0].b,0,bad,n,now));
+    memcpy(bad,"\x01\x80\xc2\0\0\0",6);bad[6]=2;bad[14]=bad[15]=0x42;bad[16]=3;bad[13]=100;
+    assert(!stp_rx_bpdu(nodes[0].b,0,bad,60,now));
+    stp_get_status(nodes[0].b,&after);assert(before.port[0].bpdu_rx==after.port[0].bpdu_rx);
+    finish();
+    init(0,0,0);run(3);assert(!nodes[0].fwd[0]);run(45);check_tree();finish();
+    init(0,2,2);run(50);check_tree();assert(nodes[0].tx0 && nodes[1].tx2 && nodes[2].tx2);finish();
+    puts("PASS: RSTP triangle converges in <=3s, no transient forwarding loops, link failure/recovery, FDB flushes, malformed frames, classic and mixed STP interoperability");
 }

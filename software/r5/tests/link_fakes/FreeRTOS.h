@@ -6,3 +6,5 @@ typedef uint32_t TickType_t;
 #define configASSERT(x) assert(x)
 #define pdMS_TO_TICKS(x) (x)
 #define portTICK_PERIOD_MS 1
+
+#define portMAX_DELAY UINT32_MAX

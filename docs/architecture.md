@@ -1,5 +1,9 @@
 # Overall architecture
 
+The latest source adds [STP/RSTP and safe port-state integration](spanning-tree.md),
+superseding the historical partial-STP description below. It requires a new
+fabric/management 2.1 bitstream and is not yet deployed.
+
 The digital modules now have [IP repository boundaries](ip-partitioning.md)
 with an extracted `switch_fabric`, local GEM counters and reproducible
 Vivado packaging. The diagram below shows the board-level packet flow;
@@ -175,6 +179,8 @@ do not establish independent-peer interoperability. See the
 The CPU port uses the same front ends and buffer manager, but dedicated
 `cpu_dma_wr` / `cpu_dma_rd` engines. The block design instantiates a separate AXI DMA
 SG block to move data between FreeRTOS-owned buffers and this port's streams.
+MM2S/S2MM completion and error interrupts (GIC 127/128) wake the sending
+task and RX service respectively; packet completion is not periodically polled.
 The current CPU design therefore copies between software buffers and the
 switch pool; it is not a direct zero-copy software interface to pool buffers.
 

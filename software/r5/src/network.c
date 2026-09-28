@@ -77,13 +77,34 @@ BaseType_t xApplicationGetRandomNumber(uint32_t *value)
 }
 uint32_t ulApplicationGetNextSequenceNumber(uint32_t a,uint16_t b,uint32_t c,uint16_t d)
 { uint32_t value; (void)a;(void)b;(void)c;(void)d; xApplicationGetRandomNumber(&value); return value; }
+void network_ipv4_snapshot(uint32_t addresses[3],bool *up,bool *dhcp_mode)
+{
+    /* R5 is single-core: prevent DHCP/IP-task updates during the snapshot. */
+    taskENTER_CRITICAL();
+    addresses[0]=endpoint.ipv4_settings.ulIPAddress;
+    addresses[1]=endpoint.ipv4_settings.ulNetMask;
+    addresses[2]=endpoint.ipv4_settings.ulGatewayAddress;
+    *up=endpoint.bits.bEndPointUp!=0;
+    *dhcp_mode=use_dhcp;
+    taskEXIT_CRITICAL();
+}
+void network_dma_event(bool from_isr)
+{
+    if (!service) return; /* initial drain covers packets before task creation */
+    if (from_isr) {
+        BaseType_t wake=pdFALSE;
+        xTaskNotifyFromISR(service,4u,eSetBits,&wake);
+        portYIELD_FROM_ISR(wake);
+    } else xTaskNotify(service,4u,eSetBits);
+}
 static void network_service(void *arg)
 {
     (void)arg; static uint8_t frame[1536] __attribute__((aligned(4)));
-    bool fault_reported=false;
+    bool fault_reported=false, drain=true;
     for (;;) {
         uint32_t events=0;
-        (void)xTaskNotifyWait(0,UINT32_MAX,&events,0);
+        (void)xTaskNotifyWait(0,UINT32_MAX,&events,drain?0:pdMS_TO_TICKS(1000));
+        drain=drain || (events&4u);
         if (events&1u) {
             taskENTER_CRITICAL(); dhcp.leased=false; dhcp.retry_wait=false; taskEXIT_CRITICAL();
             FreeRTOS_NetworkDown(&interface);
@@ -93,9 +114,9 @@ static void network_service(void *arg)
         taskENTER_CRITICAL(); retry=use_dhcp && dhcp_retry(&dhcp,link_up,now_ms()); taskEXIT_CRITICAL();
         if (retry) { xil_printf("Retry DHCP\r\n"); FreeRTOS_NetworkDown(&interface); }
         /* Bounded work per iteration so a flooded CPU port cannot starve link service. */
-        for (unsigned j=0;j<16;j++) {
+        for (unsigned j=0;drain && j<16 && fabric_dma_rx_pending();j++) {
             size_t n=fabric_dma_receive(frame,sizeof frame);
-            if (!n) break;
+            if (!n) continue; /* malformed descriptor was consumed; drain following frames */
             ip_discovery_observe(frame,n);
             /* IEEE 802.1D reserved block (01:80:C2:00:00:0x): STP/LACP/LLDP/etc,
              * never IP/ARP traffic for this board's own MAC -- see pstate.h. */
@@ -118,7 +139,8 @@ static void network_service(void *arg)
             xil_printf("DMA fault: ports disabled, reboot required\r\n");
             network_link_changed(false);
         }
-        vTaskDelay(1);
+        drain=drain && fabric_dma_rx_pending();
+        if (drain) vTaskDelay(1); /* fairness only while RX backlog exists */
     }
 }
 void network_start(void)

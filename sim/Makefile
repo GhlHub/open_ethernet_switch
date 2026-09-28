@@ -506,7 +506,7 @@ sim-switch-top: tb_switch_top.vvp
 	vvp tb_switch_top.vvp
 
 tb_switch_top.vvp: $(SWITCH_TOP_SRCS) $(SWITCH_TOP_TB)
-	iverilog -g2012 -o $@ $(SWITCH_TOP_SRCS) $(SWITCH_TOP_TB)
+	iverilog -g2012 -s tb_switch_top -o $@ $(SWITCH_TOP_SRCS) $(TB_DIR)/models/iobuf.sv $(SWITCH_TOP_TB)
 
 lint-switch-top:
 	verilator --lint-only --timing --top-module switch_top $(SWITCH_TOP_SRCS)

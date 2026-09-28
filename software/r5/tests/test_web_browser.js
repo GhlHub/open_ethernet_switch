@@ -3,7 +3,7 @@ const {chromium}=require('playwright');
 const fs=require('fs'),path=require('path');
 (async()=>{
  const root=path.resolve(__dirname,'..');
- const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE_PATH,args:['--no-sandbox']});
  try {
   const page=await browser.newPage({viewport:{width:1440,height:1000}});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -13,9 +13,10 @@ const fs=require('fs'),path=require('path');
   fixture.sensors.som_voltage_uv=5000000;
   let refreshes=0,posts=0,macPosts=0,macGets=0,macPolls=0;
   let mac={busy:false,ready:false,generation:0,age_ms:100,count:1,error:0,pages:16,entries:[]};
-  let settings={saved:false,writable:true,admin:31,advertise:[4,7,7,7],sfp:0,dhcp:true,
+  let settings={saved:false,writable:true,admin:31,advertise:[4,7,7,7],sfp:0,dhcp:true,stp:false,stp_version:2,
     ip:'0.0.0.0',netmask:'0.0.0.0',gateway:'0.0.0.0',username:'admin',
     macs:[45,46,47,48,49].map(n=>'00:0a:35:0f:37:'+n)};
+  let network={up:true,dhcp:true,ip:'10.0.1.104',netmask:'255.255.255.0',gateway:'10.0.1.1'};
   let ports={admin:31,physical:17,forwarding:17,advertise:[4,7,7,7],applied:[4,7,7,7],speed_mbps:[10,0,0,0,1000,0]};
   await page.route('http://kr260.test/**',async route=>{
    const req=route.request(),url=new URL(req.url());
@@ -31,6 +32,7 @@ const fs=require('fs'),path=require('path');
     return route.fulfill({json:{...mac,entries}});
    }
    if(url.pathname==='/api/statistics'){refreshes++;return route.fulfill({json:fixture});}
+   if(url.pathname==='/api/network')return route.fulfill({json:network});
    if(url.pathname==='/api/ports')return route.fulfill({json:ports});
    if(url.pathname==='/api/config'){
     if(req.method()==='POST'){
@@ -38,6 +40,8 @@ const fs=require('fs'),path=require('path');
      posts++;const form=new URLSearchParams(req.postData());
      if(req.headers()['x-kr260-request']!=='1')throw Error('Missing change header');
      settings.admin=Number(form.get('mask'));settings.saved=true;
+     settings.stp=form.get('stp')==='1';settings.stp_version=Number(form.get('stp_version'));
+     if(![0,2].includes(settings.stp_version))throw Error('Invalid STP version');
      settings.advertise=[0,1,2,3].map(i=>Number(form.get('adv'+i)));
      settings.sfp=Number(form.get('sfp'));settings.dhcp=form.get('dhcp')==='1';
      for(const k of ['ip','netmask','gateway'])settings[k]=form.get(k);
@@ -57,6 +61,17 @@ const fs=require('fs'),path=require('path');
   for(const text of ['18446744073709551615','30.0 °C','31.6 °C','1.800 V','5.000 V','10 Mb/s full duplex'])
    if(!await page.getByText(text,{exact:true}).count())throw Error('Missing exact display: '+text);
   await page.getByRole('link',{name:'Configuration'}).click();
+  await page.locator('#current-ip').waitFor();
+  if(await page.locator('#current-ip').innerText()!==network.ip || await page.locator('#ip').inputValue()!=='0.0.0.0')throw Error('Active IPv4 must be independent of saved settings');
+  network={...network,ip:'10.0.1.105'};
+  await page.waitForFunction(()=>document.querySelector('#current-ip').textContent==='10.0.1.105');
+  network={...network,up:false};
+  await page.waitForFunction(()=>document.querySelector('#current-ip').textContent==='Unavailable');
+  network={...network,up:true,dhcp:false,ip:'192.168.10.20'};
+  await page.waitForFunction(()=>document.querySelector('#current-ip').textContent==='192.168.10.20');
+  if(!(await page.locator('#current-ipv4-state').innerText()).includes('Static'))throw Error('Active address mode');
+  await page.getByLabel('Enable spanning tree',{exact:true}).check();
+  await page.getByLabel('Protocol',{exact:true}).selectOption('0');
   await page.getByLabel('GEM1 · Right lower advertise 1000 Mb/s',{exact:true}).uncheck();
   await page.getByLabel('GEM1 · Right lower advertise 100 Mb/s',{exact:true}).uncheck();
   await page.locator('#auth-password').fill('admin');
@@ -65,6 +80,7 @@ const fs=require('fs'),path=require('path');
   if(ports.advertise[0]!==4 || ports.advertise[1]!==1 || posts!==1)throw Error('Advertisement POST');
   await page.getByLabel('GEM1 · Right lower advertise 10 Mb/s',{exact:true}).uncheck();
   await page.getByRole('button',{name:'Save settings'}).click();
+  if(!settings.stp || settings.stp_version!==0)throw Error('STP configuration not saved');
   if(posts!==1 || !(await page.locator('#status').innerText()).includes('at least one'))throw Error('Empty advertisement validation');
   await page.getByLabel('GEM1 · Right lower advertise 10 Mb/s',{exact:true}).check();
   await page.getByLabel('PL0 · Left upper advertise 1000 Mb/s',{exact:true}).uncheck();
@@ -78,9 +94,20 @@ const fs=require('fs'),path=require('path');
   await page.locator('#auth-password').fill('admin');
   await page.getByRole('button',{name:'Save settings'}).click();
   await page.waitForTimeout(1000);
+  if(await page.locator('#current-ip').innerText()!==network.ip)throw Error('Saved IP replaced active address before restart');
   if(settings.dhcp || settings.ip!=='10.0.1.215' || settings.sfp!==2500 || posts!==2)throw Error('Persistent IP/SFP POST');
   if(ports.advertise[2]!==2 || ports.advertise[3]!==5)throw Error('PL advertisement POST');
   if(!await page.getByText('00:0a:35:0f:37:45',{exact:true}).count())throw Error('Missing allocated MAC');
+  await page.getByLabel('Protocol',{exact:true}).selectOption('2');
+  await page.locator('#auth-password').fill('admin');
+  await page.getByRole('button',{name:'Save settings'}).click();
+  await page.waitForTimeout(1000);
+  if(!settings.stp || settings.stp_version!==2 || posts!==3)throw Error('RSTP selection not saved');
+  await page.getByLabel('Enable spanning tree',{exact:true}).uncheck();
+  await page.locator('#auth-password').fill('admin');
+  await page.getByRole('button',{name:'Save settings'}).click();
+  await page.waitForTimeout(1000);
+  if(settings.stp || settings.stp_version!==2 || posts!==4)throw Error('STP disable not saved');
   settings.writable=false;await page.getByRole('button',{name:'Reload status'}).click();
   await page.waitForTimeout(250);
   if(!await page.getByRole('button',{name:'Save settings'}).isDisabled())throw Error('Unavailable storage permits save');
@@ -99,6 +126,6 @@ const fs=require('fs'),path=require('path');
   await page.reload();await page.waitForTimeout(1000);
   if(macPosts!==1 || !await page.getByRole('cell',{name:'00:0a:35:0f:37:45',exact:true}).count())throw Error('Cached snapshot not restored');
   if(errors.length)throw Error(errors.join('\n'));
-  console.log('PASS: browser navigation, polling, 64-bit values, fixed sensor precision, speeds, persistent port/IP settings, MAC allocation, storage availability and manual-only MAC table refresh');
+  console.log('PASS: browser navigation, active IPv4 refresh, polling, 64-bit values, fixed sensor precision, speeds, persistent port/IP/STP/RSTP settings, MAC allocation, storage availability and manual-only MAC table refresh');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,0 +1,7 @@
+# CAD exports are reviewable artifacts, not line-oriented source diffs.
+*.step binary
+*.stp binary
+*.stl binary
+
+# Preserve the pinned upstream source byte-for-byte, including whitespace.
+third_party/mstp-lib/** -whitespace

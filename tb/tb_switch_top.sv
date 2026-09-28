@@ -510,7 +510,7 @@ module tb_switch_top;
   // each ingress write completes. A hand-built two-master AXI4 read
   // arbiter was tried first and produced a genuine simulation hang; this
   // direct mirror avoids that risk entirely for a test-only need.
-  axi_mem_bfm #(.MEM_BYTES(16 * BUFFER_BYTES), .BASE_ADDR(DDR_BASE_ADDR)) u_mem (
+  axi_mem_bfm #(.MEM_BYTES(32 * BUFFER_BYTES), .BASE_ADDR(DDR_BASE_ADDR)) u_mem (
     .clk           (clk),
     .rst_n         (rst_n),
     .s_axi_awid    (m_axi_ing_awid),
@@ -544,7 +544,7 @@ module tb_switch_top;
     .s_axi_rready  (m_axi_egr_rready)
   );
 
-  axi_mem_bfm #(.MEM_BYTES(16 * BUFFER_BYTES), .BASE_ADDR(DDR_BASE_ADDR)) u_mem_cpu (
+  axi_mem_bfm #(.MEM_BYTES(32 * BUFFER_BYTES), .BASE_ADDR(DDR_BASE_ADDR)) u_mem_cpu (
     .clk           (clk),
     .rst_n         (rst_n),
     .s_axi_awid    (m_axi_cpu_awid),
@@ -578,9 +578,17 @@ module tb_switch_top;
     .s_axi_rready  (m_axi_cpu_rready)
   );
 
+  // This regression allocates fewer than 32 IDs; keep the model bounded for
+  // Icarus elaboration. Mirror only completed burst bytes, not the whole pool.
+  integer mirror_address,mirror_bytes;
   always_ff @(posedge clk) begin
+    if(m_axi_ing_awvalid && m_axi_ing_awready)begin
+      if(m_axi_ing_awaddr-DDR_BASE_ADDR >= 32*BUFFER_BYTES)$fatal(1,"test memory capacity exceeded");
+      mirror_address <= m_axi_ing_awaddr-DDR_BASE_ADDR;
+      mirror_bytes <= (m_axi_ing_awlen+1)*AXI_STRB_W;
+    end
     if (m_axi_ing_bvalid && m_axi_ing_bready) begin
-      for (int i = 0; i < 16 * BUFFER_BYTES; i++) u_mem_cpu.mem[i] <= u_mem.mem[i];
+      for (int i = 0; i < mirror_bytes; i++) u_mem_cpu.mem[mirror_address+i] <= u_mem.mem[mirror_address+i];
     end
   end
 
@@ -842,6 +850,7 @@ module tb_switch_top;
       d6[11] = 8'h01;
       for (int i = 0; i < 16; i++) d6[12+i] = byte'(8'hF0 + i);
 
+      fwd_en_tb[2] = 0; wait_cycles(10); // blocked destination still accepts directed BPDUs
       // Metadata now accompanies the frame; no AXI-Lite arm or CDC delay.
 
       seen_mask = '0; got_grant = 1'b0; seen_armed_before = 1'b0;
@@ -853,7 +862,7 @@ module tb_switch_top;
             @(posedge clk);
             if (dut.u_fabric.cpu_enqueue_req && dut.u_fabric.cpu_enqueue_gnt) begin
               seen_armed_before = dut.u_fabric.cpu_directed;
-              seen_mask         = dut.u_fabric.cpu_enqueue_destmask;
+              seen_mask         = dut.u_fabric.enqueue_destmask_admitted[5];
               got_grant         = 1'b1;
             end
             t++;
@@ -882,21 +891,50 @@ module tb_switch_top;
           while (!got_grant && t < 20000) begin
             @(posedge clk);
             if (dut.u_fabric.cpu_enqueue_req && dut.u_fabric.cpu_enqueue_gnt) begin
-              seen_mask = dut.u_fabric.cpu_enqueue_destmask;
+              seen_mask = dut.u_fabric.enqueue_destmask_admitted[5];
               got_grant = 1'b1;
             end
             t++;
           end
         end
       join
-      if (!got_grant || seen_mask !== (~(6'(1) << 5))) begin
+      if (!got_grant || seen_mask !== (~((6'(1) << 5) | (6'(1) << 2)))) begin
         $display("FAIL: after the override was consumed, expected normal flood (%b), got grant=%0b mask=%b",
                  ~(6'(1) << 5), got_grant, seen_mask);
         errors++;
       end else $display("PASS: a later, un-overridden CPU frame resolves normally again (the override does not stick)");
     end
 
+    fwd_en_tb[2] = 1;
     wait(dump_test_done);
+    // Hold all tag reads while allowing CPU packet data to drain. The FIFO
+    // must stop the seventeenth dequeue, then resume without losing any tag.
+    begin
+      byte bpdu[];int baseline,t;
+      while(cpu_rx_tag_valid)begin
+        @(negedge axis_clk);cpu_rx_tag_pop=1;
+        @(negedge axis_clk);cpu_rx_tag_pop=0;
+        repeat(4)@(posedge axis_clk);
+      end
+      bpdu=new[60];foreach(bpdu[i])bpdu[i]=0;
+      bpdu[0]=1;bpdu[1]=8'h80;bpdu[2]=8'hc2;bpdu[6]=2;bpdu[11]=1;
+      baseline=cap_bytes.size();
+      for(int i=0;i<17;i++)begin bpdu[59]=i;gem0_push_frame(bpdu);wait_cycles(500);end
+      wait_cycles(2000);
+      if(cap_bytes.size()!=baseline+16*60 || !dut.u_fabric.cpu_rx_tag_full)
+        $fatal(1,"tag saturation did not gate CPU packet dequeue: bytes=%0d",cap_bytes.size()-baseline);
+      for(int i=0;i<17;i++)begin
+        t=0;while(!cpu_rx_tag_valid && t<2000)begin @(posedge axis_clk);t++;end
+        if(!cpu_rx_tag_valid || cpu_rx_tag!=0)$fatal(1,"lost/misattributed CPU ingress tag %0d",i);
+        @(negedge axis_clk);cpu_rx_tag_pop=1;
+        @(negedge axis_clk);cpu_rx_tag_pop=0;
+        repeat(5)@(posedge axis_clk);
+      end
+      wait_cycles(1000);
+      if(cpu_rx_tag_valid || cap_bytes.size()!=baseline+17*60)$fatal(1,"tag/data did not recover exactly");
+      for(int i=0;i<17;i++)if(cap_bytes[baseline+i*60+59]!=i)$fatal(1,"packet order changed at %0d: got %0d expected %0d (baseline %0d)",i,cap_bytes[baseline+i*60+59],i,baseline);
+      $display("PASS: full CPU ingress-tag FIFO backpressures packet dequeues and recovers all 17 frames/tags in order");
+    end
     if(packet_seen!=4'hf)$fatal(1,"packet DMA coverage %b",packet_seen);
     $display("PASS: concurrent MAC dump with all four packet DMA directions");
     if (errors == 0) $display("=== ALL TESTS PASSED ===");

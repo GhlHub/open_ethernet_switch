@@ -14,6 +14,9 @@
 #define SOF_EOF 0x0c000000u
 #define RX_CH 0x30u
 #define DMA_ERRORS 0x770u
+#define IRQ_ALL 0x7000u
+#define IRQ_ERROR 0x4000u
+#define RUN_IRQ 0x15001u /* threshold=1, IOC/error enable, run */
 struct bd { uint32_t next, next_hi, buffer, buffer_hi, reserved[2], control; volatile uint32_t status; uint32_t app[8]; };
 _Static_assert(sizeof(struct bd) == 64, "AXI DMA descriptor alignment");
 static struct bd rx[RX_COUNT] __attribute__((section(".dma_nocache"), aligned(64)));
@@ -22,35 +25,60 @@ static struct bd tx[2] __attribute__((section(".dma_nocache"), aligned(64)));
 static uint8_t rx_data[RX_COUNT][FRAME_BYTES] __attribute__((section(".dma_nocache"), aligned(64)));
 static uint8_t tx_data[2][FRAME_BYTES] __attribute__((section(".dma_nocache"), aligned(64)));
 static unsigned rx_index, tx_index;
-static bool ready, failed;
+static volatile bool ready, failed;
+volatile struct fabric_dma_counters fabric_dma_counters
+    __attribute__((section(".dma_nocache"), aligned(64)));
 static bool last_tag_valid; static uint8_t last_tag_port;
 /* fabric_dma_send() is now called from two independent tasks: the IP task
  * (network.c's output() callback, ordinary IP-stack traffic) and
  * stp_task.c (BPDU transmission). Both touch the same shared tx[]/tx_data[]/
  * tx_index state with no other synchronization, so a lock is required --
  * see pstate.h's own header on pstate_cpu_tx_raw(). A mutex, not a critical
- * section: fabric_dma_send() blocks (vTaskDelay) waiting for DMA
+ * section: fabric_dma_send() blocks on an interrupt semaphore waiting for DMA
  * completion, which a critical section must never do. */
-static SemaphoreHandle_t tx_lock;
+static SemaphoreHandle_t tx_lock, tx_done;
 static uint32_t address(const void *p) { return (uint32_t)(uintptr_t)p; }
-bool fabric_dma_healthy(void)
+static void fail_closed(void)
 {
-    if (ready && ((mmio_read(DMA_BASE+4) | mmio_read(DMA_BASE+RX_CH+4)) & DMA_ERRORS)) failed = true;
-    return ready && !failed;
+    failed=true;
+    mmio_write(DMA_BASE,mmio_read(DMA_BASE)&~IRQ_ALL);
+    mmio_write(DMA_BASE+RX_CH,mmio_read(DMA_BASE+RX_CH)&~IRQ_ALL);
+    barrier();
 }
+bool fabric_dma_healthy(void) { return ready && !failed; }
+void fabric_dma_interrupt(bool receive)
+{
+    uintptr_t channel=DMA_BASE+(receive?RX_CH:0);
+    uint32_t status=mmio_read(channel+4);
+    mmio_write(channel+4,status&IRQ_ALL); /* W1C before waking tasks */
+    barrier();
+    if (!(status&IRQ_ALL)) return;
+    if (receive) fabric_dma_counters.rx_irq++;
+    else fabric_dma_counters.tx_irq++;
+    bool error=(status&(DMA_ERRORS|IRQ_ERROR))!=0;
+    if (error) { fabric_dma_counters.error_irq++; fail_closed(); }
+    BaseType_t wake=pdFALSE;
+    if (!receive || error) xSemaphoreGiveFromISR(tx_done,&wake);
+    if (receive || error) network_dma_event(true);
+    portYIELD_FROM_ISR(wake);
+}
+bool fabric_dma_rx_pending(void)
+{ return fabric_dma_healthy() && (rx[rx_index].status&COMPLETE)!=0; }
 bool fabric_dma_init(void)
 {
     if (ready || failed) return fabric_dma_healthy();
     /* Refuse raw-frame hardware before touching DMA ownership. */
     if (mmio_read(DIAG_BASE+CPU_TX_ABI)!=0x43545801u) { failed=true; return false; }
     if (!tx_lock) tx_lock = xSemaphoreCreateMutex();
-    if (!tx_lock) { failed=true; return false; }
+    if (!tx_done) tx_done = xSemaphoreCreateBinary();
+    if (!tx_lock || !tx_done) { failed=true; return false; }
     mmio_write(DMA_BASE, 4); /* reset both channels */
     uint64_t start=board_timestamp();
     while (mmio_read(DMA_BASE)&4) {
         if (board_timestamp()-start > board_timestamp_hz()/10u) { failed=true; return false; }
     }
     /* NOLOAD section is outside startup BSS. Initialize only after DMA reset. */
+    memset((void *)&fabric_dma_counters,0,sizeof fabric_dma_counters);
     memset(rx,0,sizeof rx); memset(tx,0,sizeof tx);
     memset(rx_data,0,sizeof rx_data); memset(tx_data,0,sizeof tx_data);
     for (unsigned i=0;i<RX_COUNT;i++) {
@@ -62,11 +90,14 @@ bool fabric_dma_init(void)
     }
     barrier();
     mmio_write(DMA_BASE+RX_CH+8,address(rx));
-    mmio_write(DMA_BASE+RX_CH,1); /* interrupts masked; RX task polls */
+    mmio_write(DMA_BASE+RX_CH+4,IRQ_ALL);
+    mmio_write(DMA_BASE+4,IRQ_ALL);
+    ready=true;
+    mmio_write(DMA_BASE+RX_CH,RUN_IRQ);
     mmio_write(DMA_BASE+RX_CH+0x10,address(&rx[RX_COUNT-1]));
     mmio_write(DMA_BASE+8,address(tx));
-    mmio_write(DMA_BASE,1);
-    ready=true;
+    mmio_write(DMA_BASE,RUN_IRQ);
+    board_dma_irq_enable(); /* enable GIC only after both channels are configured */
     return fabric_dma_healthy();
 }
 static bool send_frame(const uint8_t *p, size_t n, bool directed, uint8_t mask)
@@ -84,20 +115,28 @@ static bool send_frame(const uint8_t *p, size_t n, bool directed, uint8_t mask)
     size_t bytes=n<60?60:n;
     if (bytes>n) memset(tx_data[tx_index]+2+n,0,bytes-n);
     d->status=0; d->control=SOF_EOF|(uint32_t)(bytes+2);
+    (void)xSemaphoreTake(tx_done,0); /* discard any stale/spurious wake */
     barrier(); mmio_write(DMA_BASE+0x10,address(d));
     TickType_t start=xTaskGetTickCount();
-    bool ok=true;
-    while (!(d->status&COMPLETE)) {
-        if (!fabric_dma_healthy() || xTaskGetTickCount()-start>=pdMS_TO_TICKS(100)) {
-            failed=true; ok=false; break;
+    bool ok=false;
+    const TickType_t timeout=pdMS_TO_TICKS(100);
+    for (;;) {
+        TickType_t elapsed=xTaskGetTickCount()-start;
+        if (elapsed>=timeout || !xSemaphoreTake(tx_done,timeout-elapsed)) {
+            fabric_dma_counters.tx_timeouts++;
+            break;
         }
-        vTaskDelay(1);
-    }
-    if (ok) {
         barrier();
-        if (d->status&ERRORS) { failed=true; ok=false; }
-        else tx_index=(tx_index+1)%2;
+        if (!fabric_dma_healthy()) break;
+        if (!(d->status&COMPLETE)) continue;
+        if (!(d->status&ERRORS)) {
+            tx_index=(tx_index+1)%2;
+            fabric_dma_counters.tx_completed++;
+            ok=true;
+        }
+        break;
     }
+    if (!ok) { fail_closed(); network_dma_event(false); }
     xSemaphoreGive(tx_lock);
     return ok;
 }
@@ -115,13 +154,14 @@ size_t fabric_dma_receive(uint8_t *p, size_t capacity)
      * not the frame itself turns out well-formed below -- this is the one
      * place that decides a descriptor was consumed, so it must also be the
      * one place that keeps the tag FIFO in lockstep with it (see
-     * rx_diag_regs.sv's 0x50 header: reads pop, and network.c's `if (!n)
-     * break` on a bad frame would otherwise desync the two streams). */
+     * rx_diag_regs.sv's 0x50 header: reads pop). */
     uint32_t tag=mmio_read(DIAG_BASE+CPU_RX_TAG);
     last_tag_valid=(tag&0x80000000u)!=0; last_tag_port=(uint8_t)(tag&7u);
     size_t n=status&0xffffu;
     if ((status&(ERRORS|SOF_EOF))!=SOF_EOF || n<14 || n>1514 || n>capacity) n=0;
+    fabric_dma_counters.rx_consumed++;
     if (n) memcpy(p,rx_data[rx_index],n);
+    else fabric_dma_counters.rx_dropped++;
     d->status=0; barrier();
     mmio_write(DMA_BASE+RX_CH+0x10,address(d));
     rx_index=(rx_index+1)%RX_COUNT;

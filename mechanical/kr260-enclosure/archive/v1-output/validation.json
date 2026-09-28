@@ -1,0 +1,90 @@
+{
+  "status": "CAD geometry checked; physical board fit NOT verified",
+  "outside_mm": [
+    168.0,
+    160.0,
+    68.0
+  ],
+  "board_underside_z_mm": 20,
+  "inside_roof_z_mm": 65.0,
+  "mounting_x_centres_mm": [
+    16,
+    152
+  ],
+  "mounting_y_centres_mm": [
+    21,
+    139
+  ],
+  "source_envelope_mm": [
+    140,
+    132,
+    36
+  ],
+  "parts": {
+    "base": {
+      "valid_brep": true,
+      "solids": 1,
+      "volume_mm3": 90742.33
+    },
+    "lid": {
+      "valid_brep": true,
+      "solids": 1,
+      "volume_mm3": 89798.29
+    },
+    "rail": {
+      "valid_brep": true,
+      "solids": 1,
+      "volume_mm3": 4507.72
+    },
+    "spacer": {
+      "valid_brep": true,
+      "solids": 1,
+      "volume_mm3": 205.93
+    },
+    "fit_coupon": {
+      "valid_brep": true,
+      "solids": 1,
+      "volume_mm3": 4136.77
+    }
+  },
+  "shell_overlap_mm3": 0.0,
+  "rectangular_envelope_collision_mm3": 0,
+  "all_four_access_windows_clear": true,
+  "stl_checks": {
+    "base": {
+      "watertight": true,
+      "connected_components": 1,
+      "consistent_winding": true,
+      "on_print_bed": true,
+      "triangles": 27108
+    },
+    "lid": {
+      "watertight": true,
+      "connected_components": 1,
+      "consistent_winding": true,
+      "on_print_bed": true,
+      "triangles": 48796
+    },
+    "mounting_rail": {
+      "watertight": true,
+      "connected_components": 1,
+      "consistent_winding": true,
+      "on_print_bed": true,
+      "triangles": 2056
+    },
+    "rail_spacer": {
+      "watertight": true,
+      "connected_components": 1,
+      "consistent_winding": true,
+      "on_print_bed": true,
+      "triangles": 1008
+    },
+    "fit_coupon": {
+      "watertight": true,
+      "connected_components": 1,
+      "consistent_winding": true,
+      "on_print_bed": true,
+      "triangles": 1536
+    }
+  }
+}

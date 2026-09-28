@@ -6,6 +6,8 @@ static uint8_t files[2][CONFIG_RECORD_SIZE];
 static bool present,write_fail;
 static unsigned writes;
 static uint8_t admitted;
+bool pstate_stp_supported(void){return true;}
+void stp_prepare(bool enabled){(void)enabled;}
 int xil_printf(const char *fmt,...){(void)fmt;return 0;}
 bool board_ports_configure(uint8_t mask,const uint8_t adv[4]){assert(adv[0]==4);admitted=mask;return true;}
 bool settings_media_present(void){return present;}

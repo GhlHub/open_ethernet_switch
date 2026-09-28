@@ -1,5 +1,223 @@
 # Design inventory verification
 
+## 2026-09-27 Current IPv4 panel and credential widths
+
+Added public `GET /api/network`, taking a coherent snapshot of the running
+FreeRTOS endpoint's IP address, netmask, gateway, up state and boot-selected
+DHCP/static mode. The configuration page shows these at the top and refreshes
+once per second without replacing pending form edits. Username/password fields
+now use 26ch widths (about 223 px) and wrap on mobile; passwords remain masked.
+
+The all-counter firmware rebuild and browser regression passed, including
+DHCP address changes, network-down display, static mode, and saved settings
+remaining separate from the active address until restart. Deployed through
+JTAG with the accepted CPU-interrupt bitstream. Live Chromium checks at 1280 px
+and 375 px confirmed `10.0.1.104`, `255.255.255.0`, gateway `10.0.1.1`, readable
+credential fields, preserved edits across refresh, and unchanged saved settings.
+Logs/screenshots are under `build/cpu_irq/current_ipv4/`. The deployed ELF SHA-256
+is `f11af9a99f98736bff1e3a21959dbdfa04cf873c179b3894f1b96df3d707d254`.
+
+## 2026-09-27 IPv4 configuration field widths
+
+Widened the IP address, netmask and default-route inputs from the inherited
+20 px checkbox width to 18ch (about 163 px), with monospace text and wrapping
+labels. Rebuilt the all-counter R5 firmware and deployed it through JTAG using
+the accepted `build/cpu_irq/acceptance_2026/` bitstream. Chromium checks against
+`http://10.0.1.104/configuration` at 1280 px and 375 px verified that all three
+fields display `255.255.255.255` completely and remain inside the viewport.
+The test values were only placed in the browser DOM; no settings were saved.
+Build/deployment logs and screenshots are in `build/cpu_irq/ipv4_fields/`.
+The deployed ELF SHA-256 is
+`4ea71a1f8819cfa7b757316cb00a0005ad742b1f07367bc11d1088447e982844`.
+
+## 2026-09-27 Interrupt-driven CPU packet DMA
+
+Replaced CPU packet completion polling with AXI DMA interrupts, rebuilt the
+complete FPGA design and all-counter R5 firmware, and deployed both through
+`10.0.1.109:3121`. UART capture used `10.0.1.109:2323`. The KR260 regained DHCP
+address `10.0.1.104`; PL0 (uplink) and PL1 (downstream `10.0.1.140`) remained at
+1 Gb/s full duplex. This is a **volatile JTAG deployment**. Active/saved
+configuration matched the pre-deployment JSON exactly; STP remained disabled.
+
+### Change and ownership contract
+
+- The existing MM2S/S2MM wires on PL IRQ0 bits 6/7 now drive enabled, level-high
+  GIC IRQs 127/128 at priority `0xa0`. The production-BD audit checks these wires.
+  The SDT SPI-relative IDs are converted to raw GIC IDs with a checked `+32`.
+- DMA completion/error interrupts are enabled with completion threshold one.
+  The ISR acknowledges W1C status and wakes tasks; it does not copy packets.
+  FreeRTOS assembly retains responsibility for GIC acknowledgement/EOI.
+- TX retains the mutex shared by IP and directed/STP senders, and blocks on a
+  binary semaphore until interrupt completion or a 100 ms timeout. A completed
+  descriptor without an interrupt fails closed instead of silently falling
+  back to polling. Errors mask both DMA interrupt sources and retain ownership
+  of potentially outstanding buffers.
+- RX uses task notifications and drains completed descriptors in bounded
+  batches, including malformed descriptors followed by valid frames. Initial
+  draining covers arrivals before task creation; pending notifications cover
+  arrivals between draining and blocking. Only a remaining backlog causes a
+  one-tick fairness delay. The one-second idle timeout services DHCP policy
+  without polling packet descriptors.
+- `software/r5/dma_status_jtag.tcl` reads interrupt/completion counters from
+  non-cacheable DDR while R5 runs. These IRQ counters are incremented by the
+  interrupt handlers, not by packet tasks. The RPU-local GIC itself is not
+  readable through the PSU debug AP.
+
+### Build and host verification
+
+Commands used:
+
+```sh
+make -C software/r5 test
+make -C software/r5 -j8 STATS_DDR=1 STATS_DEBUG=1
+python3 scripts/verify_ip_flow.py \
+  --vivado /tools/Xilinx/2026.1/Vivado/bin/vivado \
+  --output build/cpu_irq/acceptance_2026 --implement
+```
+
+The host suite passed. The expanded DMA model's nine modes cover early,
+delayed and premature interrupts; missing completion and missing interrupt;
+descriptor errors; incompatible ABI; and errors on either DMA channel while
+TX waits. It also checks concurrent ordinary/directed senders, descriptor
+rotation, RX ring wrap, a full RX batch with a malformed first frame, W1C
+acknowledgement, and exactly one ingress-tag pop per consumed descriptor.
+The model asserts if the packet driver calls `vTaskDelay`. Final targeted DMA
+checks and the ELF memory-layout checks passed after the last driver change.
+
+The fresh FPGA acceptance flow passed all 13 gates, including 31 native and
+31 packaged IP cases, all four counter configurations, production equivalence,
+synthesis, routing, bitstream generation and routed physical/CDC audits.
+Final setup WNS is **+0.018 ns**, hold WHS **+0.010 ns**, with zero failing
+endpoints; 125 MHz fabric setup slack is **+1.710 ns**. DRC has no errors and
+two `REQP-1935` advisories in the vendor AXI DMA FIFOs. An initial build picked
+up Vivado 2024.1 from PATH and stopped during BD generation; the successful
+fresh build explicitly used 2026.1 as shown above.
+
+### Final-image hardware results
+
+The following ran against the rebuilt bitstream and final ELF:
+
+- Four concurrent streams of 500 full-size, DF-set pings to R5: **2,000/2,000**.
+  A simultaneous full-size stream through the switch to the downstream device:
+  **100/100**. No packet loss.
+- HTTP concurrency: 120 mixed requests across six clients, maximum response
+  21 ms; idle-client, authentication-rejection and overload-recovery checks
+  passed, with administrator settings unchanged.
+- SNMP readout succeeded. All implemented statistics banks remained fresh over
+  61 samples/30 seconds and 120 polls, with no new faults, late polls or
+  saturation. UART reported DHCP success and no fatal/DMA fault message.
+
+| Non-cacheable DMA counter | Before traffic | After traffic |
+| --- | ---: | ---: |
+| TX interrupts | 11 | 3,992 |
+| RX interrupts | 114 | 4,559 |
+| TX completions | 11 | 3,992 |
+| RX descriptors consumed | 114 | 4,616 |
+| Error interrupts | 0 | 0 |
+| Malformed RX descriptors | 0 | 0 |
+| TX timeouts | 0 | 0 |
+
+RX interrupt notifications may coalesce; the ring is drained independently of
+the interrupt count. Both channel control registers read `0x00015003`, with
+completion/error IRQ enables set. DMA error and timeout injection was covered
+by host tests, not injected into the live forwarding setup. Disconnected
+GEM/SFP ports were not exercised by this hardware run.
+
+Artifacts are under ignored `build/cpu_irq/`: `tests.log`,
+`dma_tests_final.log`, `firmware_final.log`, `acceptance_2026/results.json`,
+`acceptance_2026/reports/`, and `deploy/` (JTAG/UART logs, IRQ snapshots, ping,
+HTTP/SNMP/statistics results, unchanged configuration and `verification.json`).
+The previous ELF is retained in `baseline/` and the deployed ELF in `deploy/`.
+
+Deployed SHA-256 hashes:
+
+- Bitstream (`acceptance_2026/project/kr260_switch.runs/impl_1/kr260_top.bit`):
+  `45df14179d03242efee1deb1193497bca48291d538063b89c8b9f1cc7f20b589`
+- R5 ELF (`software/r5/out/kr260_r5.elf`):
+  `3bf20b16c48cb55558eef77638e08105d2ca8263f1a929318762525095f811ed`
+
+## 2026-09-27 Fabric/management 2.1 board deployment (STP disabled)
+
+Built the simulation-validated `build/rstp/acceptance/project/` through synthesis,
+placement, routing and bitstream generation, then loaded that bitstream and the
+matching all-counter R5 ELF through JTAG at `10.0.1.109:3121`. UART capture used
+`10.0.1.109:2323`. This is a volatile JTAG deployment.
+
+Routed setup WNS is **+0.018 ns**, hold WHS **+0.010 ns**, and 125 MHz fabric
+intra-clock setup WNS **+1.710 ns**. Setup/hold TNS are zero. DRC has no errors
+and only the two existing RAMB36E2 collision advisories. CDC retains 2,632 CDC-1
+and two CDC-11 critical classifications; the destination/source-register groups
+match the previous mailbox image, with no new critical groups. Existing bundled
+mailbox-data/reset findings remain unwaived. Clock, RGMII-instance, MDIO/reset
+and PL rate-control structural checks pass. Reports are in `build/rstp/reports/`.
+Utilization: 30,982 LUTs, 39,769 registers, 51.5 BRAM tiles, zero URAM/DSPs.
+
+Basic board verification:
+
+- SD settings loaded unchanged; DHCP reacquired **10.0.1.104**. PL0 uplink and
+  PL1 miner are both 1 Gb/s. GEM0, GEM1 and SFP are down, matching the baseline.
+- STP stayed **disabled** throughout; selected protocol is RSTP, inherited by
+  migration from the existing record. No configuration save or STP enable was
+  performed. No BPDUs were transmitted. Protocol board tests are explicitly
+  deferred at the user's request.
+- Read-only JTAG confirms `STP_ABI=0x53545002` and forwarding/learning register
+  `0x00000fff` (all six ports enabled, still subject to link admission).
+- Simultaneous 1,472-byte-payload pings returned **99/100** from the R5 and
+  **100/100** from the miner at `10.0.1.140`. The R5 missed sequence 64 during
+  concurrent browser/statistics/SNMP/JTAG checks. A subsequent R5 run returned
+  **200/200**; the isolated loss is not attributed to a proven cause.
+- SNMP reads succeeded; the final snapshot reported no bad packets or AXI
+  errors. A 30-second statistics observation advanced 119 polls without new
+  faults, late polls or saturation; sensors remained valid.
+- Live Chromium verified public configuration showing STP disabled, one-second
+  statistics refresh, manual MAC-table refresh and IPv4 observations without
+  JavaScript errors. The command-line cached MAC-table check also passed.
+
+Build logs: `build/rstp/implementation.log`, `routed_review.log`. Deployment
+logs, before/after configuration, UART, pings, statistics, SNMP and screenshots:
+`build/rstp/deploy/`. Artifact SHA-256:
+
+- Bitstream: `6ffcc424084a950f927612fab7f9e61c6e42802ebaddc57fc08be9bdccf0bf5f`
+- R5 ELF: `3bedfd8ac7e221e67e877f15804ebb8e289f2f34b1309cd3363516642e79e111`
+
+## 2026-09-27 Selectable STP/RSTP (source validation before deployment)
+
+The partial classic-STP engine has been replaced by pinned `mstp-lib`, with
+classic STP (version 0) and RSTP (version 2) selectable through authenticated
+web configuration. Enable/version settings persist in v2 SD records; v1 records
+load with spanning tree disabled and RSTP selected. See
+[spanning-tree.md](spanning-tree.md) for protocol and hardware contracts.
+
+Sanitized host tests pass for a three-bridge RSTP triangle, link failure and
+recovery, transition-time loop checks, FDB flush callbacks, malformed BPDUs,
+classic STP and mixed neighbors. Task tests pass for single-owner queued RX,
+drop reporting, runtime enable/disable/version changes and fail-closed handling
+of incompatible hardware. Configuration tests cover both protocols, record
+migration, authorization and unavailable storage. Chromium tests pass for
+enabling classic STP, selecting RSTP, disabling spanning tree, and existing
+statistics/configuration/MAC-table behavior. The all-counter R5 ELF builds
+and passes reserved-memory and non-cacheable DMA-region checks.
+
+The all-counter RTL regression passes blocked ingress/control-frame delivery,
+blocked destination filtering with directed CPU bypass, and saturation/recovery
+of the 16-entry CPU ingress-tag FIFO with 17 ordered packets. The expanded
+testbench uses 32 buffer slots and mirrors only completed DDR bursts; its former
+16-slot memory model was too small for the added packet sequence.
+
+Fresh IP catalog packaging, production block-design generation/audit, and all
+31 IP cases in both native and packaged form pass. All four counter-build
+regressions pass. The generated-production/native equivalence comparison passes
+138,188 clock samples, 133 outputs and 257 snapshots. The complete acceptance
+report is `build/rstp/acceptance/results.json`; this run did not request synthesis
+or implementation.
+
+Logs and generated artifacts are under `build/rstp/`: `tests.log`,
+`config_tests.log`, `task_tests.log`, `all_firmware_tests.log`,
+`browser.log`, `final_build.log`, and `rtl_check.log`. This source requires management/fabric
+2.1 and a newly routed bitstream. Subsequent basic board deployment is recorded
+above. Live redundant-link, cable-flap and independent STP/RSTP-peer tests remain
+pending.
+
 ## 2026-09-27 Passive MAC-to-IPv4 discovery (deployed)
 
 R5 firmware now observes ARP sender mappings and adds up to four IPv4

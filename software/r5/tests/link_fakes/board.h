@@ -15,6 +15,7 @@
 #define LEARN_SET 0x40
 #define LEARN_CLR 0x44
 #define PORT_CTRL_STATUS 0x48
+#define STP_ABI 0x58
 #define CPU_TX_ABI 0x54
 #define CPU_RX_TAG 0x50
 #define CPU_PORT_MASK 0x20u

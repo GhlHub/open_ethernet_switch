@@ -12,12 +12,12 @@ and the [future 128-bit SFP interface](../docs/inventory.md#125-mhz-fabric-and-t
 
 | Catalog IP (`ghlhub.org:ethernet:<name>:<version>`) | Top module | Responsibility |
 | --- | --- | --- |
-| `switch_fabric` | `switch_fabric` | Five physical packet streams, CPU virtual port, forwarding, shared buffers, DDR masters, fabric counters |
+| `switch_fabric` (2.1) | `switch_fabric` | Five physical packet streams, CPU virtual port, forwarding, shared buffers, DDR masters, fabric counters |
 | `gem_port` | `switch_gem_port` | One PS external-FIFO bridge, RX/TX CDC and local packet counters |
 | `pl_port` | `pl_gmii_mac_top` | One GMII MAC, packet-stream adapters, local counters and AXI-Lite registers |
 | `sfp_port` | `sfp_port_top` | One 1000BASE-X MAC/PCS, negotiation, packet adapters and counters |
 | `pl_phy_mdio` (1.1) | `switch_pl_phy_mdio` | One PL PHY: AXI-Lite MDIO, DP83867 initialization, link polling and reset-release CDC |
-| `management` (2.0) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
+| `management` (2.1) | `switch_management` | Existing AXI-Lite configuration, link control, status and statistics mailbox |
 
 The current partition retains RGMII I/O, GTH/clock generation and SFP
 sideband handling in the board layer. These physical shells are **not yet
@@ -167,3 +167,7 @@ equivalence across this intentional ABI change.
 Fabric 1.2 adds a lowest-priority MAC-table dump writer on HP0 and a control
 slave at 0x80110000. Both use the fabric clock. See the
 [register, burst and ownership contract](../docs/mac-table-dump.md).
+
+Fabric/management 2.1 add [STP destination gating, tag backpressure and capability identification](../docs/spanning-tree.md).
+Version 2.1 was routed and deployed on 2026-09-27. Basic forwarding and management
+were checked with STP disabled; protocol board qualification is deferred.

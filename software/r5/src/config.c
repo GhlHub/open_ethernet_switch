@@ -24,7 +24,7 @@ void config_defaults(struct switch_config *c)
     memcpy(c->password_hash,hash,32);c->password_rounds=CONFIG_PASSWORD_ROUNDS;
     c->admin=31;c->advertise[0]=4;
     for (unsigned i=1;i<4;i++) c->advertise[i]=7;
-    c->sfp_speed=0;c->dhcp=true;
+    c->sfp_speed=0;c->dhcp=true;c->stp_version=2;
 }
 static uint32_t ip32(const uint8_t p[4])
 { return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3]; }
@@ -32,6 +32,7 @@ static bool unicast(const uint8_t p[4])
 { return p[0]!=0 && p[0]!=127 && p[0]<224; }
 bool config_valid(const struct switch_config *c)
 {
+    if(c->stp_version!=0 && c->stp_version!=2)return false;
     struct switch_config factory; config_defaults(&factory);
     /* This board's allocation is permanent, never writable through settings. */
     if (memcmp(c->mac,factory.mac,sizeof(c->mac)) || c->admin>31 || c->advertise[0]!=4 ||
@@ -66,21 +67,24 @@ bool config_parse_ipv4(const char *s,uint8_t out[4])
 }
 void config_encode(const struct switch_config *c,uint32_t sequence,uint8_t out[CONFIG_RECORD_SIZE])
 {
-    memset(out,0,CONFIG_RECORD_SIZE);memcpy(out,magic,8);put32(out+8,1);put32(out+12,sequence);
+    memset(out,0,CONFIG_RECORD_SIZE);memcpy(out,magic,8);put32(out+8,2);put32(out+12,sequence);
     memcpy(out+16,c->mac,30);memcpy(out+46,c->username,32);
     memcpy(out+78,c->password_salt,16);memcpy(out+94,c->password_hash,32);
     put32(out+126,c->password_rounds);out[130]=c->admin;memcpy(out+131,c->advertise,4);
     out[135]=(uint8_t)c->sfp_speed;out[136]=(uint8_t)(c->sfp_speed>>8);out[137]=c->dhcp;
     memcpy(out+138,c->ip,4);memcpy(out+142,c->netmask,4);memcpy(out+146,c->gateway,4);
+    out[150]=c->stp_enabled;out[151]=c->stp_version;
     put32(out+248,crc(out,248));memcpy(out+252,"DONE",4);
 }
 bool config_decode(const uint8_t data[CONFIG_RECORD_SIZE],struct switch_config *c,uint32_t *sequence)
 {
-    if (memcmp(data,magic,8)||get32(data+8)!=1||memcmp(data+252,"DONE",4)||get32(data+248)!=crc(data,248)||data[137]>1) return false;
+    if (memcmp(data,magic,8)||(get32(data+8)!=1 && get32(data+8)!=2)||memcmp(data+252,"DONE",4)||get32(data+248)!=crc(data,248)||data[137]>1) return false;
     struct switch_config v={0};memcpy(v.mac,data+16,30);memcpy(v.username,data+46,32);
     memcpy(v.password_salt,data+78,16);memcpy(v.password_hash,data+94,32);v.password_rounds=get32(data+126);
     v.admin=data[130];memcpy(v.advertise,data+131,4);v.sfp_speed=data[135]|((uint16_t)data[136]<<8);v.dhcp=data[137];
     memcpy(v.ip,data+138,4);memcpy(v.netmask,data+142,4);memcpy(v.gateway,data+146,4);
+    if(get32(data+8)==2){if(data[150]>1)return false;v.stp_enabled=data[150];v.stp_version=data[151];}
+    else v.stp_version=2; /* v1 migrates disabled, RSTP preferred */
     if (!config_valid(&v)) return false;
     *c=v;*sequence=get32(data+12);return true;
 }
@@ -97,8 +101,8 @@ bool config_load(struct config_store *s,const struct config_io *io)
             s->value=c;s->sequence=sequence;s->slot=(int)slot;s->saved=true;
         }
         /* Unknown record versions are never replaced automatically. A torn
-         * record with our v1 header can be reclaimed on an explicit save. */
-        if (!blank(record,sizeof(record)) && (memcmp(record,magic,8)||get32(record+8)!=1)) s->writable=false;
+         * record with our v1/v2 header can be reclaimed on an explicit save. */
+        if (!blank(record,sizeof(record)) && (memcmp(record,magic,8)||(get32(record+8)!=1 && get32(record+8)!=2))) s->writable=false;
 
     }
     return s->saved;

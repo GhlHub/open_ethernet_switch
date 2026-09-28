@@ -1,4 +1,5 @@
 #include "board.h"
+#include "pstate.h"
 #include "policy.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -189,7 +190,7 @@ static void link_poll(void)
         mmio_write(macs[i]+0x404,(request.admin&(1u<<(i+2)))?0x12000000u:0x02000000u);
     if (!fabric_dma_healthy()) desired=0;
     struct link_action a=link_update(&link_state,desired,busy,now);
-    if (a.clear) mmio_write(DIAG_BASE+LINK_CLR,a.clear);
+    if (a.clear) pstate_link_clear(a.clear);
     if (a.set) mmio_write(DIAG_BASE+LINK_SET,a.set);
     if (a.clear || a.set) xil_printf("Fabric physical links: %02x\r\n",link_state.enabled);
     /* Wait at least one polling interval after removal, and for flush idle.

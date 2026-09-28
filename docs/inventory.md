@@ -12,7 +12,7 @@ milestones and may describe issues subsequently fixed.
 | 3 | Recovery and fault injection | Extend the passing GEM1 stopped/resumed-clock test to cable flaps and other banks; test independent resets, AXI errors, queue flushes and recovery without reboot. A timed-out dump must retain buffer ownership until hardware completion or coordinated reset. |
 | 4 | Remaining physical IP partitioning | Package RGMII and SFP transceiver/clock/reset shells with owned constraints, reset contracts and reusable verification. |
 | 5 | Speed expansion | PL copper 10/100/1000 full-duplex functional qualification passes on both ports (see [speed support](pl-ethernet-speeds.md)). Widen the SFP packet interface to 128 bits before faster MAC/PCS/transceiver development for 1/2.5/5/10G. GEM0 remains board-limited to 1G. |
-| 6 | STP completion | Resolve remaining protocol/state and CPU RX-tag ownership issues, add web enable/disable and persistent settings, then verify loops and topology recovery. STP remains disabled. The old CPU TX override crossing has already been removed. |
+| 6 | STP completion | STP/RSTP engine, single-owner task, persistent web controls, destination blocking and RX-tag backpressure are deployed with matching fabric/management 2.1; basic forwarding/management checks passed. Qualification of loops, topology changes and mixed vendors on hardware is deferred. The running image remains STP-disabled. See [spanning tree](spanning-tree.md). |
 | 7 | Boot and storage reliability | Package persistent boot artifacts and validate cold boot, restart, SD removal, failed writes and interrupted saves. Current FPGA/firmware deployment is volatile JTAG. |
 | 8 | DMA cache optimization | Measure CPU cost/throughput before revisiting the non-cacheable HP1 descriptors and packet bounce buffers. Validate ownership, cache-line isolation, ring reuse and error recovery for any change. |
 
@@ -30,6 +30,20 @@ recovers without reboot. Both the CPU and forwarded miner passed 450/450
 full-size pings across linked, stopped-clock and recovered windows. See
 [statistics](statistics.md) and [deployment evidence](verification.md#2026-09-26-independent-statistics-bank-mailboxes-deployed). Broader management
 features such as LLDP/LACP and SNMPv3 are separate feature work.
+
+## CPU interrupts, configuration display and enclosure (2026-09-27)
+
+CPU packet TX/RX now use DMA completion/error interrupts. A fresh FPGA build,
+routed timing checks and hardware deployment passed; 2,000 CPU and 100 forwarded
+full-size pings had no loss and DMA counters reported no errors/timeouts.
+The configuration page displays active IPv4 settings separately from saved
+preferences and has readable address and credential fields on desktop/mobile.
+See [verification](verification.md#2026-09-27-interrupt-driven-cpu-packet-dma).
+
+The [KR260 clamshell](../mechanical/kr260-enclosure/README.md) provides fixed
+mounts, screw closure and measured port/SD access from the supplied A02 carrier
+assembly. Geometry/interference and STL checks pass. Printed fit, cable release
+access with actual plugs and enclosed thermal testing remain outstanding.
 
 ## Passive IPv4 discovery (2026-09-27 deployed)
 

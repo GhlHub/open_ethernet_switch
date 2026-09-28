@@ -34,8 +34,8 @@ contracts are not physical CDC sign-off.
 | `gem_port` | 2.0 / `switch_gem_port` | `clk/rst_n`; `gem_rx_clk/gem_rx_rst_n`; `gem_tx_clk/gem_tx_rst_n` | 16-bit packet streams, PS GEM external RX-write/TX-read FIFO signals, two local counter banks |
 | `pl_port` | 1.2 / `pl_gmii_mac_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk`, `clk_en` | Packet streams; 32-bit AXI-Lite MAC registers; 8-bit GMII; local counter bank |
 | `sfp_port` | 1.1 / `sfp_port_top` | `clk/rst_n`; `axis_clk/axis_rst_n`; `gtx_clk/gtx_rst_n`; `gth_clk/gth_rst_n` | Packet streams; 32-bit AXI-Lite MAC registers; decoded 16-bit GTH data/control; PCS status; local counter bank |
-| `switch_fabric` | 2.0 / `switch_fabric` | `clk/rst_n`; `axis_clk/axis_rst_n` | Five physical packet-stream pairs, CPU stream pair, four DDR AXI masters, shared packet buffers/queues, forwarding table, six counter banks |
-| `management` | 2.0 / `switch_management` | `clk/rst_n` (production control clock) | 32-bit AXI-Lite controls, link/forward/learn masks, CPU TX ABI identifier and RX tag, statistics mailbox and 13-bank decoder |
+| `switch_fabric` | 2.1 / `switch_fabric` | `clk/rst_n`; `axis_clk/axis_rst_n` | Five physical packet-stream pairs, CPU stream pair, four DDR AXI masters, shared packet buffers/queues, forwarding table, six counter banks |
+| `management` | 2.1 / `switch_management` | `clk/rst_n` (production control clock) | 32-bit AXI-Lite controls, link/forward/learn masks, CPU TX ABI identifier and RX tag, statistics mailbox and 13-bank decoder |
 
 In production, the fabric runs at 125 MHz, control at approximately
 142.857 MHz, PL GMII at 125 MHz, and SFP PCS/GTH at 125/62.5 MHz. Packet
@@ -188,3 +188,10 @@ See [statistics](../docs/statistics.md) for the CSR ABI and clock-progress CDC
 contract. The serialized native fixture models successful transaction consumption
 on request release; the production CSR uses an explicit take pulse, preserving
 results across timeouts.
+
+### STP/RSTP prerequisites (fabric and management 2.1)
+
+No external port widths change. Fabric gates ordinary enqueue destinations by
+forwarding state, while explicit directed CPU packets bypass it. CPU dequeue
+requests pause at ingress-tag FIFO full. Management adds `STP_ABI` +0x58,
+`0x53545002`, for firmware compatibility checking. See [protocol integration](../docs/spanning-tree.md).

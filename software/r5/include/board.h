@@ -15,6 +15,7 @@
 #define LEARN_SET 0x40
 #define LEARN_CLR 0x44
 #define PORT_CTRL_STATUS 0x48
+#define STP_ABI 0x58
 #define CPU_TX_ABI 0x54
 #define CPU_RX_TAG 0x50
 #define CPU_PORT_MASK 0x20u
@@ -33,6 +34,16 @@ void board_ports_set(uint8_t mask);
 void board_ports_get(uint8_t *admin, uint8_t *physical, uint8_t *forwarding);
 void network_start(void);
 void network_link_changed(bool up);
+/* Active stack settings in network byte order: IP, netmask, gateway. */
+void network_ipv4_snapshot(uint32_t addresses[3],bool *up,bool *dhcp_mode);
+struct fabric_dma_counters {
+    uint32_t tx_irq, rx_irq, error_irq, tx_completed, rx_consumed, rx_dropped, tx_timeouts;
+};
+extern volatile struct fabric_dma_counters fabric_dma_counters;
+void board_dma_irq_enable(void);
+void fabric_dma_interrupt(bool receive);
+void network_dma_event(bool from_isr);
+bool fabric_dma_rx_pending(void);
 bool fabric_dma_init(void);
 bool fabric_dma_send(const uint8_t *p, size_t n);
 bool fabric_dma_send_directed(const uint8_t *p, size_t n, uint8_t mask);

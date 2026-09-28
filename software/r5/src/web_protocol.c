@@ -46,7 +46,7 @@ int web_parse(const char *data,size_t length,struct web_request *out)
             *out=r;return 1;
         }
         if (!strcmp(r.path,"/api/config")) {
-            if (!config_form(buf+header,&r.settings,&r.credentials)) return -1;
+            if (!config_form(buf+header,&r.settings,&r.credentials,&r.stp_supplied)) return -1;
             *out=r;return 1;
         }
         unsigned fields=0;
@@ -131,6 +131,7 @@ size_t web_stats(char *out,size_t size,const struct statistics_snapshot *s,
         v->valid_mask,v->errors,(unsigned long long)((hz && v->timestamp && now>=v->timestamp)?(now-v->timestamp)*1000/hz:UINT32_MAX),
         (long)v->temperature_mc[0],(long)v->temperature_mc[1],v->voltage_uv[0][0],v->voltage_uv[0][1],v->voltage_uv[0][2],v->voltage_uv[1][0],v->voltage_uv[1][1],v->voltage_uv[1][2],(long)v->som_current_ua,v->som_voltage_uv,v->som_power_uw);
     put(&w,",\"stp\":{\"enabled\":%s,\"bridge_mac\":",stp->enabled?"true":"false"); mac_hex(&w,stp->bridge_id.mac);
+    put(&w,",\"version\":%u,\"fault\":%s,\"rx_dropped\":%u,\"tx_failed\":%u",stp->version,stp->fault?"true":"false",stp->rx_dropped,stp->tx_failed);
     put(&w,",\"bridge_priority\":%u,\"root_mac\":",stp->bridge_id.priority); mac_hex(&w,stp->root_id.mac);
     put(&w,",\"root_priority\":%u,\"root_path_cost\":%u,\"is_root\":%s,\"root_port\":%d,\"topology_changes\":%u,\"tcn_rx\":%u,\"ports\":[",
         stp->root_id.priority,stp->root_path_cost,stp->is_root?"true":"false",

@@ -158,8 +158,10 @@ These ownership transitions are distinct from the R5 DMA ring lifecycle.
    [CPU transmit ABI](cpu-tx-metadata.md).
 2. It initializes the TX descriptor, executes the ownership barrier and
    writes AXI DMA's tail descriptor register.
-3. DMA owns the submitted descriptor/buffer until completion. R5 polls
-   completion but does not overwrite the submitted data.
+3. DMA owns the submitted descriptor/buffer until completion. The sending
+   task blocks on a binary semaphore signaled by the MM2S completion/error
+   interrupt (GIC IRQ 127), with a 100 ms timeout. It never overwrites
+   submitted data while DMA may own it.
 4. After completion and error checks, the driver can reuse the storage.
    Two descriptors alternate so consecutive submissions have different
    tail addresses. This driver sends synchronously.
@@ -167,14 +169,23 @@ These ownership transitions are distinct from the R5 DMA ring lifecycle.
 ### R5 receive
 
 1. R5 submits initialized RX descriptors/buffers to DMA.
-2. DMA fills a buffer and writes completion/status.
-3. R5 observes completion, executes the barrier, validates status/length,
+2. DMA fills a buffer, writes completion/status, and raises S2MM IRQ 128.
+   The ISR acknowledges the interrupt and notifies the network service task.
+3. The notified task drains completed descriptors (including malformed ones),
+   executes the barrier, validates status/length,
    and copies the packet into software-owned storage. The network service
    then allocates/copies into the FreeRTOS network buffer.
 4. R5 clears status and republishes the descriptor after a barrier.
    DMA can reuse the buffer only after that handoff.
 
-A DMA error or TX timeout marks the driver failed. It does not reuse storage
+RX notifications coalesce: the descriptor ring remains the source of truth.
+The task drains at most 16 descriptors per batch and yields one tick only
+when more work remains, allowing link management to run under load. While
+idle it blocks on notifications; a one-second timeout services DHCP policy
+without polling packet descriptors. Initial draining covers arrivals before
+the task handle exists.
+
+A DMA error or TX timeout masks both DMA interrupt sources and marks the driver failed. It does not reuse storage
 that hardware might still own. Firmware disables ports; automatic DMA restart
 remains future work.
 
@@ -337,3 +348,10 @@ latency, but sustained balanced wire-rate traffic still needs qualification.
 Pool high-water marks, allocation failures/waits, and latency including DMA
 arbitration are needed to validate this estimate. Finite buffers cannot absorb
 sustained egress oversubscription, including flooding toward a slower port.
+
+## STP hardware capability (source update, 2026-09-27)
+
+Management 2.1 adds read-only `STP_ABI` at `0x80100058`, value `0x53545002`.
+It identifies matching fabric destination-state gating and CPU RX-tag FIFO
+backpressure. Spanning-tree firmware requires this value before enabling.
+The packet pool and DMA memory reservations are unchanged. See [STP/RSTP](spanning-tree.md).

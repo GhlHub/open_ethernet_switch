@@ -1,5 +1,7 @@
 #include "config.h"
 #include "board.h"
+#include "stp.h"
+#include "pstate.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "settings_media.h"
@@ -27,6 +29,7 @@ void settings_init(void)
 #endif
     xil_printf("Settings: %s; SD storage %s\r\n",store.saved?"loaded":"factory defaults",
                store.writable?"available":settings_media_status());
+    stp_prepare(store.value.stp_enabled);
     (void)board_ports_configure(effective_mask(&store.value),store.value.advertise);
 }
 void settings_get(struct switch_config *out,bool *saved,bool *writable)
@@ -47,6 +50,7 @@ bool settings_save(const struct switch_config *value)
     /* Recheck the removable medium on every save, including no-op saves.
      * Probe its generations again so a replaced card is never overwritten
      * using generation/ownership information from the previous card. */
+    if(value->stp_enabled && !pstate_stp_supported())return false;
     if (!settings_media_present()) return false;
     struct config_store next;
     config_load(&next,&io);

@@ -49,3 +49,14 @@ build/reports_*.txt
 
 # Vivado GUI schematic viewer log
 /nlviewcommon.logfile
+
+# RSTP protocol and hardware qualification artifacts
+/build/rstp/
+
+# CPU DMA interrupt build and hardware qualification artifacts
+/build/cpu_irq/
+
+# Downloaded mechanical references; enclosure sources/print files are versioned
+/docs/xtp744-kr260-carrier-card-3d-cad-model/
+/docs/stl/
+/docs/Support & protection for Kria KR260 Robotics Starter Kit - 6699563.zip

@@ -84,6 +84,7 @@
 //                ones (software already re-checks the destination MAC
 //                itself if it only cares about those -- see network.c).
 //   0x4C retired: reads zero; writes ignored.
+//   0x58 STP_ABI read-only: 0x53545002 = destination gating and RX-tag backpressure.
 //   0x54 CPU_TX_ABI read-only: 0x43545801 = mandatory in-band TX header ABI 1.
 
 module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
@@ -287,6 +288,7 @@ module rx_diag_regs #(parameter bit STATS_DDR=0, STATS_DEBUG=0,
           8'h20:   s_axi_rdata <= {28'd0, sfp_pcs_status_i};
           8'h48:   s_axi_rdata <= {18'd0, learn_en_o, fwd_en_o};
           8'h4C:   s_axi_rdata <= 0; // retired override register; writes ignored
+          8'h58:   s_axi_rdata <= 32'h53545002;
           8'h54:   s_axi_rdata <= 32'h43545801; // CPU TX framed-stream ABI 1
           8'h50:   s_axi_rdata <= {cpu_rx_tag_valid_i, 28'd0, cpu_rx_tag_i};
           default: s_axi_rdata <= 32'd0;

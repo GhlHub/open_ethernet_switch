@@ -6,7 +6,11 @@ learning/lookup/aging, and a shared DDR packet-buffer architecture under
 the reusable blocks described in [`ip_repo`](ip_repo/README.md), with
 `rtl/switch_top.sv` retaining the native simulation assembly.
 
-The current 2026-09-26 lab build uses fabric / GEM / management IP version 2.0,
+The source now adds [classic STP/RSTP selection and persistent web controls](docs/spanning-tree.md).
+Fabric/management 2.1 and the matching firmware are deployed with STP disabled;
+STP/RSTP board qualification is deferred.
+
+The current 2026-09-27 lab build uses fabric/management 2.1 and GEM 2.0,
 with the switch fabric at 125 MHz. Independent statistics mailboxes provide
 per-bank clock/freshness reporting (ABI 2). PL MAC 1.2 and PHY-management 1.1 support full-duplex
 10/100/1000 Mb/s on both PL copper ports. SFP 1.1 remains 1G.
@@ -20,12 +24,23 @@ adds [passive IPv4 discovery](docs/web-interface.md#passive-ipv4-discovery-2026-
 to this page; it is deployed and verified on the board.
 
 The matching FPGA and R5 firmware are deployed over JTAG at DHCP address
-`10.0.1.104`. Routed timing passes (fabric +1.236 ns setup; overall +0.018 ns
+`10.0.1.104`. Routed timing passes (fabric +1.710 ns setup; overall +0.018 ns
 setup / +0.010 ns hold). Earlier speed qualification passed both PL ports at
 10, 100 and 1000 Mb/s. The current image adds stopped-clock isolation and
 public SNMP/web bank availability reporting.
-See [deployment evidence](docs/verification.md#2026-09-26-independent-statistics-bank-mailboxes-deployed)
+See [deployment evidence](docs/verification.md#2026-09-27-interrupt-driven-cpu-packet-dma)
 and the [current backlog](docs/inventory.md#current-remaining-work).
+
+CPU TX/RX completion is interrupt-driven, with blocked-task wakeups and bounded
+RX batches. Hardware verification passed 2,000 CPU and 100 forwarded full-size
+pings without loss, concurrent HTTP/SNMP, and zero DMA errors or TX timeouts.
+The configuration page shows the active IPv4 address, netmask and default gateway
+above the saved settings, and uses wider address and credential fields. See
+[web interface](docs/web-interface.md).
+
+A [screw-fastened KR260 clamshell](mechanical/kr260-enclosure/README.md) includes
+print-ready STLs, assembly STEP, source and a measured carrier-fit report.
+Its CAD checks pass; physical print fit and enclosed cooling remain untested.
 
 The intended port map is two PS GEM ports, two PL Ethernet ports, one SFP port,
 and one virtual CPU port. **The current SFP design is 1G 1000BASE-X, not 10GbE.**

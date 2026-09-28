@@ -7,7 +7,12 @@
 #include <string.h>
 #include "../src/pstate.c"
 static struct {uintptr_t addr;uint32_t value;} regs[16];
-static unsigned nregs;
+static unsigned nregs,delays;
+static bool locked;
+void vTaskDelay(TickType_t ticks){assert(locked && ticks==1);delays++;}
+SemaphoreHandle_t xSemaphoreCreateMutex(void){return &locked;}
+int xSemaphoreTake(SemaphoreHandle_t h,unsigned long ticks){(void)h;(void)ticks;assert(!locked);locked=true;return 1;}
+int xSemaphoreGive(SemaphoreHandle_t h){(void)h;assert(locked);locked=false;return 1;}
 uint32_t mmio_read(uintptr_t a)
 {
     for (unsigned i=0;i<nregs;i++) if (regs[i].addr==a) return regs[i].value;
@@ -46,6 +51,9 @@ int main(void)
     /* the default weak hook exists, is callable, and has no observable effect */
     nregs=0; fabric_ctrl_frame_rx(frame,sizeof frame); assert(nregs==0);
 
+    assert(delays>=4 && !pstate_failed());
+    mmio_write(DIAG_BASE+LINK_STATUS,256);pstate_fwd_clear(1);assert(pstate_failed());
+    mmio_write(DIAG_BASE+FWD_SET,0);pstate_fwd_set(31);assert(mmio_read(DIAG_BASE+FWD_SET)==0);
     printf("PASS: pstate register plumbing (FWD/LEARN set-clear, status unpack, CPU TX override, default RX hook)\n");
     return 0;
 }

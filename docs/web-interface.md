@@ -93,6 +93,7 @@ See [verification](verification.md) for board/browser results and traffic limits
 
 | Method/path | Result |
 | --- | --- |
+| `GET /api/network` | Active IPv4 stack snapshot: `up`, `dhcp`, `ip`, `netmask`, `gateway`; independent of saved preferences |
 | `GET /api/config` | Saved port/IP preferences, MAC allocation, username and storage/capability status; no credential secrets |
 | `POST /api/config` | Save a complete port/IP form; see [configuration](configuration.md) |
 | `GET /api/ports` | JSON `admin`, `physical`, `forwarding` masks; bits 0–4 map to the five physical ports |
@@ -203,3 +204,21 @@ Tagged ARP is ignored because the current table has no VLAN key. Sender Ethernet
 and ARP MAC addresses must match, with a nonzero unicast MAC and a usable unicast
 IPv4 sender address. Observations are network claims, not authenticated identity.
 No FPGA changes or bitstream rebuild are required.
+
+## Spanning-tree controls (deployed, STP disabled)
+
+Configuration adds an authenticated, persistent enable checkbox and classic
+STP/RSTP selector. Statistics displays the selected protocol, root and port
+states, topology-change counts and fault/drop information. See
+[behavior, hardware requirements and validation](spanning-tree.md).
+
+The 2026-09-27 live browser check verified the controls and disabled status
+without saving configuration or enabling spanning tree. Protocol tests on the
+board are deferred.
+
+The configuration page starts with a Current IPv4 panel showing the active
+address, netmask and default gateway. It refreshes every second without
+replacing edits in the saved-settings form. The snapshot uses the running
+FreeRTOS endpoint, so DHCP leases and pending static changes are distinguished.
+The address and administrator credential fields are sized for readable values
+and wrap on narrow screens.

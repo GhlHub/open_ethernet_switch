@@ -17,7 +17,7 @@ static bool write_file(unsigned s,unsigned off,const void *p,size_t n)
 }
 static const struct config_io io={read_file,truncate_file,write_file};
 static bool form(const char *text)
-{ char buf[512];assert(strlen(text)<sizeof(buf));strcpy(buf,text);struct switch_config c;bool credentials;return config_form(buf,&c,&credentials); }
+{ char buf[512];assert(strlen(text)<sizeof(buf));strcpy(buf,text);struct switch_config c;bool credentials,stp;return config_form(buf,&c,&credentials,&stp); }
 int main(void)
 {
     struct config_store s,t;struct switch_config c,decoded;uint32_t sequence;
@@ -56,7 +56,16 @@ int main(void)
     const char *bad[]={"1.2.3","1.2.3.256","1.2.3.4x","-1.2.3.4","1..2.3","1.2.3.4.5","999999999999999999.0.0.1"};
     for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);i++)assert(!config_parse_ipv4(bad[i],c.ip));
     const char *good="mask=31&adv0=4&adv1=7&adv2=7&adv3=7&sfp=0&dhcp=1&ip=0.0.0.0&netmask=0.0.0.0&gateway=0.0.0.0";
-    assert(form(good));char text[512];snprintf(text,sizeof(text),"%s&mask=31",good);assert(!form(text));
+    assert(form(good));char text[512];
+    for(unsigned version=0;version<=2;version+=2){
+        snprintf(text,sizeof(text),"%s&stp=1&stp_version=%u",good,version);assert(form(text));
+    }
+    snprintf(text,sizeof(text),"%s&stp=1&stp_version=3",good);assert(!form(text));
+    snprintf(text,sizeof(text),"%s&stp=1",good);assert(!form(text));
+    config_defaults(&c);c.stp_enabled=true;c.stp_version=0;config_encode(&c,4,record);
+    assert(config_decode(record,&decoded,&sequence) && decoded.stp_enabled && decoded.stp_version==0);
+    c.stp_version=3;assert(!config_valid(&c));config_defaults(&c);
+snprintf(text,sizeof(text),"%s&mask=31",good);assert(!form(text));
     snprintf(text,sizeof(text),"%s&username=admin",good);assert(!form(text));
     assert(!form("mask=31"));
     char json[1024];assert(config_json(json,sizeof(json),&c,true,true));assert(!strstr(json,"password")&&!strstr(json,"salt")&&!strstr(json,"hash"));

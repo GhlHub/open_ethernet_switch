@@ -1,6 +1,6 @@
 {
   "name": "management",
-  "version": "2.0",
+  "version": "2.1",
   "description": "Switch AXI-Lite control and statistics mailbox",
   "top": "switch_management",
   "sources": [

@@ -95,6 +95,9 @@ def check(path, compare_physical=False):
     for i, cell in enumerate(['pl0', 'pl1', 'sfp']):
         connected(cell + '/interrupt', f'irq/In{i*2}')
         connected(cell + '/mac_irq', f'irq/In{i*2+1}')
+    connected('dma/mm2s_introut', 'irq/In6')
+    connected('dma/s2mm_introut', 'irq/In7')
+    connected('irq/dout', 'ps/pl_ps_irq0')
     connected('management/link_irq_o', 'irq1/In1')
     actual = {s['address_block']: (int(s['offset'], 16), s['range']) for s in design['addressing']['/ps']['address_spaces']['Data']['segments'].values()}
     expected = {'/dma/S_AXI_LITE/Reg': (0x80000000, '64K'), '/mdio0/s_axi/reg0': (0x80010000, '64K'),

@@ -63,6 +63,15 @@ static void serve(Socket_t socket,struct http_buffers *buffer)
     if (parsed==1) {
         if (!strcmp(r.method,"GET") && (!strcmp(r.path,"/") || !strcmp(r.path,"/statistics") || !strcmp(r.path,"/configuration") || !strcmp(r.path,"/mac-table"))) {
             body=web_page;size=sizeof(web_page)-1;type="text/html; charset=utf-8";status="200 OK";
+        } else if (!strcmp(r.method,"GET") && !strcmp(r.path,"/api/network")) {
+            uint32_t addresses[3]; bool up,dhcp_mode; char text[3][16];
+            network_ipv4_snapshot(addresses,&up,&dhcp_mode);
+            for (unsigned i=0;i<3;i++) FreeRTOS_inet_ntoa(addresses[i],text[i]);
+            int n=snprintf(response,sizeof(buffer->response),
+                "{\"up\":%s,\"dhcp\":%s,\"ip\":\"%s\",\"netmask\":\"%s\",\"gateway\":\"%s\"}",
+                up?"true":"false",dhcp_mode?"true":"false",text[0],text[1],text[2]);
+            size=n>0 && (size_t)n<sizeof(buffer->response)?(size_t)n:0;
+            body=response;type="application/json";status=size?"200 OK":"500 Internal Server Error";
         } else if ((!strcmp(r.method,"GET") || mac_refresh) &&
                    (!strcmp(r.path,"/api/mac-table") || !strncmp(r.path,"/api/mac-table/",15))) {
             if(xSemaphoreTake(mac_table_lock,pdMS_TO_TICKS(250))==pdTRUE) {
@@ -76,6 +85,7 @@ static void serve(Socket_t socket,struct http_buffers *buffer)
             settings_get(&cfg,&saved,&writable);
             bool ok=true;
             if (!strcmp(r.method,"POST")) {
+                if(!r.stp_supplied){r.settings.stp_enabled=cfg.stp_enabled;r.settings.stp_version=cfg.stp_version;}
                 if (!r.credentials) {
                     memcpy(r.settings.username,cfg.username,sizeof(cfg.username));
                     memcpy(r.settings.password_salt,cfg.password_salt,16);
@@ -87,7 +97,7 @@ static void serve(Socket_t socket,struct http_buffers *buffer)
             if (ok) {
                 size=config_json(response,sizeof(buffer->response),&cfg,saved,writable);
                 body=response;type="application/json";status=size?"200 OK":"500 Internal Server Error";
-            } else {body="Settings were not saved; microSD storage unavailable or write failed\n";size=strlen(body);status="503 Service Unavailable";}
+            } else {body="Settings were not saved; microSD storage unavailable, write failed, or STP hardware upgrade required\n";size=strlen(body);status="503 Service Unavailable";}
         } else if ((!strcmp(r.method,"GET") || !strcmp(r.method,"POST")) && !strcmp(r.path,"/api/ports")) {
             bool ok=true;
             if (!strcmp(r.method,"POST")) {

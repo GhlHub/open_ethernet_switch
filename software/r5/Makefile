@@ -3,6 +3,7 @@ ROOT := $(abspath ../..)
 XILINX ?= /tools/Xilinx/2026.1
 BSP ?= $(ROOT)/build/r5/workspace/kr260_r5/psu_cortexr5_0/r5_bsp/bsp
 CC := $(XILINX)/gnu/armr5/lin/gcc-arm-none-eabi/bin/armr5-none-eabi-gcc
+CXX := $(XILINX)/gnu/armr5/lin/gcc-arm-none-eabi/bin/armr5-none-eabi-g++
 NM := $(XILINX)/gnu/armr5/lin/gcc-arm-none-eabi/bin/armr5-none-eabi-nm
 SIZE := $(XILINX)/gnu/armr5/lin/gcc-arm-none-eabi/bin/armr5-none-eabi-size
 KERNEL := $(ROOT)/third_party/FreeRTOS-LTS/FreeRTOS/FreeRTOS-Kernel
@@ -18,10 +19,12 @@ CFLAGS := -mcpu=cortex-r5 -mfloat-abi=hard -mfpu=vfpv3-d16 -marm -O2 -g3 -ffunct
 CPPFLAGS := -DCONFIG_RECOVERY=$(CONFIG_RECOVERY) -DSTATS_DDR=$(STATS_DDR) -DSTATS_DEBUG=$(STATS_DEBUG) -Iinclude -I$(ROOT)/third_party/sha256 -Iout -I$(BSP)/include -I$(KERNEL)/include -I$(PORT) -I$(TCP)/include -I$(TCP)/portable/Compiler/GCC
 USB := $(ROOT)/third_party/libpayload_usb
 CPPFLAGS += -Iusb_port -I$(USB)/include -I$(USB)/drivers -I$(ROOT)/third_party/fatfs
+MSTP := $(ROOT)/third_party/mstp-lib/mstp-lib/internal
+CPPFLAGS += -DSTP_USE_LOG=0
 APP := $(wildcard src/*.c) src/vectors.S $(ROOT)/third_party/sha256/sha256.c
 LIBSRC := $(KERNEL)/tasks.c $(KERNEL)/queue.c $(KERNEL)/list.c $(KERNEL)/timers.c $(KERNEL)/event_groups.c $(KERNEL)/stream_buffer.c $(KERNEL)/portable/MemMang/heap_4.c $(PORT)/port.c $(PORT)/portASM.S $(wildcard $(TCP)/*.c) $(TCP)/portable/BufferManagement/BufferAllocation_2.c
 # Flatten unique upstream basenames; fail if a future addition creates a collision.
-SOURCES := $(APP) $(LIBSRC) $(wildcard $(USB)/drivers/*.c) $(ROOT)/third_party/fatfs/ff.c
+SOURCES := $(wildcard $(MSTP)/*.cpp) $(APP) $(LIBSRC) $(wildcard $(USB)/drivers/*.c) $(ROOT)/third_party/fatfs/ff.c
 OBJECTS := $(addprefix out/,$(addsuffix .o,$(notdir $(SOURCES))))
 ifneq ($(words $(OBJECTS)),$(words $(sort $(OBJECTS))))
 $(error duplicate source basename)
@@ -42,7 +45,12 @@ define compile
 out/$(notdir $(1)).o: $(1) | out
 	$$(CC) $$(CFLAGS) $$(CPPFLAGS) -MMD -MP -c $$< -o $$@
 endef
-$(foreach s,$(SOURCES),$(eval $(call compile,$(s))))
+$(foreach s,$(filter-out %.cpp,$(SOURCES)),$(eval $(call compile,$(s))))
+define compile_cpp
+out/$(notdir $(1)).o: $(1) | out
+	$$(CXX) $$(CFLAGS) $$(CPPFLAGS) -std=c++03 -fno-exceptions -fno-rtti -fno-threadsafe-statics -MMD -MP -c $$< -o $$@
+endef
+$(foreach s,$(filter %.cpp,$(SOURCES)),$(eval $(call compile_cpp,$(s))))
 out/kr260_r5.elf: $(OBJECTS) linker.ld verify_elf.py $(BSP)/lib/libxil.a $(BSP)/lib/libxilstandalone.a $(BSP)/lib/libxiltimer.a
 	$(CC) $(CFLAGS) -nostartfiles -Wl,--gc-sections,--wrap=outbyte,-Map,out/kr260_r5.map -Wl,-T,linker.ld $(OBJECTS) -L$(BSP)/lib -Wl,--start-group -lxil -lxilstandalone -lxiltimer -lc -lm -lgcc -Wl,--end-group -o $@
 	$(SIZE) $@
@@ -55,6 +63,11 @@ test: test-snmp test-web test-links test-pstate test-stp | out
 	./out/test_dma 1
 	./out/test_dma 2
 	./out/test_dma 3
+	./out/test_dma 4
+	./out/test_dma 5
+	./out/test_dma 6
+	./out/test_dma 7
+	./out/test_dma 8
 	@set -e; for ddr in 0 1; do for debug in 0 1; do \
 	  cc -std=c11 -Wall -Wextra -Werror -DSTATS_DDR=$$ddr -DSTATS_DEBUG=$$debug -Itests/stats_fakes -Iinclude src/statistics.c tests/test_statistics.c -o out/test_statistics; \
 	  for mode in 0 1 2 3 4 5; do ./out/test_statistics $$mode; done; \
@@ -66,7 +79,7 @@ test-snmp: | out
 	  python3 tests/test_snmp.py out/test_snmp_$$ddr$$debug.so $$((1 + 2*ddr + 4*debug)); \
 	done; done
 clean:
-	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_mac_dump out/test_mac_table_web out/test_ip_discovery out/test_statistics out/test_snmp*.so out/test_web out/test_links out/test_pstate out/test_stp out/test_config out/test_settings out/test_web.json out/web_page.h
+	$(RM) out/*.o out/*.d out/*.elf out/*.map out/test_policy out/test_dma out/test_mac_dump out/test_mac_table_web out/test_ip_discovery out/test_statistics out/test_snmp*.so out/test_web out/test_links out/test_pstate out/test_stp out/test_stp_task out/test_config out/test_settings out/test_web.json out/web_page.h
 -include $(OBJECTS:.o=.d)
 
 .PHONY: test-web
@@ -89,7 +102,9 @@ test-pstate: | out
 
 .PHONY: test-stp
 test-stp: | out
-	cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iinclude tests/test_stp.c -o out/test_stp
+	cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -DSTP_USE_LOG=0 -Iinclude -c src/stp.c -o out/test_stp_adapter.o
+	cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -Iinclude -c tests/test_stp.c -o out/test_stp_test.o
+	g++ -std=c++03 -g -fsanitize=address,undefined -fno-sanitize=enum -DSTP_USE_LOG=0 $(MSTP)/*.cpp out/test_stp_adapter.o out/test_stp_test.o -o out/test_stp
 	./out/test_stp
 
 .PHONY: test-config
@@ -156,3 +171,10 @@ test: test-ip-discovery
 test-ip-discovery: | out
 	cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stats_fakes -Iinclude src/ip_discovery.c tests/test_ip_discovery.c -o out/test_ip_discovery
 	./out/test_ip_discovery
+
+.PHONY: test-stp-task
+test: test-stp-task
+test-stp-task: test-stp
+	cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -Itests/stp_fakes -Iinclude -c tests/test_stp_task.c -o out/test_stp_task_test.o
+	g++ -std=c++03 -g -fsanitize=address,undefined -fno-sanitize=enum -DSTP_USE_LOG=0 $(MSTP)/*.cpp out/test_stp_adapter.o out/test_stp_task_test.o -o out/test_stp_task
+	./out/test_stp_task

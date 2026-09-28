@@ -129,11 +129,28 @@ void board_tick_setup(void)
     XTtcPs_EnableInterrupts(&tick, XTTCPS_IXR_INTERVAL_MASK);
     XTtcPs_Start(&tick);
 }
+/* SDT SPI numbers exclude the 32 SGI/PPI IDs used by the raw GIC API. */
+#define DMA_TX_IRQ (XPAR_FABRIC_DMA_INTR + 32u)
+#define DMA_RX_IRQ (XPAR_FABRIC_DMA_INTR_1 + 32u)
+_Static_assert(DMA_TX_IRQ==127 && DMA_RX_IRQ==128, "DMA interrupt wiring changed");
+void board_dma_irq_enable(void)
+{
+    /* Level high; logical priority 20 may call FreeRTOS FromISR APIs. */
+    XScuGic_SetPriorityTriggerType(&gic,DMA_TX_IRQ,0xa0,1);
+    XScuGic_SetPriorityTriggerType(&gic,DMA_RX_IRQ,0xa0,1);
+    XScuGic_Enable(&gic,DMA_TX_IRQ);
+    XScuGic_Enable(&gic,DMA_RX_IRQ);
+}
 /* The upstream assembly already reads IAR and writes EOI. Do not dispatch via
  * XScuGic_InterruptHandler, which would acknowledge the interrupt twice. */
 void vApplicationIRQHandler(uint32_t iar)
 {
-    if ((iar & 0x3ffu) == TICK_IRQ) FreeRTOS_Tick_Handler();
+    switch (iar & 0x3ffu) {
+    case TICK_IRQ: FreeRTOS_Tick_Handler(); break;
+    case DMA_TX_IRQ: fabric_dma_interrupt(false); break;
+    case DMA_RX_IRQ: fabric_dma_interrupt(true); break;
+    default: break;
+    }
 }
 void vApplicationMallocFailedHook(void) { board_assert(__FILE__, __LINE__); }
 void vApplicationStackOverflowHook(TaskHandle_t t, char *name)

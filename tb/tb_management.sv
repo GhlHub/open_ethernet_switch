@@ -64,6 +64,7 @@ module tb_management #(parameter integer SOURCE_HALF_PERIOD=7, STATS_LIMIT=30);
  initial begin
   repeat(6) @(negedge source_clk);rst_n=1;
   rd('h24,'h53540207);
+  rd('h58,'h53545002);
   @(negedge source_clk);inc[0]=3;inc[1]=2;
   repeat(10) @(negedge source_clk);inc=0;
   rd('h2c,30); rd('h2c,0);

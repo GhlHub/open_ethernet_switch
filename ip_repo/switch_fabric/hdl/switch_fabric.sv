@@ -319,6 +319,7 @@ module switch_fabric
   // =========================================================================
   // buf_mgr_core dequeue/release passthrough: ingress_top.sv <-> egress_top.sv
   // =========================================================================
+  wire [NUM_PORTS-1:0][NUM_PORTS-1:0] enqueue_destmask_admitted;
   logic [NUM_PORTS-1:0]               dequeue_req;
   logic [NUM_PORTS-1:0]               dequeue_valid;
   logic [NUM_PORTS-1:0][BUF_ID_W-1:0] dequeue_bufid;
@@ -441,18 +442,19 @@ module switch_fabric
   // stream those frames out to the CPU-facing AXI DMA, and a link-down
   // flush of the CPU port releases buffers without ever asserting
   // dequeue_valid -- so a frame that never reaches the CPU never pushes an
-  // entry here either. Depth 16 matches fabric_dma.c's own RX descriptor
-  // ring size (software cannot have more than that many frames
-  // outstanding). Software must pop exactly one entry per DMA descriptor
+  // entry here either. A full tag FIFO gates CPU dequeue requests: stream
+  // FIFOs and DMA prefetch can hold more packets than the software ring.
+  // Never dequeue a packet without reserving its tag slot. Software must
+  // pop exactly one entry per DMA descriptor
   // it retires (whether or not that frame turned out well-formed) to stay
   // in lockstep -- see fabric_dma.c's header for how it does this.
-  logic cpu_rx_tag_empty;
+  logic cpu_rx_tag_empty, cpu_rx_tag_full;
   async_fifo #(.WIDTH(PORT_ID_W), .DEPTH(16)) u_cpu_rx_tag_fifo (
     .wr_clk   (clk),
     .wr_rst_n (rst_n),
     .wr_en_i  (dequeue_valid[5]),
     .wr_data_i(dequeue_meta[5]),
-    .full_o   (),
+    .full_o   (cpu_rx_tag_full),
     .rd_clk   (axis_clk),
     .rd_rst_n (axis_rst_n),
     .rd_en_i  (cpu_rx_ingress_pop_i),
@@ -487,7 +489,7 @@ module switch_fabric
     .enqueue_req_i      (enqueue_req),
     .enqueue_bufid_i    (enqueue_bufid),
     .enqueue_length_i   (enqueue_length),
-    .enqueue_destmask_i (enqueue_destmask),
+    .enqueue_destmask_i (enqueue_destmask_admitted),
     .enqueue_meta_i     (enqueue_meta),
     .enqueue_gnt_o      (enqueue_gnt),
     .dequeue_req_i      (dequeue_req),
@@ -510,6 +512,13 @@ module switch_fabric
   assign alloc_req[5]        = cpu_alloc_req;
   assign cpu_alloc_gnt     = alloc_gnt[5];
   assign cpu_alloc_bufid   = alloc_bufid;
+
+  // Port forwarding state gates destinations as well as ingress. Only explicit
+  // CPU-directed control traffic may transmit on a discarding physical port.
+  for(genvar stp_p=0;stp_p<NUM_PORTS;stp_p++) begin : stp_admission
+    assign enqueue_destmask_admitted[stp_p] = enqueue_destmask[stp_p] &
+      ((stp_p==5 && cpu_directed) ? {NUM_PORTS{1'b1}} : fwd_en_s2);
+  end
 
   assign enqueue_req[5]      = cpu_enqueue_req;
   assign enqueue_bufid[5]    = cpu_enqueue_bufid;
@@ -592,7 +601,7 @@ module switch_fabric
     .cpu_dequeue_valid_o          (cpu_dequeue_valid),
     .cpu_dequeue_bufid_o          (cpu_dequeue_bufid),
     .cpu_dequeue_length_o         (cpu_dequeue_length),
-    .cpu_dequeue_req_i            (cpu_dequeue_req),
+    .cpu_dequeue_req_i            (cpu_dequeue_req && !cpu_rx_tag_full),
     .cpu_release_req_i            (cpu_release_req),
     .cpu_release_bufid_i          (cpu_release_bufid),
     .cpu_release_gnt_o            (cpu_release_gnt)

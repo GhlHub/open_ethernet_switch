@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../src/links.c"
+void pstate_link_clear(uint8_t mask){mmio_write(DIAG_BASE+LINK_CLR,mask);}
 static uint32_t ticks, maint;
 static uint16_t phy[32][32];
 static struct {uintptr_t addr;uint32_t value;} regs[64];

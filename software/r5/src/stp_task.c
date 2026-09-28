@@ -1,134 +1,101 @@
-/* Hardware glue for the pure STP engine in stp.c: polls per-port link
- * admission and speed, drives FWD_EN/LEARN_EN through pstate.c, transmits
- * BPDUs via the CPU TX override, and receives them through the strong
- * override of pstate.c's weak fabric_ctrl_frame_rx hook.
- *
- * Defaults DISABLED: no web control or persistent configuration exists yet
- * (pending future work), so there is currently no way to turn this on at
- * all short of changing stp_enabled's initializer below and rebuilding.
- * While disabled, this file touches no hardware and passively drops
- * control-block frames (fabric_ctrl_frame_rx() is a no-op, same as the
- * original weak default) -- the switch behaves exactly as it did before
- * this feature existed. */
+/* Only this task enters the protocol engine. Network RX queues owned BPDU
+ * copies; web readers get a published snapshot; settings are polled from RAM. */
 #include "board.h"
 #include "config.h"
 #include "pstate.h"
 #include "stp.h"
 #include "FreeRTOS.h"
 #include "task.h"
-#include "xil_printf.h"
-
-static uint8_t stp_mac[6]; /* first allocated board MAC, shared with network.c */
-static bool stp_enabled = false;
-static uint8_t applied_fwd = 0x1f, applied_learn = 0x1f; /* matches hardware's own reset default */
-static uint8_t last_forwarding;
-static bool have_last_forwarding;
-
-static uint32_t now_ms(void) { return (uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS); }
-
-static uint32_t path_cost_for_speed(uint16_t mbps)
+#include "queue.h"
+#include <string.h>
+static QueueHandle_t rx_queue;
+static struct stp_status published;
+static uint32_t rx_dropped;
+static volatile bool running;
+static bool changing;
+static uint8_t desired_fwd,desired_learn;
+struct bpdu_event { uint32_t received; uint16_t length; uint8_t port; uint8_t frame[1514]; };
+static uint32_t now_ms(void){return (uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS);}
+void stp_prepare(bool enabled)
 {
-    /* 802.1D-1998 recommended values; a down port's cost is never used. */
-    if (mbps >= 1000) return 4;
-    if (mbps >= 100) return 19;
-    if (mbps) return 100;
-    return 4;
+    if(enabled && !pstate_stp_supported())pstate_latch_fault();
+    if(enabled){pstate_fwd_clear(0x1f);pstate_learn_clear(0x1f);}
 }
-
-static void apply_actions(const struct stp_actions *act)
+static void state(void *ctx,unsigned p,bool learn,bool forward)
 {
-    uint8_t set = (uint8_t)(act->fwd_mask & ~applied_fwd);
-    uint8_t clr = (uint8_t)(~act->fwd_mask & applied_fwd & 0x1fu);
-    if (set) pstate_fwd_set(set);
-    if (clr) pstate_fwd_clear(clr);
-    applied_fwd = act->fwd_mask;
-
-    set = (uint8_t)(act->learn_mask & ~applied_learn);
-    clr = (uint8_t)(~act->learn_mask & applied_learn & 0x1fu);
-    if (set) pstate_learn_set(set);
-    if (clr) pstate_learn_clear(clr);
-    applied_learn = act->learn_mask;
-
-    for (unsigned i = 0; i < act->count; i++)
-        (void)pstate_cpu_tx_raw((uint8_t)(1u << act->tx[i].port), act->tx[i].frame, act->tx[i].len);
+    (void)ctx;uint8_t bit=1u<<p;
+    if(changing)learn=forward=false;
+    /* Block first; wait for queued traffic/MAC flush before reopening. */
+    if(!forward && (desired_fwd&bit)){pstate_fwd_clear(bit);desired_fwd&=~bit;}
+    if(!learn && (desired_learn&bit)){pstate_learn_clear(bit);desired_learn&=~bit;}
+    if(learn && !(desired_learn&bit)){pstate_learn_set(bit);desired_learn|=bit;}
+    if(forward && !(desired_fwd&bit)){pstate_fwd_set(bit);desired_fwd|=bit;}
 }
-
-static void poll_links(void)
+static void flush(void *ctx,unsigned p,bool rapid)
 {
-    struct port_snapshot p; board_ports_snapshot(&p);
-    uint8_t forwarding = p.forwarding & PHYSICAL_PORT_MASK;
-    uint8_t changed = have_last_forwarding ? (uint8_t)(forwarding ^ last_forwarding) : forwarding;
-    have_last_forwarding = true;
-    for (unsigned port = 0; port < STP_NUM_PORTS; port++) {
-        if (!(changed & (1u << port))) continue;
-        bool up = (forwarding & (1u << port)) != 0;
-        struct stp_actions act;
-        stp_port_link_change(&g_stp, port, up, path_cost_for_speed(p.speed_mbps[port]), &act);
-        apply_actions(&act);
-        xil_printf("STP: port %u %s\r\n", port, up ? "up" : "down");
-    }
-    last_forwarding = forwarding;
+    (void)ctx;(void)rapid;uint8_t bit=1u<<p;
+    /* Hardware couples port FDB flush to queue flush. Briefly stop forwarding,
+     * perform the complete flush, then restore the protocol's intended state. */
+    pstate_fwd_clear(bit);
+    if((desired_fwd&bit) && !changing)pstate_fwd_set(bit);
 }
-
-void fabric_ctrl_frame_rx(const uint8_t *frame, size_t len)
+static bool transmit(void *ctx,unsigned p,const uint8_t *f,size_t n)
+{(void)ctx;return !changing && !pstate_failed() && pstate_cpu_tx_raw(1u<<p,f,n);}
+static const struct stp_ops ops={state,flush,transmit};
+void fabric_ctrl_frame_rx(const uint8_t *f,size_t n)
 {
-    if (!stp_enabled) return;
-    bool valid; uint8_t port;
-    fabric_dma_last_rx_tag(&valid, &port);
-    if (!valid || port >= STP_NUM_PORTS) return; /* not a physical port's frame; nothing to attribute it to */
-    struct stp_actions act;
-    stp_rx_bpdu(&g_stp, port, frame, len, now_ms(), &act);
-    apply_actions(&act);
+    if(n<21 || n>1514 || memcmp(f,"\x01\x80\xc2\0\0\0",6))return;
+    bool valid;uint8_t port;fabric_dma_last_rx_tag(&valid,&port);
+    if(!running || !rx_queue)return;
+    if(!valid || port>=STP_NUM_PORTS){taskENTER_CRITICAL();rx_dropped++;taskEXIT_CRITICAL();return;}
+    struct bpdu_event e={.received=now_ms(),.length=n,.port=port};memcpy(e.frame,f,n);
+    if(xQueueSend(rx_queue,&e,0)!=pdPASS){taskENTER_CRITICAL();rx_dropped++;taskEXIT_CRITICAL();}
 }
-
 void stp_status_get(struct stp_status *out)
-{
-    taskENTER_CRITICAL();
-    stp_get_status(&g_stp, out);
-    taskEXIT_CRITICAL();
-    out->enabled = stp_enabled;
-}
-
-bool stp_get_enabled(void) { return stp_enabled; }
-
-/* No caller exists yet (see header) -- this exists so the pending web
- * control/persistence work has a clean single entry point to call into. */
-void stp_set_enabled(bool enabled)
-{
-    if (enabled == stp_enabled) return;
-    stp_enabled = enabled;
-    if (!enabled) {
-        /* Restore hardware to exactly its pre-STP default (all enabled)
-         * rather than leaving whatever mask was last applied. */
-        struct stp_actions act = {0};
-        act.fwd_mask = 0x1f; act.learn_mask = 0x1f;
-        apply_actions(&act);
-    } else {
-        /* Start clean: re-init the engine and treat every currently-up
-         * port as a fresh link-up event, same as at boot. */
-        struct switch_config cfg; settings_get(&cfg,NULL,NULL);
-        for (unsigned i=0;i<6;i++) stp_mac[i]=cfg.mac[0][i];
-        stp_init(&g_stp, stp_mac, 32768);
-        have_last_forwarding = false;
-    }
-}
-
+{taskENTER_CRITICAL();*out=published;taskEXIT_CRITICAL();}
 void stp_task(void *unused)
 {
-    (void)unused;
-    struct switch_config cfg; settings_get(&cfg,NULL,NULL);
-    for (unsigned i=0;i<6;i++) stp_mac[i]=cfg.mac[0][i];
-    stp_init(&g_stp, stp_mac, 32768);
-    xil_printf("STP: bridge %02x:%02x:%02x:%02x:%02x:%02x priority 32768, %u ports (disabled by default)\r\n",
-        stp_mac[0],stp_mac[1],stp_mac[2],stp_mac[3],stp_mac[4],stp_mac[5], STP_NUM_PORTS);
-    TickType_t wake = xTaskGetTickCount();
-    for (;;) {
-        if (stp_enabled) {
-            poll_links();
-            struct stp_actions act;
-            stp_tick(&g_stp, now_ms(), &act);
-            apply_actions(&act);
+    (void)unused;struct stp_bridge *engine=NULL;
+    struct switch_config cfg;uint8_t version=255,links=0;uint16_t speeds[STP_NUM_PORTS]={0};
+    rx_queue=xQueueCreate(32,sizeof(struct bpdu_event));configASSERT(rx_queue);
+    uint32_t tick=now_ms();bool enabled=false;
+    for(;;) {
+        settings_get(&cfg,NULL,NULL);
+        if(!enabled && !cfg.stp_enabled) {
+            version=cfg.stp_version;desired_fwd=desired_learn=0x1f;
+        } else if(cfg.stp_enabled!=enabled || cfg.stp_version!=version) {
+            taskENTER_CRITICAL();running=false;taskEXIT_CRITICAL();
+            changing=true;pstate_fwd_clear(0x1f);pstate_learn_clear(0x1f);
+            desired_fwd=desired_learn=0;
+            stp_destroy(engine);engine=NULL;xQueueReset(rx_queue);
+            links=0;memset(speeds,0,sizeof(speeds));
+            enabled=cfg.stp_enabled;version=cfg.stp_version;changing=false;
+            if(enabled && !pstate_stp_supported())pstate_latch_fault();
+            if(enabled && !pstate_failed()){engine=stp_create(cfg.mac[0],version,&ops,NULL);configASSERT(engine);}
+            else if(!enabled) {pstate_learn_set(0x1f);pstate_fwd_set(0x1f);desired_fwd=desired_learn=0x1f;}
+            tick=now_ms();taskENTER_CRITICAL();running=enabled;taskEXIT_CRITICAL();
         }
-        vTaskDelayUntil(&wake, pdMS_TO_TICKS(1000));
+        struct port_snapshot ports;board_ports_snapshot(&ports);
+        if(engine) {
+            uint8_t next=ports.forwarding&0x1f;
+            for(unsigned p=0;p<STP_NUM_PORTS;p++)if(((next^links)&(1u<<p)) || speeds[p]!=ports.speed_mbps[p]) {
+                stp_port_link_change(engine,p,(next&(1u<<p))!=0,ports.speed_mbps[p],now_ms());speeds[p]=ports.speed_mbps[p];
+            }
+            links=next;
+            /* Bounded draining guarantees link/configuration/timer service. */
+            struct bpdu_event e;
+            for(unsigned i=0;i<16 && xQueueReceive(rx_queue,&e,0)==pdPASS;i++) {
+                if((uint32_t)(now_ms()-e.received)>1000 || !stp_rx_bpdu(engine,e.port,e.frame,e.length,now_ms())) {taskENTER_CRITICAL();rx_dropped++;taskEXIT_CRITICAL();}
+            }
+            uint32_t now=now_ms();
+            if((uint32_t)(now-tick)>=1000){tick+=1000;stp_tick(engine,now);}
+
+        }
+        struct stp_status s={0};
+        if(engine)stp_get_status(engine,&s);
+        else {memcpy(s.bridge_id.mac,cfg.mac[0],6);s.bridge_id.priority=32768;s.root_id=s.bridge_id;s.root_port=STP_ROOT_NONE;s.is_root=true;}
+        s.enabled=enabled;s.version=version;s.fault=pstate_failed();
+        taskENTER_CRITICAL();s.rx_dropped=rx_dropped;published=s;taskEXIT_CRITICAL();
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

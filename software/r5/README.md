@@ -17,8 +17,10 @@ Implemented:
   wrap (~91.6 minutes). Resolution is 1.28 microseconds, not one microsecond.
 - A single `fabric0` network interface through virtual switch port 5 and AXI
   DMA at `0x80000000`. The GEMs are physical switch ports, not FreeRTOS NICs.
-  RX uses 16 SG descriptors; TX uses two alternating descriptors and waits for
-  completion. Buffers are copied; D-cache is enabled for application memory, while DMA
+  RX uses 16 SG descriptors and interrupt-driven task notifications; TX uses
+  two alternating descriptors and blocks on an interrupt semaphore (100 ms
+  timeout). MM2S/S2MM use level-high GIC IRQs 127/128, priority `0xa0`,
+  completion threshold one, with completion and error interrupts enabled. Buffers are copied; D-cache is enabled for application memory, while DMA
   descriptors and bounce buffers occupy a reserved non-cacheable MPU region.
 - A 250 ms `vTaskDelayUntil` task samples all five physical ports. GEM0/GEM1
   DP83867 PHYs (addresses 4/9, verified on the development carrier) are read
@@ -271,3 +273,9 @@ See [deployment evidence](../../docs/verification.md#2026-09-26-cpu-tx-metadata-
 The current board runs the 125 MHz build. `FABRIC_HZ` is exposed through HTTP
 `fabric_hz` and SNMP `krFabricHz`; DDR/debug cycles are 8 ns. MAC aging remains
 250 ms and the TTC timestamp stays at 781,250 Hz. See [125 MHz board validation](../../docs/verification.md#2026-09-26-125-mhz-fabric-board-deployment).
+
+CPU DMA interrupt diagnostics can be read while R5 runs with
+`xsdb software/r5/dma_status_jtag.tcl tcp:10.0.1.109:3121`. The script uses
+the current ELF to locate non-cacheable IRQ, completion, drop and timeout
+counters; use the ELF actually deployed. DMA errors wake both packet tasks
+and fail closed without restarting hardware or reusing outstanding buffers.

@@ -19,7 +19,7 @@ The CPU MAC change may cause DHCP to issue a different lease than `10.0.1.214`.
 
 Factory defaults: all ports enabled, GEM0 advertising 1000FD, the other copper
 ports requesting 10/100/1000FD, SFP Auto, DHCP, and administrator `admin` /
-password `admin`. All copper settings are full duplex only.
+password `admin`. Spanning tree defaults disabled, with RSTP selected. All copper settings are full duplex only.
 
 | Setting | Stored values | Current running hardware |
 | --- | --- | --- |
@@ -37,6 +37,11 @@ The SFP higher-rate choices reserve configuration values; they do not add a
 multirate PCS, transceiver reconfiguration, or module compatibility guarantees.
 `GET /api/ports` reports effective admission and physical speed;
 `GET /api/config` reports saved preferences and current implementation capability.
+The **Current IPv4** panel at the top of Configuration reads `/api/network` and
+shows the running IP address, netmask, default gateway and DHCP/static mode.
+It refreshes every second without overwriting form edits. These values come
+from the active network stack; saved static changes still require a restart.
+Address and administrator credential fields wrap on narrow screens.
 
 Static settings require a unicast IPv4 host, contiguous /1 through /30 netmask,
 and either `0.0.0.0` (no default route) or another host in the same subnet as
@@ -77,12 +82,12 @@ internal flash translation layer can still be damaged by power loss. They do not
 provide an absolute power-failure guarantee. Remove power only after saving has
 completed. CRC detects accidental corruption, not deliberate card tampering.
 
-### Version 1 record (256 bytes, explicit little-endian integers)
+### Version 2 record (256 bytes, explicit little-endian integers)
 
 | Offset | Bytes | Content |
 | --- | --- | --- |
 | 0 | 8 | `KR260CFG` magic |
-| 8 | 4 | Version 1 |
+| 8 | 4 | Version 2; reader also accepts version 1 |
 | 12 | 4 | Generation, wrap-aware comparison |
 | 16 | 30 | Five MACs, six bytes each |
 | 46 | 32 | NUL-terminated administrator username |
@@ -94,7 +99,9 @@ completed. CRC detects accidental corruption, not deliberate card tampering.
 | 135 | 2 | SFP Mb/s; zero = Auto |
 | 137 | 1 | DHCP boolean |
 | 138, 142, 146 | 4 each | IPv4 address, netmask, gateway, network-order octets |
-| 150 | 98 | Reserved zero bytes |
+| 150 | 1 | Spanning-tree enable boolean (v2) |
+| 151 | 1 | Spanning-tree version: 0=STP, 2=RSTP (v2) |
+| 152 | 96 | Reserved zero bytes |
 | 248 | 4 | CRC-32/ISO-HDLC over bytes 0–247 |
 | 252 | 4 | `DONE` commit marker, written last |
 
@@ -160,3 +167,6 @@ described in [USB storage](usb-storage.md). Physical power-cycle, card-removal
 and replacement tests remain pending. A transient Ethernet-bound ping outage
 recovered without a reset and remains unexplained; see the board-verification
 notes rather than treating these checks as a sustained-network reliability test.
+
+See [spanning-tree configuration](spanning-tree.md) for the enable/version controls,
+v1 migration, hardware requirements and convergence behavior.

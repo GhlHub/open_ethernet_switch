@@ -17,7 +17,8 @@ struct switch_config {
     uint32_t password_rounds;
     uint8_t admin, advertise[4];
     uint16_t sfp_speed;
-    bool dhcp;
+    bool dhcp, stp_enabled;
+    uint8_t stp_version; /* 0=classic STP, 2=RSTP */
     uint8_t ip[4], netmask[4], gateway[4];
 };
 struct config_io {
