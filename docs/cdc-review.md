@@ -1,9 +1,9 @@
 # Clock-domain-crossing review
 
-**Current routed evidence:** [125 MHz build](verification.md#2026-09-26-125-mhz-fabric-build)
-and [board deployment](verification.md#2026-09-26-125-mhz-fabric-board-deployment).
-The [preceding timing/CDC review](timing-cdc-review-20260926.md) records the
-mailbox and external-interface analysis.
+**Current routed evidence:** [CPU-interrupt build review](timing-cdc-review-20260928.md)
+and [board deployment](verification.md#2026-09-27-interrupt-driven-cpu-packet-dma).
+The latest review records all 196 custom Gray synchronizer bits, held mailbox
+paths, the supplied SOM delay data, and the open external timing/reset contract.
 The historical counts below are superseded. The current image meets its timing
 constraints but still has CDC and external-interface sign-off items.
 

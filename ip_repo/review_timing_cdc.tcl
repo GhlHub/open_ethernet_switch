@@ -40,11 +40,15 @@ foreach pair {
   }
   error "Missing crossing family: $pair"
  }
- foreach p [get_timing_paths -from $from -to $to -max_paths 10000 -nworst 1] {
+ set paths [get_timing_paths -from $from -to $to -max_paths 10000 -nworst 1]
+ if {![llength $paths]} {error "No timed paths in crossing family: $pair"}
+ if {[llength $paths] >= 10000} {error "Crossing report may be truncated: $pair"}
+ foreach p $paths {
   puts $f "[get_property STARTPOINT_PIN $p]\t[get_property ENDPOINT_PIN $p]\t[get_property DATAPATH_DELAY $p]\t[get_property SLACK $p]"
  }
 }
 close $f
+source [file join [file dirname [info script]] review_custom_gray.tcl]
 puts "REVIEW_COMPLETE: reports generated; this is not CDC sign-off"
 } message options]} {
  puts stderr [dict get $options -errorinfo]

@@ -35,6 +35,7 @@ build/reports_*.txt
 ._*
 
 # Local AMD timing / board reference downloads
+/docs/xtp688-kria-k26-trace-delay/
 /docs/ds925-zynq-ultrascale-plus.pdf
 /docs/ug571-ultrascale-selectio.pdf
 /docs/ug583-ultrascale-pcb-design.pdf

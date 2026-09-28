@@ -1,5 +1,13 @@
 # kr260_rgmii_io.xdc -- RGMII I/O timing for the two PL Ethernet ports.
 #
+# PROVISIONAL external model: the routed pass is not board timing sign-off.
+# The derivation below uses nominal programmed PHY delay and the no-internal-
+# delay TskewR window. Internal-delay operation requires its own worst-case
+# setup/hold budget, including PHY delay tolerance, duty cycle, SOM/carrier
+# skew and connectors. XTP688 includes package delay; do not add it wholesale
+# to a device model that already includes package timing. See
+# docs/timing-cdc-review-20260928.md. Numeric constraints are unchanged here.
+#
 # Source of the numbers: DP83867CS/IS/E datasheet (docs/dp83867cs.pdf,
 # SNLS504G) section 6.10: TskewR 1.0..2.6 ns (nominal 1.8) at the PHY input,
 # TsetupT/TholdT min 1.2 ns (nominal 2) at the PHY output:
@@ -35,7 +43,7 @@
 create_generated_clock -name pl0_rgmii_txc_fwd -source [get_pins u_pl/u_rgmii0/u_oddre1_txc/C] -divide_by 1 [get_ports pl0_rgmii_txc]
 create_generated_clock -name pl1_rgmii_txc_fwd -source [get_pins u_pl/u_rgmii1/u_oddre1_txc/C] -divide_by 1 [get_ports pl1_rgmii_txc]
 
-# ---- PL0 transmit: edge-aligned, +/-0.5 ns ----
+# ---- PL0 transmit: provisional edge-aligned model ----
 set_output_delay -clock pl0_rgmii_txc_fwd -max 3.250 [get_ports {pl0_rgmii_txd[*] pl0_rgmii_tx_ctl}]
 set_output_delay -clock pl0_rgmii_txc_fwd -min 0.850 [get_ports {pl0_rgmii_txd[*] pl0_rgmii_tx_ctl}] -add_delay
 set_output_delay -clock pl0_rgmii_txc_fwd -clock_fall -max 3.250 [get_ports {pl0_rgmii_txd[*] pl0_rgmii_tx_ctl}] -add_delay
@@ -46,7 +54,7 @@ set_input_delay -clock pl0_rgmii_rxc -min 1.200 [get_ports {pl0_rgmii_rxd[*] pl0
 set_input_delay -clock pl0_rgmii_rxc -clock_fall -max 2.800 [get_ports {pl0_rgmii_rxd[*] pl0_rgmii_rx_ctl}] -add_delay
 set_input_delay -clock pl0_rgmii_rxc -clock_fall -min 1.200 [get_ports {pl0_rgmii_rxd[*] pl0_rgmii_rx_ctl}] -add_delay
 
-# ---- PL1 transmit: edge-aligned, +/-0.5 ns ----
+# ---- PL1 transmit: provisional edge-aligned model ----
 set_output_delay -clock pl1_rgmii_txc_fwd -max 3.250 [get_ports {pl1_rgmii_txd[*] pl1_rgmii_tx_ctl}]
 set_output_delay -clock pl1_rgmii_txc_fwd -min 0.850 [get_ports {pl1_rgmii_txd[*] pl1_rgmii_tx_ctl}] -add_delay
 set_output_delay -clock pl1_rgmii_txc_fwd -clock_fall -max 3.250 [get_ports {pl1_rgmii_txd[*] pl1_rgmii_tx_ctl}] -add_delay

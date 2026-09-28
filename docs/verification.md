@@ -1,5 +1,23 @@
 # Design inventory verification
 
+## 2026-09-28 Timing and CDC review
+
+Reviewed the deployed CPU-interrupt routed checkpoint with Vivado 2026.1.
+Existing constraints pass at +0.018 ns setup and +0.010 ns hold. Corrected
+the custom Gray audit to include six optimized binary/Gray MSBs omitted by
+the old source-name filter; all 196 first-stage bits pass the expanded check.
+The final audit also rejected injected missing `ASYNC_REG`, failing maximum
+delay, and false-path conditions. Evidence is under
+`build/ip_refactor/timing_cdc_20260928/`.
+
+The supplied XTP688 reference was reviewed and remains a local download,
+consistent with other vendor timing references. It includes package plus SOM
+trace delay and excludes connectors; carrier routing data is unavailable.
+RGMII physical/PHY timing, MDIO timing constraints and coordinated reset
+recovery remain open. No RTL, numeric implementation constraints or deployed
+image changed. See the [full review](timing-cdc-review-20260928.md) for results,
+assumptions and closure steps.
+
 ## 2026-09-27 Current IPv4 panel and credential widths
 
 Added public `GET /api/network`, taking a coherent snapshot of the running
