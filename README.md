@@ -94,6 +94,7 @@ hardware validation remain pending.**
 - [PS Ethernet speeds and full-duplex advertisement](docs/ps-ethernet-speeds.md)
 - [R5 FreeRTOS startup, timers and networking](software/r5/README.md)
 - [Minimal A53 Linux boot alongside the R5 switch](software/linux/README.md)
+- [Resume point for Linux and AI telemetry work](docs/resume-ai-telemetry.md)
 - [Persistent settings and administrator authentication](docs/configuration.md)
 - [Standalone R5 USB microSD storage](docs/usb-storage.md)
 - [Source inventory and development backlog](docs/inventory.md)
