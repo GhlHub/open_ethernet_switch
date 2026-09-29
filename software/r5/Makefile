@@ -12,8 +12,9 @@ PORT := $(KERNEL)/portable/GCC/ARM_CR5
 STATS_DDR ?= 0
 STATS_DEBUG ?= 0
 CONFIG_RECOVERY ?= 0
-ifneq ($(filter-out 0 1,$(STATS_DDR) $(STATS_DEBUG) $(CONFIG_RECOVERY)),)
-$(error STATS_DDR, STATS_DEBUG and CONFIG_RECOVERY must be 0 or 1)
+LINUX_CONSOLE ?= 0
+ifneq ($(filter-out 0 1,$(STATS_DDR) $(STATS_DEBUG) $(CONFIG_RECOVERY) $(LINUX_CONSOLE)),)
+$(error STATS_DDR, STATS_DEBUG, CONFIG_RECOVERY and LINUX_CONSOLE must be 0 or 1)
 endif
 CFLAGS := -mcpu=cortex-r5 -mfloat-abi=hard -mfpu=vfpv3-d16 -marm -O2 -g3 -ffunction-sections -fdata-sections -Wall -Wextra -DSDT -DARMR5 -D__FREERTOS__
 CPPFLAGS := -DCONFIG_RECOVERY=$(CONFIG_RECOVERY) -DSTATS_DDR=$(STATS_DDR) -DSTATS_DEBUG=$(STATS_DEBUG) -Iinclude -I$(ROOT)/third_party/sha256 -Iout -I$(BSP)/include -I$(KERNEL)/include -I$(PORT) -I$(TCP)/include -I$(TCP)/portable/Compiler/GCC
@@ -21,6 +22,7 @@ USB := $(ROOT)/third_party/libpayload_usb
 CPPFLAGS += -Iusb_port -I$(USB)/include -I$(USB)/drivers -I$(ROOT)/third_party/fatfs
 MSTP := $(ROOT)/third_party/mstp-lib/mstp-lib/internal
 CPPFLAGS += -DSTP_USE_LOG=0
+CPPFLAGS += -DLINUX_CONSOLE=$(LINUX_CONSOLE)
 APP := $(wildcard src/*.c) src/vectors.S $(ROOT)/third_party/sha256/sha256.c
 LIBSRC := $(KERNEL)/tasks.c $(KERNEL)/queue.c $(KERNEL)/list.c $(KERNEL)/timers.c $(KERNEL)/event_groups.c $(KERNEL)/stream_buffer.c $(KERNEL)/portable/MemMang/heap_4.c $(PORT)/port.c $(PORT)/portASM.S $(wildcard $(TCP)/*.c) $(TCP)/portable/BufferManagement/BufferAllocation_2.c
 # Flatten unique upstream basenames; fail if a future addition creates a collision.
@@ -32,7 +34,7 @@ endif
 .PHONY: all test test-snmp clean FORCE
 FORCE:
 out/stats_config: FORCE | out
-	@printf '%s\n' 'STATS_DDR=$(STATS_DDR) STATS_DEBUG=$(STATS_DEBUG) CONFIG_RECOVERY=$(CONFIG_RECOVERY)' > out/stats_config.tmp
+	@printf '%s\n' 'STATS_DDR=$(STATS_DDR) STATS_DEBUG=$(STATS_DEBUG) CONFIG_RECOVERY=$(CONFIG_RECOVERY) LINUX_CONSOLE=$(LINUX_CONSOLE)' > out/stats_config.tmp
 	@cmp -s out/stats_config.tmp $@ || cp out/stats_config.tmp $@
 $(OBJECTS): out/stats_config
 out/web_page.h: web/index.html web/embed.py | out

@@ -7,16 +7,28 @@
 #include "bspconfig.h"
 #include "xparameters.h"
 #define CONSOLE_BASE 0xff010000UL
+#if LINUX_CONSOLE
+/* Absolute ELF marker checked by the Linux JTAG loader before resetting HW. */
+__asm__(".global kr260_linux_console\n.set kr260_linux_console, 1");
+#else
+__asm__(".global kr260_linux_console\n.set kr260_linux_console, 0");
+#endif
 #if !defined(XPAR_UART1_BASEADDR) || XPAR_UART1_BASEADDR != CONSOLE_BASE || STDOUT_BASEADDRESS != CONSOLE_BASE
 #error Regenerate the R5 BSP with UART1 selected as standalone_stdout
 #endif
 volatile char board_log[4096];
 volatile uint32_t board_log_written;
 volatile uint32_t board_uart_dropped;
+#if !LINUX_CONSOLE
 static XUartPs uart;
+#endif
 static bool uart_ready;
 void board_console_init(void)
 {
+#if LINUX_CONSOLE
+    /* A53 Linux owns UART1. Keep outbyte's RAM log, never touch the UART. */
+    uart_ready=false;
+#else
     XUartPs_Config *cfg=XUartPs_LookupConfig(CONSOLE_BASE);
     if (!cfg || XUartPs_CfgInitialize(&uart,cfg,cfg->BaseAddress)!=XST_SUCCESS)
         board_assert(__FILE__,__LINE__);
@@ -29,6 +41,7 @@ void board_console_init(void)
     /* No RTS/CTS flow control on the console connection. */
     XUartPs_WriteReg(CONSOLE_BASE,XUARTPS_MODEMCR_OFFSET,0);
     uart_ready=true;
+#endif
 }
 void __wrap_outbyte(char c)
 {

@@ -1,0 +1,18 @@
+#!/bin/sh
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /run /tmp
+mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /tmp
+hostname kr260-analytics
+echo
+echo 'KR260_MINIMAL_LINUX_READY'
+uname -a
+echo "Online A53 CPUs: $(cat /sys/devices/system/cpu/online)"
+echo 'RAM-only development shell; switch management remains on R5.'
+while true; do
+    setsid cttyhack sh
+    sleep 1
+done

@@ -1,0 +1,66 @@
+/dts-v1/;
+
+/* Deliberately describes only A53-owned devices. FSBL leaves clocks running;
+ * Linux must not bind GEMs, USB, TTCs, I2C, PL devices, or manage PS power yet.
+ * No firmware power driver/finalize, cpuidle or cpufreq in this first milestone.
+ */
+/ {
+    model = "KR260 switch - minimal A53/R5 coexistence";
+    compatible = "ghlhub,kr260-switch-minimal", "xlnx,zynqmp";
+    #address-cells = <2>;
+    #size-cells = <2>;
+    interrupt-parent = <&gic>;
+    aliases { serial0 = &uart1; };
+    chosen {
+        stdout-path = "serial0:115200n8";
+        bootargs = "console=ttyPS0,115200 earlycon=cdns,mmio,0xff010000 rdinit=/init clk_ignore_unused pd_ignore_unused cpuidle.off=1 panic=0";
+        linux,initrd-start = <0x0 0x06000000>;
+        linux,initrd-end = <0x0 INITRD_END>;
+    };
+    memory@0 {
+        device_type = "memory";
+        /* Low DDR only for initial bring-up; high 2 GiB intentionally unused. */
+        reg = <0x0 0x0 0x0 0x80000000>;
+    };
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+        packet-pool@10000000 { reg = <0 0x10000000 0 0x00080000>; no-map; };
+        r5@20000000 { reg = <0 0x20000000 0 0x02000000>; no-map; };
+    };
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        cpu@0 { device_type = "cpu"; compatible = "arm,cortex-a53"; reg = <0>; enable-method = "psci"; };
+        cpu@1 { device_type = "cpu"; compatible = "arm,cortex-a53"; reg = <1>; enable-method = "psci"; };
+        cpu@2 { device_type = "cpu"; compatible = "arm,cortex-a53"; reg = <2>; enable-method = "psci"; };
+        cpu@3 { device_type = "cpu"; compatible = "arm,cortex-a53"; reg = <3>; enable-method = "psci"; };
+    };
+    psci { compatible = "arm,psci-1.0"; method = "smc"; };
+    timer {
+        compatible = "arm,armv8-timer";
+        interrupts = <1 13 0xf08>, <1 14 0xf08>, <1 11 0xf08>, <1 10 0xf08>;
+    };
+    gic: interrupt-controller@f9010000 {
+        compatible = "arm,gic-400";
+        #interrupt-cells = <3>;
+        #address-cells = <0>;
+        interrupt-controller;
+        reg = <0 0xf9010000 0 0x10000>, <0 0xf9020000 0 0x20000>,
+              <0 0xf9040000 0 0x20000>, <0 0xf9060000 0 0x20000>;
+        interrupts = <1 9 0xf04>;
+    };
+    uart_clk: uart-clock {
+        compatible = "fixed-clock";
+        #clock-cells = <0>;
+        clock-frequency = <99999001>;
+    };
+    uart1: serial@ff010000 {
+        compatible = "xlnx,zynqmp-uart", "cdns,uart-r1p12";
+        reg = <0 0xff010000 0 0x1000>;
+        interrupts = <0 22 4>;
+        clocks = <&uart_clk>, <&uart_clk>;
+        clock-names = "uart_clk", "pclk";
+    };
+};

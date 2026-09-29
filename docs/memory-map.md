@@ -1,13 +1,17 @@
 # Memory map, usage and ownership
 
-Updated 2026-09-23 for the R5-0 split-mode FreeRTOS firmware with data cache
-enabled and the normal FPGA image without ILAs.
+Updated 2026-09-28 for the R5-0 split-mode FreeRTOS firmware with data cache
+enabled, the normal FPGA image without ILAs, and optional minimal A53 Linux.
 
 This document describes the application's memory contract and the register
 windows it uses. It is not a complete Zynq UltraScale+ address map. R5-1 is
 held in reset; the A53 runs the FSBL during JTAG initialization and is then
-left stopped. Any future A53 OS, second R5 application or boot payload must
-honor the reservations below.
+left stopped in the standalone boot flow. The optional
+[minimal Linux JTAG boot](../software/linux/README.md) starts Linux on the four
+A53 cores, reserves both PL/R5 DDR regions below as `no-map`, and transfers
+UART1 ownership to Linux using an R5 build with `LINUX_CONSOLE=1`. Its initial
+device tree exposes only A53-owned devices and uses the low 2 GiB of DDR.
+Any second R5 application or other boot payload must honor these reservations.
 
 Addresses are hexadecimal; range endpoints are inclusive unless explicitly
 identified as end symbols. MiB/KiB mean powers of two.
@@ -235,7 +239,7 @@ This table lists bases or individual registers, not entire reserved RAM regions.
 | --- | --- | --- |
 | `0xFF030000` | PS I2C1 base | R5 sensor task; INA260 SOM power monitor at I2C address `0x40` |
 | `0xFFA50000` | AMS / PS and PL SYSMON | R5 sensor task; temperature and voltage sequencing/readout |
-| `0xFF010000` | UART1 base | R5 console, connected to the board UART bridge |
+| `0xFF010000` | UART1 base | R5 console in standalone mode; exclusively A53 Linux with `LINUX_CONSOLE=1` |
 | `0xFF0B0000` | GEM0 base | R5 configures PS MAC and external FIFO operation |
 | `0xFF0C0000` | GEM1 base | R5 configures MAC; shared MDIO bus serves both PS PHYs |
 | `0xFF110000` | TTC0 base | R5 FreeRTOS tick source |

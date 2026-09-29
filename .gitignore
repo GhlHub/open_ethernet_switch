@@ -58,6 +58,7 @@ build/reports_*.txt
 
 # CPU DMA interrupt build and hardware qualification artifacts
 /build/cpu_irq/
+/build/linux/
 
 # Downloaded mechanical references; enclosure sources/print files are versioned
 /docs/xtp744-kr260-carrier-card-3d-cad-model/

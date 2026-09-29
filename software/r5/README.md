@@ -5,6 +5,12 @@ port and FreeRTOS+TCP come directly from the pinned `third_party/FreeRTOS-LTS`
 checkout. The Vitis standalone BSP supplies startup, GIC/TTC drivers and formatting;
 its FreeRTOS distribution is not linked. R5-1 must remain parked.
 
+For the optional [A53 Linux JTAG boot](../linux/README.md), build with
+`LINUX_CONSOLE=1`. R5 then leaves UART1 entirely to Linux and retains its RAM
+diagnostic log and web interface. The default `LINUX_CONSOLE=0` preserves the
+standalone console. Linux must reserve the R5/PL DDR ranges and leave all other
+R5-owned peripherals untouched; use the dedicated minimal device tree.
+
 Implemented:
 
 - Hardware initialization of the RPU GIC, two TTC counters, fabric MACs,
